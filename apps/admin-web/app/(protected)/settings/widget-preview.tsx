@@ -16,15 +16,20 @@
 
 const FALLBACK_BOT_NAME = "Your Assistant";
 const FALLBACK_GREETING = "Hi! How can I help you today?";
+const FALLBACK_LAUNCHER_LABEL = "Chat with us";
 
 export function WidgetPreview({
   greeting,
   tone,
+  launcherLabel,
 }: {
   greeting: string;
   tone: string;
+  launcherLabel: string;
 }) {
   const displayGreeting = greeting.trim().length > 0 ? greeting : FALLBACK_GREETING;
+  const displayLauncherLabel =
+    launcherLabel.trim().length > 0 ? launcherLabel : FALLBACK_LAUNCHER_LABEL;
 
   return (
     <div className="flex w-full flex-col items-center gap-3.5">
@@ -88,6 +93,20 @@ export function WidgetPreview({
             ↑
           </div>
         </div>
+      </div>
+
+      <div className="flex h-10 items-center gap-2 rounded-full bg-[#191a17] py-1.5 pl-1.5 pr-4 text-sm font-semibold text-white shadow-[0_6px_16px_rgba(25,26,23,.18)]">
+        <span
+          aria-hidden
+          className="size-7 shrink-0 rounded-full"
+          style={{
+            background:
+              "radial-gradient(circle at 35% 30%, #f4fa9a, #e4f222 70%, #b8c410)",
+          }}
+        />
+        <span className="max-w-[190px] truncate" data-testid="widget-preview-launcher-label">
+          {displayLauncherLabel}
+        </span>
       </div>
     </div>
   );

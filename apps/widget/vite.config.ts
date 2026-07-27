@@ -41,10 +41,6 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
-      // dev/host.html is served as a static file by the same dev server.
-      fs: {
-        allow: [resolve(__dirname)],
-      },
     },
   };
 });

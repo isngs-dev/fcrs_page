@@ -76,6 +76,9 @@ async def test_get_bot_settings_merges_row_orchestrator_and_llm_config() -> None
             "business_hours": {"mon": "9-5"},
             "escalation_policy": "Escalate after 3 failed answers.",
             "tone": "friendly",
+            "launcher_label": "Chat with our team",
+            "sidebar_workspace_label": "Acme support",
+            "dashboard_title": "Support hub",
         },
         {"provider": "anthropic", "model": "claude-sonnet"},
     ]
@@ -86,6 +89,9 @@ async def test_get_bot_settings_merges_row_orchestrator_and_llm_config() -> None
     assert result.business_hours == {"mon": "9-5"}
     assert result.escalation_policy == "Escalate after 3 failed answers."
     assert result.tone == "friendly"
+    assert result.launcher_label == "Chat with our team"
+    assert result.sidebar_workspace_label == "Acme support"
+    assert result.dashboard_title == "Support hub"
     assert result.answer_threshold == 0.8
     assert result.escalate_threshold == 0.3
     assert result.turn_cap == 6
@@ -103,6 +109,9 @@ async def test_get_bot_settings_no_row_yet_qualitative_fields_none_thresholds_po
     assert result.business_hours is None
     assert result.escalation_policy is None
     assert result.tone is None
+    assert result.launcher_label is None
+    assert result.sidebar_workspace_label is None
+    assert result.dashboard_title is None
     assert result.answer_threshold == 0.8
     assert result.escalate_threshold == 0.3
     assert result.turn_cap == 6
@@ -144,6 +153,9 @@ async def test_upsert_bot_settings_binds_on_conflict_upsert_qualitative_only() -
         business_hours={"mon": "9-5"},
         escalation_policy="Escalate always.",
         tone="formal",
+        launcher_label="Chat with our team",
+        sidebar_workspace_label="Acme support",
+        dashboard_title="Support hub",
     )
 
     assert len(db.calls) == 1
@@ -156,6 +168,9 @@ async def test_upsert_bot_settings_binds_on_conflict_upsert_qualitative_only() -
     assert "Hello!" in params
     assert "Escalate always." in params
     assert "formal" in params
+    assert "Chat with our team" in params
+    assert "Acme support" in params
+    assert "Support hub" in params
 
     # No threshold/provider param anywhere in the captured SQL/params.
     assert "answer_threshold" not in query
@@ -177,6 +192,9 @@ async def test_upsert_bot_settings_rejects_global_caller() -> None:
             business_hours=None,
             escalation_policy=None,
             tone=None,
+            launcher_label=None,
+            sidebar_workspace_label=None,
+            dashboard_title=None,
         )
 
     assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"

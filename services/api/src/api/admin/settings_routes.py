@@ -19,7 +19,7 @@ from typing import Any
 from common.auth import AuthClaims, Role
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.admin.settings_repository import BotSettings, get_bot_settings, upsert_bot_settings
 from api.audit.repository import record_audit
@@ -32,12 +32,24 @@ tenant_scoped_router = APIRouter(prefix="/admin/tenants/{tenant_id}/settings", t
 
 
 class AdminBotSettingsRequest(BaseModel):
-    """Body for PUT /admin/settings -- the four new qualitative fields only."""
+    """Body for PUT /admin/settings -- the qualitative fields only."""
 
     greeting: str | None = Field(default=None, max_length=2000)
     business_hours: dict[str, Any] | None = None
     escalation_policy: str | None = Field(default=None, max_length=2000)
     tone: str | None = Field(default=None, max_length=100)
+    launcher_label: str | None = Field(default=None, max_length=40)
+    sidebar_workspace_label: str | None = Field(default=None, max_length=80)
+    dashboard_title: str | None = Field(default=None, max_length=80)
+
+    @field_validator("sidebar_workspace_label", "dashboard_title")
+    @classmethod
+    def _empty_workspace_labels_are_null(cls, value: str | None) -> str | None:
+        """Preserve the UI's nullable-label fallback contract on direct API use too."""
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 class AdminBotSettingsResponse(BaseModel):
@@ -47,6 +59,9 @@ class AdminBotSettingsResponse(BaseModel):
     business_hours: dict[str, Any] | None
     escalation_policy: str | None
     tone: str | None
+    launcher_label: str | None
+    sidebar_workspace_label: str | None
+    dashboard_title: str | None
     answer_threshold: float
     escalate_threshold: float
     turn_cap: int
@@ -60,6 +75,9 @@ def _to_response(settings: BotSettings) -> AdminBotSettingsResponse:
         business_hours=settings.business_hours,
         escalation_policy=settings.escalation_policy,
         tone=settings.tone,
+        launcher_label=settings.launcher_label,
+        sidebar_workspace_label=settings.sidebar_workspace_label,
+        dashboard_title=settings.dashboard_title,
         answer_threshold=settings.answer_threshold,
         escalate_threshold=settings.escalate_threshold,
         turn_cap=settings.turn_cap,
@@ -79,7 +97,7 @@ async def _get_settings(request: Request, claims: AuthClaims) -> AdminBotSetting
 async def _put_settings(
     body: AdminBotSettingsRequest, request: Request, claims: AuthClaims,
 ) -> AdminBotSettingsResponse:
-    """Write ONLY the four qualitative fields; thresholds/provider/model are untouched."""
+    """Write ONLY qualitative fields; thresholds/provider/model are untouched."""
     db = request.app.state.db
 
     await upsert_bot_settings(
@@ -89,6 +107,9 @@ async def _put_settings(
         business_hours=body.business_hours,
         escalation_policy=body.escalation_policy,
         tone=body.tone,
+        launcher_label=body.launcher_label,
+        sidebar_workspace_label=body.sidebar_workspace_label,
+        dashboard_title=body.dashboard_title,
     )
 
     await record_audit(

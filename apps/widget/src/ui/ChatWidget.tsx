@@ -87,6 +87,8 @@ function ChatGlyph({ name }: { name: "chat" | "close" | "sound" | "muted" | "sen
 export interface ChatWidgetProps {
   config: WidgetConfig;
   expiresAt: string;
+  /** SR-7: optional tenant copy from the gateway admission response. */
+  launcherLabel?: string;
   /** SR-3 decision 4: seeds the conversation thread from a resumed
    * sessionStorage record's `conversationId`. `null` on a fresh boot (no
    * resume in play) -- unchanged S14.2 behavior. */
@@ -116,7 +118,14 @@ function getFocusableElements(panel: HTMLElement): HTMLElement[] {
   );
 }
 
-export function ChatWidget({ config, expiresAt, resumeConversationId = null }: ChatWidgetProps) {
+const DEFAULT_LAUNCHER_LABEL = "Chat with us";
+
+export function ChatWidget({
+  config,
+  expiresAt,
+  launcherLabel,
+  resumeConversationId = null,
+}: ChatWidgetProps) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -498,6 +507,10 @@ export function ChatWidget({ config, expiresAt, resumeConversationId = null }: C
     [handleSend],
   );
 
+  const resolvedLauncherLabel = launcherLabel?.trim()
+    ? launcherLabel
+    : DEFAULT_LAUNCHER_LABEL;
+
   return (
     <>
       {open && (
@@ -581,8 +594,12 @@ export function ChatWidget({ config, expiresAt, resumeConversationId = null }: C
         aria-expanded={open}
         data-expires-at={expiresAt}
       >
-        <ChatGlyph name={open ? "close" : "chat"} />
-        <span className="cw-launcher-label">{open ? "Close" : "Chat"}</span>
+        {open ? (
+          <ChatGlyph name="close" />
+        ) : (
+          <span className="cw-launcher-orb" aria-hidden="true" />
+        )}
+        <span className="cw-launcher-label">{resolvedLauncherLabel}</span>
       </button>
       {!open && (
         <div className="cw-teaser" role="status">

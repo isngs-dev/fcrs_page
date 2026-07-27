@@ -115,6 +115,9 @@ export function SettingsForm({
 
   const isDirty =
     fields.greeting !== serverFields.greeting ||
+    fields.launcherLabel !== serverFields.launcherLabel ||
+    fields.sidebarWorkspaceLabel !== serverFields.sidebarWorkspaceLabel ||
+    fields.dashboardTitle !== serverFields.dashboardTitle ||
     fields.businessHoursText !== serverFields.businessHoursText ||
     fields.escalationPolicy !== serverFields.escalationPolicy ||
     fields.tone !== serverFields.tone;
@@ -186,6 +189,27 @@ export function SettingsForm({
               )}
             </div>
 
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="launcherLabel">Launcher label</Label>
+              <Input
+                id="launcherLabel"
+                name="launcherLabel"
+                value={fields.launcherLabel}
+                onValueChange={(value) => setFields((f) => ({ ...f, launcherLabel: value }))}
+                maxLength={40}
+                placeholder="Chat with us"
+              />
+              {fieldErrors.launcherLabel ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {fieldErrors.launcherLabel}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Up to 40 characters. Leave blank to use “Chat with us”.
+                </p>
+              )}
+            </div>
+
             <div className="flex flex-col gap-1.5 rounded-md border border-dashed border-[#d5d5cb] bg-[#f7f7f3] p-3">
               <p className="text-xs font-semibold text-[#5a5b54]">
                 Bot name &amp; suggested questions — coming soon
@@ -193,6 +217,58 @@ export function SettingsForm({
               <p className="text-xs text-[#70716a]">
                 These aren&apos;t configurable yet; there&apos;s no backend field for them.
               </p>
+            </div>
+          </section>
+
+          {/* Workspace */}
+          <section className="flex flex-col gap-3.5 rounded-[14px] border border-[#e7e7e2] p-5">
+            <h2 className="text-sm font-bold text-[#191a17]">Workspace</h2>
+            <p className="text-xs text-[#70716a]">
+              These labels personalize this tenant&apos;s sidebar and dashboard only.
+            </p>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="sidebarWorkspaceLabel">Sidebar workspace label</Label>
+              <Input
+                id="sidebarWorkspaceLabel"
+                name="sidebarWorkspaceLabel"
+                value={fields.sidebarWorkspaceLabel}
+                onValueChange={(value) =>
+                  setFields((f) => ({ ...f, sidebarWorkspaceLabel: value }))
+                }
+                maxLength={80}
+                placeholder="Client workspace"
+              />
+              {fieldErrors.sidebarWorkspaceLabel ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {fieldErrors.sidebarWorkspaceLabel}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Up to 80 characters. Leave blank for “Client workspace”.
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="dashboardTitle">Dashboard title</Label>
+              <Input
+                id="dashboardTitle"
+                name="dashboardTitle"
+                value={fields.dashboardTitle}
+                onValueChange={(value) => setFields((f) => ({ ...f, dashboardTitle: value }))}
+                maxLength={80}
+                placeholder="Dashboard"
+              />
+              {fieldErrors.dashboardTitle ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {fieldErrors.dashboardTitle}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Up to 80 characters. Leave blank for “Dashboard”.
+                </p>
+              )}
             </div>
           </section>
 
@@ -285,7 +361,11 @@ export function SettingsForm({
 
         {/* Right: live preview, 420px per HANDOFF-SPEC.md §3 */}
         <aside className="flex w-full shrink-0 flex-col items-center gap-3.5 rounded-[14px] border border-[#e7e7e2] bg-[#f7f7f3] p-6 lg:w-[420px]">
-          <WidgetPreview greeting={fields.greeting} tone={fields.tone} />
+          <WidgetPreview
+            greeting={fields.greeting}
+            tone={fields.tone}
+            launcherLabel={fields.launcherLabel}
+          />
         </aside>
       </div>
 

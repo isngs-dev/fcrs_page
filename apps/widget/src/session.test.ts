@@ -55,6 +55,37 @@ describe("mintVisitorSession", () => {
     expect(authHeader()).toEqual({ Authorization: "Bearer jwt.abc.def" });
   });
 
+  it("parses an optional tenant launcher_label without altering the admission request", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        launcher_label: "Chat with our team",
+      }),
+    );
+
+    const result = await mintVisitorSession(baseConfig);
+
+    expect(result).toMatchObject({
+      ok: true,
+      session: { launcherLabel: "Chat with our team" },
+    });
+  });
+
+  it("returns a typed invalid-response error, never throws, for an over-long launcher_label", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        launcher_label: "x".repeat(41),
+      }),
+    );
+
+    const result = await mintVisitorSession(baseConfig);
+
+    expect(result).toMatchObject({ ok: false, error: { errorCode: "INVALID_RESPONSE_SHAPE" } });
+  });
+
   it("sends credentials: 'omit', JSON body { client_key }, and never sends tenant_id", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { visitor_token: "jwt.abc.def", expires_at: "2026-07-16T12:30:00Z" }),

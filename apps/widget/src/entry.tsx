@@ -105,7 +105,16 @@ async function boot(): Promise<void> {
   // (resumeConversationId=null) -- ChatWidget starts a brand-new
   // conversation on the first turn, exactly as before this sprint.
   console.info(`${LOG_PREFIX} visitor session minted, expires_at=${admission.session.expiresAt}`);
-  reactRoot.render(<ChatWidget config={config} expiresAt={admission.session.expiresAt} resumeConversationId={null} />);
+  reactRoot.render(
+    <ChatWidget
+      config={config}
+      expiresAt={admission.session.expiresAt}
+      {...(admission.session.launcherLabel === undefined
+        ? {}
+        : { launcherLabel: admission.session.launcherLabel })}
+      resumeConversationId={null}
+    />,
+  );
 }
 
 // Top-level side effect — the only one in this bundle. Never let a boot

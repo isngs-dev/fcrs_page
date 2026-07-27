@@ -69,3 +69,21 @@ async def get_resume_enabled(db: Database, tenant_id: str) -> bool:
     if not isinstance(business_hours, dict):
         return False
     return business_hours.get("widget_session_resume") is True
+
+
+async def get_launcher_label(db: Database, tenant_id: str) -> str | None:
+    """Read a resolved tenant's optional launcher label during admission.
+
+    This is intentionally pre-auth and unscoped by ``AuthClaims``: the
+    gateway has already selected the tenant from its public client key and
+    Origin allowlist. The parameterized tenant predicate ensures the selected
+    tenant can never receive another tenant's label.
+    """
+    row = await db.fetchrow(
+        "SELECT launcher_label FROM tenant_bot_settings WHERE tenant_id = $1",
+        tenant_id,
+    )
+    if row is None:
+        return None
+    value = row.get("launcher_label") if hasattr(row, "get") else row["launcher_label"]
+    return value if isinstance(value, str) else None

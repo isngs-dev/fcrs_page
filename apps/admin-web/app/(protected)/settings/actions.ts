@@ -26,6 +26,9 @@ import type { BotSettings } from "@/lib/settings";
 
 export interface SaveFieldErrors {
   greeting?: string;
+  launcherLabel?: string;
+  sidebarWorkspaceLabel?: string;
+  dashboardTitle?: string;
   escalationPolicy?: string;
   tone?: string;
   businessHoursText?: string;
@@ -52,6 +55,9 @@ export type SaveState = SaveIdleState | SaveErrorState | SaveSuccessState;
 
 interface AdminBotSettingsResponseBody {
   greeting: string | null;
+  launcher_label: string | null;
+  sidebar_workspace_label: string | null;
+  dashboard_title: string | null;
   business_hours: Record<string, unknown> | null;
   escalation_policy: string | null;
   tone: string | null;
@@ -65,6 +71,9 @@ interface AdminBotSettingsResponseBody {
 function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
   return {
     greeting: body.greeting,
+    launcherLabel: body.launcher_label,
+    sidebarWorkspaceLabel: body.sidebar_workspace_label ?? null,
+    dashboardTitle: body.dashboard_title ?? null,
     businessHours: body.business_hours,
     escalationPolicy: body.escalation_policy,
     tone: body.tone,
@@ -100,6 +109,9 @@ export async function saveSettings(
 
   const parsed = settingsFormSchema.safeParse({
     greeting: nullToUndefined(formData.get("greeting")),
+    launcherLabel: nullToUndefined(formData.get("launcherLabel")),
+    sidebarWorkspaceLabel: nullToUndefined(formData.get("sidebarWorkspaceLabel")),
+    dashboardTitle: nullToUndefined(formData.get("dashboardTitle")),
     escalationPolicy: nullToUndefined(formData.get("escalationPolicy")),
     tone: nullToUndefined(formData.get("tone")),
     businessHoursText: String(formData.get("businessHoursText") ?? ""),
@@ -110,6 +122,9 @@ export async function saveSettings(
     for (const issue of parsed.error.issues) {
       const key = issue.path[0];
       if (key === "greeting") fieldErrors.greeting ??= issue.message;
+      else if (key === "launcherLabel") fieldErrors.launcherLabel ??= issue.message;
+      else if (key === "sidebarWorkspaceLabel") fieldErrors.sidebarWorkspaceLabel ??= issue.message;
+      else if (key === "dashboardTitle") fieldErrors.dashboardTitle ??= issue.message;
       else if (key === "escalationPolicy") fieldErrors.escalationPolicy ??= issue.message;
       else if (key === "tone") fieldErrors.tone ??= issue.message;
     }
@@ -120,7 +135,15 @@ export async function saveSettings(
     });
   }
 
-  const { greeting, escalationPolicy, tone, businessHoursText } = parsed.data;
+  const {
+    greeting,
+    launcherLabel,
+    sidebarWorkspaceLabel,
+    dashboardTitle,
+    escalationPolicy,
+    tone,
+    businessHoursText,
+  } = parsed.data;
 
   // Belt-and-suspenders JSON guard (decision 5) -- reject client-side and
   // never call the backend on invalid business_hours.
@@ -135,6 +158,9 @@ export async function saveSettings(
 
   const requestBody = {
     greeting: greeting ?? null,
+    launcher_label: launcherLabel ?? null,
+    sidebar_workspace_label: sidebarWorkspaceLabel ?? null,
+    dashboard_title: dashboardTitle ?? null,
     escalation_policy: escalationPolicy ?? null,
     tone: tone ?? null,
     business_hours: businessHoursResult.value,
@@ -166,6 +192,7 @@ export async function saveSettings(
   const body = (await response.json()) as AdminBotSettingsResponseBody;
 
   revalidatePath(tenantId ? `/clients/${tenantId}/settings` : "/settings");
+  if (!tenantId) revalidatePath("/");
 
   return { status: "saved", settings: toBotSettings(body) };
 }

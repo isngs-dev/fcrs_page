@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from api.config import get_api_settings
 from api.gateway.dependencies import get_visitor_claims
-from api.gateway.repository import get_resume_enabled, get_tenant_by_client_key
+from api.gateway.repository import get_launcher_label, get_resume_enabled, get_tenant_by_client_key
 from api.gateway.sessions import mint_visitor_session, origin_allowed
 from api.ratelimit import client_ip, enforce_rate_limit
 
@@ -79,16 +79,20 @@ async def widget_session(
     # response. Defaults false (opt-in) -- never changes mint_visitor_session,
     # the JWT, or any authorization SQL.
     resume_enabled = await get_resume_enabled(db, tenant["id"])
+    launcher_label = await get_launcher_label(db, tenant["id"])
 
     _log.info(
         "visitor session minted",
         extra={"event": "widget_session", "tenant_id": tenant["id"]},
     )
-    return {
+    response: dict[str, str | bool] = {
         "visitor_token": token,
         "expires_at": expires_at,
         "resume_enabled": resume_enabled,
     }
+    if launcher_label is not None:
+        response["launcher_label"] = launcher_label
+    return response
 
 
 @router.get("/whoami")

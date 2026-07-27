@@ -25,6 +25,9 @@ function jsonResponse(body: Record<string, unknown>, status: number): Response {
 function buildFormData(overrides: Partial<Record<string, string>> = {}): FormData {
   const values: Record<string, string> = {
     greeting: "Hi there!",
+    launcherLabel: "Chat with our team",
+    sidebarWorkspaceLabel: "Acme support",
+    dashboardTitle: "Support hub",
     escalationPolicy: "Escalate on refunds.",
     tone: "friendly",
     businessHoursText: "",
@@ -75,6 +78,11 @@ describe("saveSettings", () => {
       expect(state.settings.greeting).toBe("Server-normalized greeting");
       expect(state.settings.greeting).not.toBe("What the user typed");
     }
+    expect(JSON.parse(adminApiFetchMock.mock.calls[0][1].body)).toMatchObject({
+      launcher_label: "Chat with our team",
+      sidebar_workspace_label: "Acme support",
+      dashboard_title: "Support hub",
+    });
   });
 
   it("rejects an invalid business_hours textarea without calling adminApiFetch", async () => {
@@ -129,6 +137,34 @@ describe("saveSettings", () => {
     expect(state.status).toBe("error");
     if (state.status === "error") {
       expect(state.fieldErrors.tone).toMatch(/100/);
+    }
+    expect(adminApiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an over-length launcher label client-side without calling adminApiFetch", async () => {
+    const state = await saveSettings(
+      undefined,
+      { status: "idle" },
+      buildFormData({ launcherLabel: "a".repeat(41) })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.fieldErrors.launcherLabel).toMatch(/40/);
+    }
+    expect(adminApiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects over-length workspace labels client-side without calling adminApiFetch", async () => {
+    const state = await saveSettings(
+      undefined,
+      { status: "idle" },
+      buildFormData({ sidebarWorkspaceLabel: "a".repeat(81) })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.fieldErrors.sidebarWorkspaceLabel).toMatch(/80/);
     }
     expect(adminApiFetchMock).not.toHaveBeenCalled();
   });

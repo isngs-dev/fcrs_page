@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -11,6 +12,8 @@ import {
   LogOut,
   MessageSquare,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings2,
   Users2,
   UsersRound,
@@ -23,6 +26,8 @@ interface AdminShellProps {
   role: Role;
   identityLabel: string;
   identityRoleLabel?: string;
+  sidebarWorkspaceLabel?: string | null;
+  sidebarStorageScope?: string;
   logoutAction: () => Promise<void>;
 }
 
@@ -121,15 +126,115 @@ function isCurrentPath(pathname: string, href: string): boolean {
 
 /** Mobile bottom nav shows at most this many items before overflowing into "More". */
 const MOBILE_NAV_MAX = 5;
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 360;
+const SIDEBAR_DEFAULT_WIDTH = 248;
+const SIDEBAR_COLLAPSED_WIDTH = 64;
+const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
+  width: SIDEBAR_DEFAULT_WIDTH,
+  collapsed: false,
+};
+const sidebarPreferenceCache = new Map<string, { raw: string | null; value: SidebarPreferences }>();
+
+interface SidebarPreferences {
+  width: number;
+  collapsed: boolean;
+}
+
+export function clampSidebarWidth(value: number): number {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
+}
+
+function sidebarStorageKey(scope: string | undefined): string {
+  return `chatleads:admin-sidebar:v1:${scope ?? "default"}`;
+}
+
+function readSidebarPreferences(scope: string | undefined): SidebarPreferences {
+  if (typeof window === "undefined") return DEFAULT_SIDEBAR_PREFERENCES;
+  const key = sidebarStorageKey(scope);
+  try {
+    const raw = window.localStorage.getItem(key);
+    const cached = sidebarPreferenceCache.get(key);
+    if (cached?.raw === raw) return cached.value;
+    const parsed = raw ? (JSON.parse(raw) as Partial<SidebarPreferences>) : {};
+    const value = {
+      width: typeof parsed.width === "number" ? clampSidebarWidth(parsed.width) : SIDEBAR_DEFAULT_WIDTH,
+      collapsed: parsed.collapsed === true,
+    };
+    sidebarPreferenceCache.set(key, { raw, value });
+    return value;
+  } catch {
+    return DEFAULT_SIDEBAR_PREFERENCES;
+  }
+}
+
+function subscribeToSidebarPreferences(scope: string | undefined, callback: () => void): () => void {
+  const key = sidebarStorageKey(scope);
+  const eventName = `${key}:change`;
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === key) callback();
+  };
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(eventName, callback);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(eventName, callback);
+  };
+}
+
+function saveSidebarPreferences(scope: string | undefined, value: SidebarPreferences): void {
+  const key = sidebarStorageKey(scope);
+  try {
+    const raw = JSON.stringify(value);
+    window.localStorage.setItem(key, raw);
+    sidebarPreferenceCache.set(key, { raw, value });
+    window.dispatchEvent(new Event(`${key}:change`));
+  } catch {
+    // Local storage can be disabled; this session simply retains the default.
+  }
+}
 
 export function AdminShell({
   children,
   role,
   identityLabel,
   identityRoleLabel,
+  sidebarWorkspaceLabel,
+  sidebarStorageScope,
   logoutAction,
 }: AdminShellProps) {
   const pathname = usePathname();
+  const sidebar = useSyncExternalStore(
+    (callback) => subscribeToSidebarPreferences(sidebarStorageScope, callback),
+    () => readSidebarPreferences(sidebarStorageScope),
+    () => DEFAULT_SIDEBAR_PREFERENCES
+  );
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+
+  function updateSidebar(updater: (current: SidebarPreferences) => SidebarPreferences) {
+    saveSidebarPreferences(sidebarStorageScope, updater(sidebar));
+  }
+
+  function onResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsResizingSidebar(true);
+  }
+
+  function onResizeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!isResizingSidebar) return;
+    updateSidebar((current) => ({
+      ...current,
+      collapsed: false,
+      width: clampSidebarWidth(event.clientX),
+    }));
+  }
+
+  function onResizeEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setIsResizingSidebar(false);
+  }
   const visibleGroups = navGroups
     .map((group) => ({
       label: group.label,
@@ -139,6 +244,8 @@ export function AdminShell({
   const visibleItems = visibleGroups.flatMap((group) => group.items);
   const isPlatformAdmin = role === "PLATFORM_ADMIN";
   const roleLabel = identityRoleLabel ?? (isPlatformAdmin ? "Platform admin" : "Client workspace");
+  const workspaceLabel =
+    sidebarWorkspaceLabel?.trim() || (isPlatformAdmin ? "Platform workspace" : "Client workspace");
 
   // Cap the mobile bottom nav at MOBILE_NAV_MAX slots: if there's room for
   // every item, show them all; otherwise reserve the last slot for a "More"
@@ -152,23 +259,38 @@ export function AdminShell({
 
   return (
     <div className="flex min-h-screen bg-[#fbfbf8] text-[#191a17]">
-      <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 flex-col border-r border-[#e7e7e2] bg-[#f7f7f3] px-3.5 py-4 lg:flex">
-        <div className="flex items-center gap-2.5 px-2 pb-6">
+      <aside
+        style={{ width: sidebar.collapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebar.width }}
+        className={cn(
+          "sticky top-0 relative hidden h-screen shrink-0 flex-col border-r border-[#e7e7e2] bg-[#f7f7f3] py-4 lg:flex",
+          sidebar.collapsed ? "px-2" : "px-3.5"
+        )}
+      >
+        <div className={cn("flex items-center gap-2.5 px-2 pb-6", sidebar.collapsed && "flex-col")}>
           <div className="grid size-[34px] place-items-center rounded-[10px] bg-[#191a17] text-xs font-bold text-[#e4f222]">
             CL
           </div>
-          <div className="min-w-0 flex-1">
+          <div className={cn("min-w-0 flex-1", sidebar.collapsed && "hidden")}>
             <p className="text-sm font-bold tracking-[-0.02em]">ChatLeads</p>
             <p className="truncate text-[11px] text-[#96978e]">
-              {isPlatformAdmin ? "Platform workspace" : "Client workspace"}
+              {workspaceLabel}
             </p>
           </div>
+          <button
+            type="button"
+            aria-label={sidebar.collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!sidebar.collapsed}
+            onClick={() => updateSidebar((current) => ({ ...current, collapsed: !current.collapsed }))}
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-[#5a5b54] transition-colors hover:bg-[#ecece5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+          >
+            {sidebar.collapsed ? <PanelLeftOpen aria-hidden className="size-4" /> : <PanelLeftClose aria-hidden className="size-4" />}
+          </button>
         </div>
 
         <nav aria-label="Main navigation" className="flex flex-col gap-4 overflow-y-auto">
           {visibleGroups.map((group) => (
             <div key={group.label} className="flex flex-col gap-1">
-              <p className="px-2 py-1 text-[10.5px] font-semibold tracking-[0.06em] text-[#a8a99f] uppercase">
+              <p className={cn("px-2 py-1 text-[10.5px] font-semibold tracking-[0.06em] text-[#a8a99f] uppercase", sidebar.collapsed && "hidden")}>
                 {group.label}
               </p>
               {group.items.map((item) => {
@@ -178,16 +300,18 @@ export function AdminShell({
                   <Link
                     key={item.href}
                     href={item.href}
+                    aria-label={item.label}
                     aria-current={current ? "page" : undefined}
                     className={cn(
                       "flex min-h-11 items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]",
+                      sidebar.collapsed && "justify-center px-0",
                       current
                         ? "bg-[#ecece5] font-semibold text-[#191a17]"
                         : "text-[#45463f] hover:bg-[#ecece5]/70"
                     )}
-                  >
-                    <Icon aria-hidden className="size-4" />
-                    {item.label}
+                    >
+                      <Icon aria-hidden className="size-4" />
+                    <span className={sidebar.collapsed ? "hidden" : undefined}>{item.label}</span>
                   </Link>
                 );
               })}
@@ -196,11 +320,11 @@ export function AdminShell({
         </nav>
 
         <div className="mt-auto border-t border-[#e7e7e2] pt-3">
-          <div className="flex items-center gap-2.5 rounded-lg px-2 py-2">
+          <div className={cn("flex items-center gap-2.5 rounded-lg px-2 py-2", sidebar.collapsed && "justify-center px-0")}>
             <div className="grid size-8 shrink-0 place-items-center rounded-full bg-[#dcdcd2] text-[10px] font-bold text-[#5a5b54]">
               {identityLabel.slice(0, 2).toUpperCase()}
             </div>
-            <div className="min-w-0 flex-1">
+            <div className={cn("min-w-0 flex-1", sidebar.collapsed && "hidden")}>
               <p className="min-w-0 truncate text-xs font-semibold">{identityLabel}</p>
               <p className="min-w-0 truncate text-[11px] text-[#96978e]">{roleLabel}</p>
             </div>
@@ -208,13 +332,26 @@ export function AdminShell({
           <form action={logoutAction}>
             <button
               type="submit"
+              aria-label="Log out"
               className="flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] text-[#5a5b54] transition-colors hover:bg-[#ecece5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
             >
               <LogOut aria-hidden className="size-4" />
-              Log out
+              <span className={sidebar.collapsed ? "hidden" : undefined}>Log out</span>
             </button>
           </form>
         </div>
+        {!sidebar.collapsed ? (
+          <div
+            role="separator"
+            aria-label="Resize sidebar"
+            aria-orientation="vertical"
+            onPointerDown={onResizeStart}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeEnd}
+            onPointerCancel={onResizeEnd}
+            className="absolute top-0 right-[-5px] z-10 hidden h-full w-2 cursor-col-resize touch-none lg:block"
+          />
+        ) : null}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

@@ -9,7 +9,19 @@
  * MessageList.tsx, Bubble.tsx, LeadForm.tsx, ScheduleCta.tsx, ConnectionStatus.tsx
  * for the untouched structure/logic these rules target).
  */
+import geistLatinDataUri from "../assets/fonts/geist-latin.woff2?inline";
+
+/** The real SIL OFL-licensed Geist Latin variable font is inlined by Vite at
+ * build time, so the visitor's host page never makes a font request. */
 export const widgetCss = `
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("${geistLatinDataUri}") format("woff2");
+}
+
 :host {
   all: initial;
   --cw-ink: #191a17;
@@ -32,7 +44,7 @@ export const widgetCss = `
   --cw-danger-bg: #fff1ef;
   --cw-danger-line: #d99b95;
   --cw-online: #c9e86a;
-  font-family: "Instrument Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--cw-ink);
   line-height: 1.45;
 }
@@ -47,19 +59,20 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   right: 20px;
   bottom: 20px;
   z-index: 2147483000;
-  width: 56px;
+  width: auto;
   height: 56px;
   min-width: 56px;
   min-height: 56px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0;
+  justify-content: flex-start;
+  gap: 9px;
+  max-width: calc(100vw - 40px);
+  padding: 4px 16px 4px 5px;
   border: none;
   border-radius: 999px;
   background: var(--cw-ink);
-  color: var(--cw-citron);
+  color: var(--cw-paper);
   box-shadow: 0 8px 22px rgba(25, 26, 23, 0.3);
   font-size: 14px;
   font-weight: 700;
@@ -69,18 +82,25 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 }
 .cw-placeholder:hover { background: #30312c; box-shadow: 0 11px 26px rgba(25, 26, 23, 0.36); }
 .cw-placeholder:active { transform: scale(0.97); }
-/* The launcher's text label is visually hidden (spec shows an icon-only 56px
-   circle) but stays in the DOM/accessible name — no behavior/ARIA change. */
+.cw-launcher-orb {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 30%, #f4fa9a, #e4f222 70%, #b8c410);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .15);
+}
+/* Desktop uses an icon-and-text pill. The label collapses visually only on
+   narrow screens, while the button's accessible name remains unchanged. */
 .cw-launcher-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
+  min-width: 0;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  color: var(--cw-paper);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  border: 0;
 }
 .cw-placeholder:focus-visible, .cw-input:focus-visible, .cw-suggestion:focus-visible,
 .cw-mute-toggle:focus-visible, .cw-close-button:focus-visible, .cw-send-button:focus-visible,
@@ -117,19 +137,20 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 
 .cw-diagnostic { position: fixed; right: 20px; bottom: 88px; z-index: 2147483000; max-width: 320px; padding: 12px 14px; border: 1px solid #b23a32; border-radius: 10px; background: var(--cw-danger-bg); color: var(--cw-danger-ink); font-size: 12px; box-shadow: 0 8px 22px rgba(25, 26, 23, 0.18); }
 
-/* Panel — 350x520, radius 18, shadow per spec */
+/* Full-height desktop drawer — 400px max width, flush to the right edge. */
 .cw-panel {
   position: fixed;
-  right: 20px;
-  bottom: 88px;
+  top: 0;
+  right: 0;
+  bottom: 0;
   z-index: 2147483000;
-  width: min(350px, calc(100vw - 32px));
-  height: min(520px, calc(100dvh - 116px));
+  width: min(400px, calc(100vw - 32px));
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border: none;
-  border-radius: 18px;
+  border-radius: 16px 0 0 16px;
   background: var(--cw-paper);
   box-shadow: 0 12px 34px rgba(25, 26, 23, 0.18);
   animation: cw-panel-in 220ms cubic-bezier(.16, 1, .3, 1);
@@ -144,8 +165,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   background: radial-gradient(circle at 35% 30%, #f4fa9a, #e4f222 70%, #b8c410);
 }
 .cw-assistant-mark { width: 28px; height: 28px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .15); }
-.cw-panel-title { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 1px; font-size: 13.5px; font-weight: 700; letter-spacing: -0.01em; }
-.cw-panel-presence { color: #9b9c93; font-size: 10.5px; font-weight: 500; }
+.cw-panel-title { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 1px; font-size: 15.5px; font-weight: 700; letter-spacing: -0.01em; }
+.cw-panel-presence { color: #9b9c93; font-size: 12px; font-weight: 500; }
 .cw-header-actions { display: flex; align-items: center; gap: 6px; }
 
 /* Mute "pill" — bordered pill w/ icon + On/Off text, per spec (44px hit target preserved) */
@@ -161,7 +182,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   border-radius: 999px;
   background: transparent;
   color: #e5e6df;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -176,7 +197,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-mute-toggle svg, .cw-close-button svg, .cw-send-button svg, .cw-launcher svg { display: block; }
 
 /* Offline / connection-status banner — #fff9ec/#f0e2bd/#6a4e00 + bordered "Retry now" pill */
-.cw-status { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-bottom: 1px solid var(--cw-warning-line); background: var(--cw-warning-bg); color: var(--cw-warning-ink); font-size: 11px; }
+.cw-status { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-bottom: 1px solid var(--cw-warning-line); background: var(--cw-warning-bg); color: var(--cw-warning-ink); font-size: 12px; }
 .cw-status:empty { display: none; }
 .cw-status-text { flex: 1 1 auto; }
 .cw-status-retry { min-height: 44px; padding: 3px 10px; border: 1px solid currentColor; border-radius: 999px; background: transparent; color: inherit; font-size: 11px; font-weight: 600; white-space: nowrap; cursor: pointer; }
@@ -188,8 +209,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 /* Greeting state */
 .cw-welcome { display: flex; min-height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 24px 5px; text-align: center; gap: 14px; }
 .cw-welcome-orb { width: 56px; height: 56px; box-shadow: 0 8px 20px rgba(184, 196, 16, .22); }
-.cw-welcome h2 { margin: 0; color: var(--cw-ink); font-size: 17px; font-weight: 700; line-height: 1.25; letter-spacing: -0.02em; }
-.cw-welcome p { max-width: 270px; margin: 4px 0 0; color: var(--cw-muted); font-size: 12.5px; line-height: 1.5; }
+.cw-welcome h2 { margin: 0; color: var(--cw-ink); font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.02em; }
+.cw-welcome p { max-width: 270px; margin: 4px 0 0; color: var(--cw-muted); font-size: 14px; line-height: 1.5; }
 .cw-suggestions { width: 100%; display: flex; flex-direction: column; gap: 8px; }
 .cw-suggestion {
   width: 100%;
@@ -202,7 +223,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   border-radius: 10px;
   background: var(--cw-paper);
   color: var(--cw-text-secondary);
-  font-size: 12.5px;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
   transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
@@ -214,7 +235,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-bubble-row { display: flex; width: 100%; }
 .cw-bubble-row-user { justify-content: flex-end; }
 .cw-bubble-row-bot { justify-content: flex-start; }
-.cw-bubble { max-width: 85%; padding: 9px 13px; border-radius: 14px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.cw-bubble { max-width: 85%; padding: 9px 13px; border-radius: 14px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .cw-bubble-user { max-width: 80%; border-radius: 14px 14px 4px 14px; background: var(--cw-ink); color: var(--cw-paper); }
 .cw-bubble-bot { border: 1px solid var(--cw-line); border-radius: 14px 14px 14px 4px; background: var(--cw-paper); color: var(--cw-ink); }
 .cw-md-paragraph { margin: 0; }
@@ -232,7 +253,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 
 /* Composer — pill input + 38px circular citron send (ink arrow); disabled = citron-soft/faint arrow */
 .cw-input-row { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 12px; border-top: 1px solid var(--cw-line); background: var(--cw-paper); }
-.cw-input { flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 10px 14px; border: 1px solid var(--cw-line); border-radius: 999px; background: var(--cw-paper); color: var(--cw-ink); font-size: 13px; }
+.cw-input { flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 10px 14px; border: 1px solid var(--cw-line); border-radius: 999px; background: var(--cw-paper); color: var(--cw-ink); font-size: 15px; }
 .cw-input::placeholder { color: var(--cw-faint); }
 .cw-input:disabled { background: var(--cw-cool-paper); color: var(--cw-line-dashed); }
 .cw-send-button {
@@ -405,11 +426,13 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   .cw-typing-dot:nth-child(3) { animation-delay: .3s; }
 }
 @keyframes cw-typing-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .55; } 30% { transform: translateY(-4px); opacity: 1; } }
-@keyframes cw-panel-in { from { transform: translateY(8px) scale(.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+@keyframes cw-panel-in { from { transform: translateX(16px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .cw-panel, .cw-placeholder, .cw-suggestion, .cw-send-button { animation: none; transition: none; } }
 @media (max-width: 480px) {
-  .cw-panel { right: 8px; bottom: 76px; width: calc(100vw - 16px); height: min(560px, calc(100dvh - 88px)); border-radius: 16px; }
-  .cw-placeholder { right: 12px; bottom: 12px; }
+  .cw-panel { inset: 0; width: 100vw; height: 100dvh; border-radius: 0; }
+  .cw-placeholder { right: 12px; bottom: 12px; width: 56px; min-width: 56px; padding: 0; justify-content: center; }
+  .cw-launcher-orb { width: 46px; height: 46px; }
+  .cw-launcher-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
   .cw-teaser { right: 80px; bottom: 20px; max-width: calc(100vw - 160px); overflow: hidden; text-overflow: ellipsis; }
 }
 `;

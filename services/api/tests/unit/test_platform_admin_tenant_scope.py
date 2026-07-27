@@ -109,10 +109,22 @@ class _StubDatabase:
         self.executed_sql.append((query, args))
         q = query.strip().upper()
         if q.startswith("INSERT INTO TENANT_BOT_SETTINGS"):
-            tenant_id, greeting, business_hours, escalation_policy, tone = args
+            (
+                tenant_id,
+                greeting,
+                business_hours,
+                escalation_policy,
+                tone,
+                launcher_label,
+                sidebar_workspace_label,
+                dashboard_title,
+            ) = args
             self._bot_settings[tenant_id] = {
                 "greeting": greeting, "business_hours": business_hours,
                 "escalation_policy": escalation_policy, "tone": tone,
+                "launcher_label": launcher_label,
+                "sidebar_workspace_label": sidebar_workspace_label,
+                "dashboard_title": dashboard_title,
             }
             return "INSERT 0 1"
         if q.startswith("INSERT INTO AUDIT_EVENTS"):
@@ -294,12 +306,49 @@ async def test_platform_admin_write_binds_tenant_x(app: Any, db: _StubDatabase) 
         token = _token(Role.PLATFORM_ADMIN, subject="pa-1")
         resp = await client.put(
             f"/admin/tenants/{_TENANT_X}/settings",
-            json={"greeting": "super-user edit"},
+            json={
+                "greeting": "super-user edit",
+                "launcher_label": "Chat with Acme",
+                "sidebar_workspace_label": "Acme support",
+                "dashboard_title": "Acme hub",
+            },
             cookies={"access_token": token},
         )
     assert resp.status_code == 200
     assert resp.json()["greeting"] == "super-user edit"
+    assert resp.json()["launcher_label"] == "Chat with Acme"
+    assert resp.json()["sidebar_workspace_label"] == "Acme support"
+    assert resp.json()["dashboard_title"] == "Acme hub"
     assert db._bot_settings[_TENANT_X]["greeting"] == "super-user edit"
+    assert db._bot_settings[_TENANT_X]["launcher_label"] == "Chat with Acme"
+    assert db._bot_settings[_TENANT_X]["sidebar_workspace_label"] == "Acme support"
+    assert db._bot_settings[_TENANT_X]["dashboard_title"] == "Acme hub"
+
+
+async def test_platform_admin_workspace_labels_only_change_the_target_tenant(
+    app: Any, db: _StubDatabase
+) -> None:
+    db._bot_settings[_TENANT_Y] = {
+        "greeting": None,
+        "business_hours": None,
+        "escalation_policy": None,
+        "tone": None,
+        "launcher_label": None,
+        "sidebar_workspace_label": "WidgetCo support",
+        "dashboard_title": "WidgetCo hub",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.PLATFORM_ADMIN, subject="pa-1")
+        response = await client.put(
+            f"/admin/tenants/{_TENANT_X}/settings",
+            json={"sidebar_workspace_label": "Acme support", "dashboard_title": "Acme hub"},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 200
+    assert db._bot_settings[_TENANT_X]["sidebar_workspace_label"] == "Acme support"
+    assert db._bot_settings[_TENANT_Y]["sidebar_workspace_label"] == "WidgetCo support"
+    assert db._bot_settings[_TENANT_Y]["dashboard_title"] == "WidgetCo hub"
 
 
 async def test_platform_admin_reaches_leads_list_for_tenant_x(app: Any) -> None:

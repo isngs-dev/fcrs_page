@@ -18,6 +18,9 @@ describe("getBotSettings", () => {
     getMock.mockReturnValue({ value: "jwt-value" });
     const body = {
       greeting: "Hi!",
+      launcher_label: "Chat with our team",
+      sidebar_workspace_label: "Acme support",
+      dashboard_title: "Support hub",
       business_hours: { mon: ["09:00", "17:00"] },
       escalation_policy: "Escalate on refunds.",
       tone: "friendly",
@@ -36,6 +39,9 @@ describe("getBotSettings", () => {
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
       expect(result.settings.greeting).toBe("Hi!");
+      expect(result.settings.launcherLabel).toBe("Chat with our team");
+      expect(result.settings.sidebarWorkspaceLabel).toBe("Acme support");
+      expect(result.settings.dashboardTitle).toBe("Support hub");
       expect(result.settings.businessHours).toEqual({ mon: ["09:00", "17:00"] });
       expect(result.settings.escalationPolicy).toBe("Escalate on refunds.");
       expect(result.settings.tone).toBe("friendly");

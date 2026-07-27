@@ -71,6 +71,7 @@ vi.mock("../schedule", async () => {
 });
 
 import { ChatWidget } from "./ChatWidget";
+import { widgetCss } from "./widgetCss";
 
 const baseConfig: WidgetConfig = {
   clientKey: "pk_test_123",
@@ -164,6 +165,49 @@ function typeAndSend(text: string): void {
 }
 
 describe("ChatWidget", () => {
+  it("renders a configured launcher label as literal text while preserving the launcher ARIA state", () => {
+    act(() => {
+      root.render(
+        <ChatWidget
+          config={baseConfig}
+          expiresAt="2026-07-16T12:30:00Z"
+          launcherLabel={'Chat <b>with us</b>'}
+        />,
+      );
+    });
+
+    const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
+    expect(launcher.getAttribute("aria-label")).toBe("Open chat");
+    expect(launcher.getAttribute("aria-expanded")).toBe("false");
+    expect(launcher.textContent).toContain("Chat <b>with us</b>");
+    expect(launcher.querySelector("b")).toBeNull();
+
+    openPanel();
+    expect(launcher.getAttribute("aria-label")).toBe("Close chat");
+    expect(launcher.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("uses the explicit default launcher label when no tenant label is supplied", () => {
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+
+    expect(container.querySelector(".cw-launcher-label")?.textContent).toBe("Chat with us");
+  });
+
+  it("ships a self-contained full-height drawer CSS contract", () => {
+    expect(widgetCss).toContain("@font-face");
+    expect(widgetCss).toContain("data:font/woff2;base64,");
+    expect(widgetCss).toContain("top: 0");
+    expect(widgetCss).toContain("height: 100dvh");
+    expect(widgetCss).toContain("width: min(400px, calc(100vw - 32px))");
+    expect(widgetCss).toContain("@media (max-width: 480px)");
+    expect(widgetCss).toContain("inset: 0");
+    expect(widgetCss).not.toMatch(/https?:|\/\/fonts\./i);
+    expect(widgetCss).not.toContain("Instrument Sans");
+    expect(widgetCss).not.toContain("Inter");
+  });
+
   it("toggles the panel open/closed via the launcher", () => {
     act(() => {
       root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);

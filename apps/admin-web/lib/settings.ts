@@ -15,6 +15,9 @@ import { adminApiFetch, AdminApiError } from "@/lib/api";
  * preserved verbatim -- never coerced to `""`/`0` (no-silent-fallback). */
 export interface BotSettings {
   greeting: string | null;
+  launcherLabel: string | null;
+  sidebarWorkspaceLabel: string | null;
+  dashboardTitle: string | null;
   businessHours: Record<string, unknown> | null;
   escalationPolicy: string | null;
   tone: string | null;
@@ -27,6 +30,9 @@ export interface BotSettings {
 
 interface AdminBotSettingsResponseBody {
   greeting: string | null;
+  launcher_label: string | null;
+  sidebar_workspace_label: string | null;
+  dashboard_title: string | null;
   business_hours: Record<string, unknown> | null;
   escalation_policy: string | null;
   tone: string | null;
@@ -44,6 +50,9 @@ export type SettingsResult =
 function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
   return {
     greeting: body.greeting,
+    launcherLabel: body.launcher_label,
+    sidebarWorkspaceLabel: body.sidebar_workspace_label ?? null,
+    dashboardTitle: body.dashboard_title ?? null,
     businessHours: body.business_hours,
     escalationPolicy: body.escalation_policy,
     tone: body.tone,

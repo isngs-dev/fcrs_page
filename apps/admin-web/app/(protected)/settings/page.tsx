@@ -83,6 +83,19 @@ function ReadOnlyQualitativeFields({ settings }: { settings: BotSettings }) {
         <p className="text-xs text-muted-foreground">Tone</p>
         <p className="text-sm">{settings.tone || "—"}</p>
       </div>
+      <div className="border-t border-input pt-4">
+        <p className="text-sm font-medium">Workspace</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-1">
+            <p className="text-xs text-muted-foreground">Sidebar workspace label</p>
+            <p className="text-sm">{settings.sidebarWorkspaceLabel || "—"}</p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <p className="text-xs text-muted-foreground">Dashboard title</p>
+            <p className="text-sm">{settings.dashboardTitle || "—"}</p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,9 @@ describe("settingsFormSchema", () => {
   it("parses a fully valid input", () => {
     const result = settingsFormSchema.safeParse({
       greeting: "Hi there!",
+      launcherLabel: "Chat with our team",
+      sidebarWorkspaceLabel: "Acme support",
+      dashboardTitle: "Support hub",
       escalationPolicy: "Escalate on refund requests.",
       tone: "friendly",
       businessHoursText: "",
@@ -20,6 +23,9 @@ describe("settingsFormSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.greeting).toBe("Hi there!");
+      expect(result.data.launcherLabel).toBe("Chat with our team");
+      expect(result.data.sidebarWorkspaceLabel).toBe("Acme support");
+      expect(result.data.dashboardTitle).toBe("Support hub");
       expect(result.data.escalationPolicy).toBe("Escalate on refund requests.");
       expect(result.data.tone).toBe("friendly");
     }
@@ -67,9 +73,42 @@ describe("settingsFormSchema", () => {
     }
   });
 
+  it("fails when launcherLabel exceeds 40 characters", () => {
+    const result = settingsFormSchema.safeParse({
+      greeting: "",
+      launcherLabel: "a".repeat(41),
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.find((i) => i.path[0] === "launcherLabel")?.message;
+      expect(msg).toMatch(/40/);
+    }
+  });
+
+  it("fails when either workspace label exceeds 80 characters", () => {
+    for (const key of ["sidebarWorkspaceLabel", "dashboardTitle"] as const) {
+      const result = settingsFormSchema.safeParse({
+        greeting: "",
+        launcherLabel: "",
+        sidebarWorkspaceLabel: key === "sidebarWorkspaceLabel" ? "a".repeat(81) : "",
+        dashboardTitle: key === "dashboardTitle" ? "a".repeat(81) : "",
+        escalationPolicy: "",
+        tone: "",
+        businessHoursText: "",
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
   it("coerces blank optional fields to undefined (backend receives null, not '')", () => {
     const result = settingsFormSchema.safeParse({
       greeting: "   ",
+      launcherLabel: "",
+      sidebarWorkspaceLabel: "",
+      dashboardTitle: "",
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
@@ -77,6 +116,7 @@ describe("settingsFormSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.greeting).toBeUndefined();
+      expect(result.data.launcherLabel).toBeUndefined();
       expect(result.data.escalationPolicy).toBeUndefined();
       expect(result.data.tone).toBeUndefined();
     }
@@ -139,6 +179,9 @@ describe("stringifyBusinessHours", () => {
 
 const baseSettings: BotSettings = {
   greeting: "Hi!",
+  launcherLabel: "Chat with our team",
+  sidebarWorkspaceLabel: "Acme support",
+  dashboardTitle: "Support hub",
   businessHours: { mon: ["09:00", "17:00"] },
   escalationPolicy: "Escalate on refunds.",
   tone: "friendly",
@@ -153,6 +196,9 @@ describe("fieldValuesFromSettings", () => {
   it("maps a fully-populated BotSettings to string field values", () => {
     expect(fieldValuesFromSettings(baseSettings)).toEqual({
       greeting: "Hi!",
+      launcherLabel: "Chat with our team",
+      sidebarWorkspaceLabel: "Acme support",
+      dashboardTitle: "Support hub",
       businessHoursText: '{\n  "mon": [\n    "09:00",\n    "17:00"\n  ]\n}',
       escalationPolicy: "Escalate on refunds.",
       tone: "friendly",
@@ -164,12 +210,18 @@ describe("fieldValuesFromSettings", () => {
       fieldValuesFromSettings({
         ...baseSettings,
         greeting: null,
+        launcherLabel: null,
+        sidebarWorkspaceLabel: null,
+        dashboardTitle: null,
         businessHours: null,
         escalationPolicy: null,
         tone: null,
       })
     ).toEqual({
       greeting: "",
+      launcherLabel: "",
+      sidebarWorkspaceLabel: "",
+      dashboardTitle: "",
       businessHoursText: "",
       escalationPolicy: "",
       tone: "",

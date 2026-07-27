@@ -8,6 +8,7 @@
 import { redirect } from "next/navigation";
 import { getClaims } from "@/lib/auth";
 import { getProfile } from "@/lib/profile";
+import { getBotSettings } from "@/lib/settings";
 import { AdminShell } from "@/components/admin/admin-shell";
 import { logout } from "@/app/(protected)/actions";
 
@@ -23,9 +24,22 @@ export default async function ProtectedLayout({
 
   const profile = await getProfile();
   const identityLabel = profile?.name || profile?.email || claims.subject;
+  // The dashboard page also reads these settings for its title. Identical
+  // server fetches are memoized per request by Next, so the shell gets its
+  // tenant label without exposing settings data to client state.
+  const settingsResult =
+    claims.role === "PLATFORM_ADMIN" ? null : await getBotSettings();
+  const sidebarWorkspaceLabel =
+    settingsResult?.status === "ok" ? settingsResult.settings.sidebarWorkspaceLabel : null;
 
   return (
-    <AdminShell role={claims.role} identityLabel={identityLabel} logoutAction={logout}>
+    <AdminShell
+      role={claims.role}
+      identityLabel={identityLabel}
+      sidebarWorkspaceLabel={sidebarWorkspaceLabel}
+      sidebarStorageScope={claims.subject}
+      logoutAction={logout}
+    >
       {children}
     </AdminShell>
   );

@@ -24,6 +24,7 @@ import type { WidgetConfig } from "./config";
 const SessionResponseSchema = z.object({
   visitor_token: z.string().min(1),
   expires_at: z.string().min(1),
+  launcher_label: z.string().max(40).optional(),
   // SR-3 decision 8: absent -> false (a pre-SR-3 backend, or a tenant with
   // the flag unset, must behave exactly as S14.1/S14.2 shipped).
   resume_enabled: z.boolean().optional(),
@@ -32,6 +33,7 @@ const SessionResponseSchema = z.object({
 export interface VisitorSession {
   visitorToken: string;
   expiresAt: string;
+  launcherLabel?: string;
 }
 
 /** The typed shape of the backend's central error envelope. */
@@ -220,6 +222,9 @@ export async function mintVisitorSession(config: WidgetConfig): Promise<Admissio
   currentSession = {
     visitorToken: parsed.data.visitor_token,
     expiresAt: parsed.data.expires_at,
+    ...(parsed.data.launcher_label === undefined
+      ? {}
+      : { launcherLabel: parsed.data.launcher_label }),
   };
 
   // SR-3 decision 8: a fresh mint (as opposed to a hydrated resume) resets

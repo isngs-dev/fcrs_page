@@ -11,7 +11,7 @@ cross-module read, mirroring S10.4's precedent) and runs a new, narrow
 ``api_key_ciphertext`` column, never an import of ``llm/config_repository
 .py``'s decrypt path.
 
-``upsert_bot_settings`` writes ONLY the four new qualitative columns
+``upsert_bot_settings`` writes ONLY the qualitative columns
 (decision 6); it never touches ``tenant_orchestrator_configs`` or
 ``tenant_llm_configs`` -- those keep their existing S10.2/S3.1 write paths.
 
@@ -39,6 +39,9 @@ class BotSettings:
     business_hours: dict[str, Any] | None
     escalation_policy: str | None
     tone: str | None
+    launcher_label: str | None
+    sidebar_workspace_label: str | None
+    dashboard_title: str | None
     answer_threshold: float
     escalate_threshold: float
     turn_cap: int
@@ -67,7 +70,8 @@ async def get_bot_settings(db: Database, claims: AuthClaims) -> BotSettings:
     _reject_global(claims)
 
     settings_row = await db.fetchrow(
-        "SELECT greeting, business_hours, escalation_policy, tone "
+        "SELECT greeting, business_hours, escalation_policy, tone, launcher_label, "
+        "sidebar_workspace_label, dashboard_title "
         "FROM tenant_bot_settings WHERE tenant_id = $1",
         claims.tenant_id,
     )
@@ -86,6 +90,15 @@ async def get_bot_settings(db: Database, claims: AuthClaims) -> BotSettings:
             settings_row["escalation_policy"] if settings_row is not None else None
         ),
         tone=settings_row["tone"] if settings_row is not None else None,
+        launcher_label=(
+            settings_row["launcher_label"] if settings_row is not None else None
+        ),
+        sidebar_workspace_label=(
+            settings_row["sidebar_workspace_label"] if settings_row is not None else None
+        ),
+        dashboard_title=(
+            settings_row["dashboard_title"] if settings_row is not None else None
+        ),
         answer_threshold=orchestrator_config.answer_threshold,
         escalate_threshold=orchestrator_config.escalate_threshold,
         turn_cap=orchestrator_config.turn_cap,
@@ -102,8 +115,11 @@ async def upsert_bot_settings(
     business_hours: dict[str, Any] | None,
     escalation_policy: str | None,
     tone: str | None,
+    launcher_label: str | None,
+    sidebar_workspace_label: str | None,
+    dashboard_title: str | None,
 ) -> None:
-    """Insert or update ONLY the four qualitative columns for the caller's tenant.
+    """Insert or update ONLY the qualitative columns for the caller's tenant.
 
     Never binds/updates a threshold or provider/model param -- those keep
     their existing S10.2/S3.1 write paths untouched (decision 6).
@@ -112,14 +128,19 @@ async def upsert_bot_settings(
 
     await db.execute(
         "INSERT INTO tenant_bot_settings "
-        "(tenant_id, greeting, business_hours, escalation_policy, tone) "
-        "VALUES ($1, $2, $3, $4, $5) "
+        "(tenant_id, greeting, business_hours, escalation_policy, tone, launcher_label, "
+        "sidebar_workspace_label, dashboard_title) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
         "ON CONFLICT (tenant_id) DO UPDATE SET "
         "greeting = $2, business_hours = $3, escalation_policy = $4, tone = $5, "
+        "launcher_label = $6, sidebar_workspace_label = $7, dashboard_title = $8, "
         "updated_at = now()",
         claims.tenant_id,
         greeting,
         business_hours,
         escalation_policy,
         tone,
+        launcher_label,
+        sidebar_workspace_label,
+        dashboard_title,
     )

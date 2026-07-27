@@ -73,12 +73,24 @@ class _StubDatabase:
     async def execute(self, query: str, *args: Any) -> str:
         q = query.strip().upper()
         if q.startswith("INSERT INTO TENANT_BOT_SETTINGS"):
-            tenant_id, greeting, business_hours, escalation_policy, tone = args
+            (
+                tenant_id,
+                greeting,
+                business_hours,
+                escalation_policy,
+                tone,
+                launcher_label,
+                sidebar_workspace_label,
+                dashboard_title,
+            ) = args
             self._bot_settings[tenant_id] = {
                 "greeting": greeting,
                 "business_hours": business_hours,
                 "escalation_policy": escalation_policy,
                 "tone": tone,
+                "launcher_label": launcher_label,
+                "sidebar_workspace_label": sidebar_workspace_label,
+                "dashboard_title": dashboard_title,
             }
             self.updated_tables.append("tenant_bot_settings")
             return "INSERT 0 1"
@@ -235,6 +247,9 @@ async def test_put_settings_client_admin_200_round_trip(app: Any, db: _StubDatab
                 "business_hours": {"mon": "9-5"},
                 "escalation_policy": "Escalate after 3 misses.",
                 "tone": "friendly",
+                "launcher_label": "Chat with our team",
+                "sidebar_workspace_label": "Acme support",
+                "dashboard_title": "Support hub",
             },
             cookies={"access_token": token},
         )
@@ -243,12 +258,50 @@ async def test_put_settings_client_admin_200_round_trip(app: Any, db: _StubDatab
     assert put_response.status_code == 200
     put_body = put_response.json()
     assert put_body["greeting"] == "Welcome!"
+    assert put_body["launcher_label"] == "Chat with our team"
+    assert put_body["sidebar_workspace_label"] == "Acme support"
+    assert put_body["dashboard_title"] == "Support hub"
 
     get_body = get_response.json()
     assert get_body["greeting"] == "Welcome!"
     assert get_body["business_hours"] == {"mon": "9-5"}
     assert get_body["escalation_policy"] == "Escalate after 3 misses."
     assert get_body["tone"] == "friendly"
+    assert get_body["launcher_label"] == "Chat with our team"
+    assert get_body["sidebar_workspace_label"] == "Acme support"
+    assert get_body["dashboard_title"] == "Support hub"
+
+
+async def test_workspace_labels_are_tenant_isolated_and_empty_values_round_trip_as_null(
+    app: Any, db: _StubDatabase
+) -> None:
+    tenant_b = "tenant-b-456"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        tenant_a_token = _token(Role.CLIENT_ADMIN, _TENANT_ID)
+        tenant_b_token = _token(Role.CLIENT_ADMIN, tenant_b)
+        write_response = await client.put(
+            "/admin/settings",
+            json={
+                "sidebar_workspace_label": "Acme support",
+                "dashboard_title": "Support hub",
+            },
+            cookies={"access_token": tenant_a_token},
+        )
+        tenant_b_response = await client.get(
+            "/admin/settings", cookies={"access_token": tenant_b_token}
+        )
+        empty_response = await client.put(
+            "/admin/settings",
+            json={"sidebar_workspace_label": "", "dashboard_title": ""},
+            cookies={"access_token": tenant_a_token},
+        )
+
+    assert write_response.status_code == 200
+    assert tenant_b_response.status_code == 200
+    assert tenant_b_response.json()["sidebar_workspace_label"] is None
+    assert tenant_b_response.json()["dashboard_title"] is None
+    assert empty_response.json()["sidebar_workspace_label"] is None
+    assert empty_response.json()["dashboard_title"] is None
 
 
 async def test_put_settings_client_agent_403(app: Any) -> None:
@@ -256,7 +309,7 @@ async def test_put_settings_client_agent_403(app: Any) -> None:
         token = _token(Role.CLIENT_AGENT)
         response = await client.put(
             "/admin/settings",
-            json={"greeting": "Hi"},
+            json={"greeting": "Hi", "launcher_label": "Agent cannot set this"},
             cookies={"access_token": token},
         )
 
@@ -268,7 +321,7 @@ async def test_put_settings_visitor_403(app: Any) -> None:
         token = _token(Role.VISITOR)
         response = await client.put(
             "/admin/settings",
-            json={"greeting": "Hi"},
+            json={"greeting": "Hi", "launcher_label": "Visitor cannot set this"},
             cookies={"access_token": token},
         )
 
@@ -318,6 +371,31 @@ async def test_put_settings_greeting_too_long_422(app: Any) -> None:
         response = await client.put(
             "/admin/settings",
             json={"greeting": "x" * 2001},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
+
+
+async def test_put_settings_launcher_label_too_long_422(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={"launcher_label": "x" * 41},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["sidebar_workspace_label", "dashboard_title"])
+async def test_put_settings_workspace_label_too_long_422(app: Any, field: str) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={field: "x" * 81},
             cookies={"access_token": token},
         )
 

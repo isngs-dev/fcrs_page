@@ -23,6 +23,24 @@ export const settingsFormSchema = z.object({
     .optional()
     // Empty string -> omitted, so the backend receives `null`, not `""`.
     .transform((value) => (value && value.length > 0 ? value : undefined)),
+  launcherLabel: z
+    .string()
+    .trim()
+    .max(40, "Launcher label must be 40 characters or fewer.")
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
+  sidebarWorkspaceLabel: z
+    .string()
+    .trim()
+    .max(80, "Sidebar workspace label must be 80 characters or fewer.")
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
+  dashboardTitle: z
+    .string()
+    .trim()
+    .max(80, "Dashboard title must be 80 characters or fewer.")
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
   escalationPolicy: z
     .string()
     .trim()
@@ -102,6 +120,9 @@ export function stringifyBusinessHours(
  */
 export interface SettingsFieldValues {
   greeting: string;
+  launcherLabel: string;
+  sidebarWorkspaceLabel: string;
+  dashboardTitle: string;
   businessHoursText: string;
   escalationPolicy: string;
   tone: string;
@@ -114,6 +135,9 @@ export interface SettingsFieldValues {
 export function fieldValuesFromSettings(settings: BotSettings): SettingsFieldValues {
   return {
     greeting: settings.greeting ?? "",
+    launcherLabel: settings.launcherLabel ?? "",
+    sidebarWorkspaceLabel: settings.sidebarWorkspaceLabel ?? "",
+    dashboardTitle: settings.dashboardTitle ?? "",
     businessHoursText: stringifyBusinessHours(settings.businessHours),
     escalationPolicy: settings.escalationPolicy ?? "",
     tone: settings.tone ?? "",

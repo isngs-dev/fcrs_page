@@ -77,7 +77,14 @@ class _StubDatabase:
         if "tenant_bot_settings" in query:
             tenant_id = str(args[0]) if args else None
             row = self._bot_settings.get(tenant_id) if tenant_id else None
-            return {"business_hours": row.get("business_hours")} if row is not None else None
+            return (
+                {
+                    "business_hours": row.get("business_hours"),
+                    "launcher_label": row.get("launcher_label"),
+                }
+                if row is not None
+                else None
+            )
         if args:
             # The raw client key must NEVER be the bound param -- only its hash.
             bound = str(args[0])
@@ -374,6 +381,60 @@ async def test_widget_session_resume_enabled_tenant_echoes_true() -> None:
     payload = decode_access_token(body["visitor_token"], secret=_TEST_JWT_SECRET)
     assert payload["role"] == "VISITOR"
     assert payload["tenant_id"] == _TENANT_A_ID
+
+
+async def test_widget_session_echoes_only_the_resolved_tenants_launcher_label() -> None:
+    app = _build_app(
+        bot_settings={
+            _TENANT_A_ID: {"launcher_label": "Chat with A"},
+            _TENANT_B_ID: {"launcher_label": "Chat with B"},
+        },
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        response = await c.post(
+            "/widget/session",
+            json={"client_key": _CLIENT_KEY_A},
+            headers={"Origin": "http://localhost:3000"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["launcher_label"] == "Chat with A"
+    assert body["launcher_label"] != "Chat with B"
+    assert "tenant_id" not in body
+    assert "visitor_id" not in body
+
+
+async def test_widget_session_omits_launcher_label_when_the_tenant_has_none() -> None:
+    app = _build_app(bot_settings={_TENANT_A_ID: {"launcher_label": None}})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        response = await c.post(
+            "/widget/session",
+            json={"client_key": _CLIENT_KEY_A},
+            headers={"Origin": "http://localhost:3000"},
+        )
+
+    assert response.status_code == 200
+    assert "launcher_label" not in response.json()
+
+
+async def test_launcher_label_repository_query_is_tenant_scoped_and_parameterized() -> None:
+    """The admission echo may only read the resolved tenant's row."""
+    from api.gateway.repository import get_launcher_label
+
+    class _RecordingDatabase:
+        query: str = ""
+        args: tuple[object, ...] = ()
+
+        async def fetchrow(self, query: str, *args: object) -> dict[str, str]:
+            self.query = query
+            self.args = args
+            return {"launcher_label": "Chat with A"}
+
+    db = _RecordingDatabase()
+    assert await get_launcher_label(db, _TENANT_A_ID) == "Chat with A"
+    assert "WHERE tenant_id = $1" in db.query
+    assert db.args == (_TENANT_A_ID,)
 
 
 async def test_widget_session_resume_flag_false_when_business_hours_missing_key() -> None:
