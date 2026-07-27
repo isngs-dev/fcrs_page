@@ -29,10 +29,11 @@ the streaming ``answer_turn_stream``. This keeps the two delivery modes from
 ever drifting -- a turn-cap or guardrail fix is made once, not twice.
 
 Post-generation no-answer override: a grounded generation carrying the
-``_NO_ANSWER_SENTINEL`` is escalated at this same seam. The pre-generation
-``_decide()`` confidence band remains pure and untouched; this is a second
-deterministic post-generation check alongside guardrails, not a revival of
-the S10.1 free-text confidence floor.
+``_NO_ANSWER_SENTINEL`` clarifies only on turns 1-2 when the prior assistant
+decision was not ``"clarify"``; every other no-answer escalates at this same
+seam. The pre-generation ``_decide()`` confidence band remains pure and
+untouched; this is a second deterministic post-generation check alongside
+guardrails, not a revival of the S10.1 free-text confidence floor.
 """
 from __future__ import annotations
 
@@ -51,6 +52,7 @@ from api.conversation_store.repository import (
     append_message,
     count_messages,
     create_conversation,
+    get_last_assistant_decision,
     get_message,
     get_working_memory,
 )
@@ -164,6 +166,8 @@ class _GeneratePlan:
     intent: str | None
     model: str
     provider: LLMProvider
+    turns: int
+    prev_decision: str | None
 
 
 @dataclass(frozen=True)
@@ -187,6 +191,8 @@ class _FinalizedGeneration:
 _INTENT_LABELS: list[str] = ["question", "chitchat", "scheduling_request", "off_topic", "other"]
 
 _NO_ANSWER_SENTINEL = "NO_ANSWER_FOUND"
+# SR-13 decision 3: an early no-answer clarifies at most once.
+_NO_ANSWER_CLARIFY_MAX_TURNS = 2
 
 _FORMATTING_RULES = (
     " Formatting rules: write short plain paragraphs. You may use **bold**, "
@@ -478,6 +484,8 @@ async def _resolve_turn(
             intent=intent,
             model=config.model,
             provider=provider,
+            turns=turns,
+            prev_decision=None,
         )
 
     if intent in ("scheduling_request", "off_topic"):
@@ -509,6 +517,7 @@ async def _resolve_turn(
     decision = _decide(confidence, cfg)
 
     if decision == "answer":
+        prev_decision = await get_last_assistant_decision(db, claims, conversation_id)
         wm = await get_working_memory(
             db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
         )
@@ -525,6 +534,8 @@ async def _resolve_turn(
             intent=intent,
             model=config.model,
             provider=provider,
+            turns=turns,
+            prev_decision=prev_decision,
         )
 
     if decision == "clarify":
@@ -568,8 +579,9 @@ def _finalize_generation(text: str, plan: _GeneratePlan) -> _FinalizedGeneration
     violation, returns the safe reply + ``decision="blocked"`` +
     ``action="lead_form"`` + ``grounded=False`` + ``sources=[]`` +
     ``guardrail_flag=<rule>``. A clean grounded response containing the
-    no-answer protocol sentinel becomes ``decision="escalate"`` with the
-    regular escalation reply; the caller lazily resolves its CTA action.
+    no-answer protocol sentinel becomes ``decision="clarify"`` only within
+    the early-turn, never-twice gate; every other sentinel gets the regular
+    escalation reply and the caller lazily resolves its CTA action.
     Otherwise returns the clean text + the plan's own decision/sources/
     grounded, ``action=None``, ``guardrail_flag=None``.
     Shared verbatim by ``answer_turn`` (non-streaming) and
@@ -588,6 +600,18 @@ def _finalize_generation(text: str, plan: _GeneratePlan) -> _FinalizedGeneration
             guardrail_flag=guardrail.rule,
         )
     if plan.grounded and _NO_ANSWER_SENTINEL in text:
+        if (
+            plan.turns <= _NO_ANSWER_CLARIFY_MAX_TURNS
+            and plan.prev_decision != "clarify"
+        ):
+            return _FinalizedGeneration(
+                reply=_CLARIFY_REPLY,
+                decision="clarify",
+                sources=[],
+                grounded=False,
+                action=None,
+                guardrail_flag=None,
+            )
         return _FinalizedGeneration(
             reply=_ESCALATE_REPLY,
             decision="escalate",
@@ -701,6 +725,8 @@ async def answer_turn(
     if final.resolve_escalate_action:
         action = await _schedule_action(db, claims)
         _log.info("post-generation no-answer escalate", extra={"event": "chat_no_answer_escalate"})
+    elif final.decision == "clarify":
+        _log.info("post-generation no-answer clarify", extra={"event": "chat_no_answer_clarify"})
 
     stored_message_id = await append_message(
         db,
@@ -903,6 +929,8 @@ async def answer_turn_stream(
     if final.resolve_escalate_action:
         action = await _schedule_action(db, claims)
         _log.info("post-generation no-answer escalate", extra={"event": "chat_no_answer_escalate"})
+    elif final.decision == "clarify":
+        _log.info("post-generation no-answer clarify", extra={"event": "chat_no_answer_clarify"})
 
     stored_message_id = await append_message(
         db,

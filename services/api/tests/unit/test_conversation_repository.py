@@ -25,6 +25,7 @@ from api.conversation_store.repository import (
     delete_conversation,
     export_conversation,
     get_conversation,
+    get_last_assistant_decision,
     get_message,
     get_messages,
     get_window,
@@ -1470,6 +1471,59 @@ async def test_count_messages_global_caller_rejected() -> None:
 
     with pytest.raises(ValidationError):
         await count_messages(db, claims, "conv-1")
+
+
+ # -- get_last_assistant_decision (SR-13) ------------------------------------------
+
+
+async def test_get_last_assistant_decision_returns_latest_bot_decision_tenant_scoped() -> None:
+    """The narrow SR-13 read is tenant/conversation scoped and reads bot turns only."""
+    db = _RecordingDatabase(rows=[{"decision": "clarify"}])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    decision = await get_last_assistant_decision(db, claims, "conv-1")
+
+    assert decision == "clarify"
+    assert "WHERE tenant_id = $1 AND conversation_id = $2" in db.last_sql
+    assert "role = $3" in db.last_sql
+    assert "ORDER BY created_at DESC, message_id DESC" in db.last_sql
+    assert "LIMIT 1" in db.last_sql
+    assert db.last_params == ("tenant-a", "conv-1", "bot")
+
+
+@pytest.mark.parametrize("rows", [[], [{"decision": None}]])
+async def test_get_last_assistant_decision_returns_none_for_absent_or_null_decision(
+    rows: list[dict[str, Any]],
+) -> None:
+    """No prior bot turn and a legacy NULL decision both mean no prior clarify."""
+    db = _RecordingDatabase(rows=rows)
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    assert await get_last_assistant_decision(db, claims, "conv-1") is None
+
+
+async def test_get_last_assistant_decision_visitor_scopes_through_conversation_owner() -> None:
+    """A visitor cannot inspect another visitor's bot turn in the same tenant."""
+    db = _RecordingDatabase(rows=[{"decision": "answer"}])
+    claims = _claims("tenant-a", Role.VISITOR, subject="visitor-xyz")
+
+    decision = await get_last_assistant_decision(db, claims, "conv-1")
+
+    assert decision == "answer"
+    assert "EXISTS (SELECT 1 FROM conversations c" in db.last_sql
+    assert "c.visitor_id = $4" in db.last_sql
+    assert db.last_params == ("tenant-a", "conv-1", "bot", "visitor-xyz")
+
+
+async def test_get_last_assistant_decision_rejects_global_caller_before_query() -> None:
+    """PLATFORM_ADMIN has no tenant scope, so the read fails closed."""
+    db = _RecordingDatabase()
+    claims = _claims(None, Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError):
+        await get_last_assistant_decision(db, claims, "conv-1")
+
+    assert db.all_sql == []
 
 
 # -- append_message / get_message action round-trip (S10.4) ----------------------

@@ -302,6 +302,46 @@ async def count_messages(
     return int(row["count"]) if row is not None else 0
 
 
+async def get_last_assistant_decision(
+    db: Database,
+    claims: AuthClaims,
+    conversation_id: str,
+) -> str | None:
+    """Return the most recent assistant turn's decision, or ``None``.
+
+    This narrow SR-13 read is tenant- and VISITOR-scoped exactly like
+    ``count_messages``. ``messages`` has no ``visitor_id`` column, so visitor
+    scoping uses the owning ``conversations`` row. Same-timestamp turns are
+    ordered deterministically by ``message_id`` after ``created_at``.
+    """
+    _reject_global(claims)
+
+    params: list[Any] = [claims.tenant_id, conversation_id, "bot"]
+    where = "WHERE tenant_id = $1 AND conversation_id = $2"
+    where += f" AND role = ${len(params)}"
+
+    if claims.role == Role.VISITOR:
+        params.append(claims.subject)
+        where += (
+            " AND EXISTS (SELECT 1 FROM conversations c "
+            "WHERE c.conversation_id = messages.conversation_id "
+            "AND c.tenant_id = messages.tenant_id "
+            f"AND c.visitor_id = ${len(params)})"
+        )
+
+    # Parameterized SQL; `where` is a safe constant clause built above.
+    # ruff: noqa: S608
+    sql = (
+        "SELECT decision FROM messages "
+        + where
+        + " ORDER BY created_at DESC, message_id DESC LIMIT 1"
+    )
+    row = await db.fetchrow(sql, *params)
+    if row is None or row["decision"] is None:
+        return None
+    return str(row["decision"])
+
+
 async def get_conversation(
     db: Database, claims: AuthClaims, conversation_id: str,
 ) -> Conversation | None:

@@ -139,6 +139,7 @@ class _Patched:
         classify_return: str = "question",
         classify_error: Exception | None = None,
         count_messages_return: int = 1,
+        prev_decision: str | None = None,
         availability: Availability | None = ...,  # type: ignore[assignment]
         stream_chunks: list[str] | None = None,
         stream_error: Exception | None = None,
@@ -155,6 +156,7 @@ class _Patched:
             return_value=working_memory if working_memory is not None else _wm()
         )
         self.count_messages = AsyncMock(return_value=count_messages_return)
+        self.get_last_assistant_decision = AsyncMock(return_value=prev_decision)
         # Default: no availability configured -- matches the S10.3-era
         # unconditional "lead_form" expectation for escalate branches unless
         # a test explicitly opts into `availability=_availability()`.
@@ -225,6 +227,10 @@ class _Patched:
             patch("api.orchestrator.service.retrieve_hybrid", self.retrieve_hybrid),
             patch("api.orchestrator.service.provider_for", lambda cfg: self.provider),
             patch("api.orchestrator.service.count_messages", self.count_messages),
+            patch(
+                "api.orchestrator.service.get_last_assistant_decision",
+                self.get_last_assistant_decision,
+            ),
             patch("api.orchestrator.service.get_availability", self.get_availability),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
         ]
@@ -237,7 +243,12 @@ class _Patched:
             p.stop()
 
 
-def _generate_plan(*, grounded: bool = True) -> _GeneratePlan:
+def _generate_plan(
+    *,
+    grounded: bool = True,
+    turns: int = 3,
+    prev_decision: str | None = None,
+) -> _GeneratePlan:
     return _GeneratePlan(
         conversation_id="conv-1",
         assistant_id="bot-1",
@@ -249,6 +260,8 @@ def _generate_plan(*, grounded: bool = True) -> _GeneratePlan:
         intent="question" if grounded else "chitchat",
         model="test-model",
         provider=MagicMock(),
+        turns=turns,
+        prev_decision=prev_decision,
     )
 
 
@@ -760,6 +773,7 @@ async def test_grounded_no_answer_sentinel_escalates_and_stores_resolved_schedul
             input_tokens=10,
             output_tokens=5,
         ),
+        count_messages_return=3,
         availability=_availability(),
     )
     db = object()
@@ -792,6 +806,7 @@ async def test_grounded_no_answer_sentinel_uses_lead_form_without_availability()
             input_tokens=10,
             output_tokens=5,
         ),
+        count_messages_return=3,
         availability=None,
     )
     with p:
@@ -841,6 +856,135 @@ def test_finalize_generation_guardrail_precedes_no_answer_protocol() -> None:
     assert outcome.action == "lead_form"
     assert outcome.resolve_escalate_action is False
     assert outcome.guardrail_flag == RULE_INSTRUCTION_LEAK
+
+
+@pytest.mark.parametrize("turns", [1, 2])
+@pytest.mark.parametrize("prev_decision", [None, "answer", "escalate"])
+def test_finalize_generation_early_grounded_no_answer_clarifies_once(
+    turns: int,
+    prev_decision: str | None,
+) -> None:
+    outcome = _finalize_generation(
+        _NO_ANSWER_SENTINEL,
+        _generate_plan(turns=turns, prev_decision=prev_decision),
+    )
+
+    assert outcome.reply == _CLARIFY_REPLY
+    assert outcome.decision == "clarify"
+    assert outcome.sources == []
+    assert outcome.grounded is False
+    assert outcome.action is None
+    assert outcome.guardrail_flag is None
+    assert outcome.resolve_escalate_action is False
+
+
+@pytest.mark.parametrize(
+    ("turns", "prev_decision"),
+    [(3, None), (2, "clarify")],
+)
+def test_finalize_generation_no_answer_escalates_outside_clarify_gate(
+    turns: int,
+    prev_decision: str | None,
+) -> None:
+    outcome = _finalize_generation(
+        _NO_ANSWER_SENTINEL,
+        _generate_plan(turns=turns, prev_decision=prev_decision),
+    )
+
+    assert outcome.reply == _ESCALATE_REPLY
+    assert outcome.decision == "escalate"
+    assert outcome.resolve_escalate_action is True
+
+
+async def test_grounded_no_answer_turn_one_clarifies_without_scheduling_action() -> None:
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.557),
+        completion=Completion(
+            text=_NO_ANSWER_SENTINEL,
+            model="claude-opus-4-8",
+            input_tokens=10,
+            output_tokens=5,
+        ),
+        count_messages_return=1,
+        prev_decision=None,
+    )
+    db = object()
+    claims = _claims()
+    with p:
+        result = await answer_turn(db=db, claims=claims, message="I have a question about roofing")
+
+    assert result.reply == _CLARIFY_REPLY
+    assert result.decision == "clarify"
+    assert result.action is None
+    assert result.sources == []
+    assert result.confidence == 0.557
+    p.get_last_assistant_decision.assert_awaited_once_with(db, claims, "conv-new")
+    p.get_availability.assert_not_awaited()
+    assistant_call = p._append_calls[1]
+    assert assistant_call["decision"] == "clarify"
+    assert assistant_call["action"] is None
+    assert assistant_call["sources"] == []
+
+
+async def test_grounded_no_answer_turn_two_after_clarify_escalates() -> None:
+    p = _Patched(
+        classify_return="question",
+        completion=Completion(
+            text=_NO_ANSWER_SENTINEL,
+            model="claude-opus-4-8",
+            input_tokens=10,
+            output_tokens=5,
+        ),
+        count_messages_return=2,
+        prev_decision="clarify",
+        availability=_availability(),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="Still vague")
+
+    assert result.reply == _ESCALATE_REPLY
+    assert result.decision == "escalate"
+    assert result.action == "schedule_cta"
+    p.get_availability.assert_awaited_once()
+
+
+async def test_previous_assistant_decision_is_read_only_for_grounded_answer() -> None:
+    """The SR-13 read is paid only by the one branch that can use its result."""
+    grounded = _Patched()
+    with grounded:
+        await answer_turn(db=object(), claims=_claims(), message="A grounded question")
+    grounded.get_last_assistant_decision.assert_awaited_once()
+
+    chitchat = _Patched(classify_return="chitchat")
+    with chitchat:
+        await answer_turn(db=object(), claims=_claims(), message="hello")
+    chitchat.get_last_assistant_decision.assert_not_awaited()
+
+    turn_cap = _Patched(count_messages_return=7)
+    with turn_cap:
+        await answer_turn(db=object(), claims=_claims(), message="over the cap")
+    turn_cap.get_last_assistant_decision.assert_not_awaited()
+
+    for intent in ("off_topic", "scheduling_request"):
+        intent_escalate = _Patched(classify_return=intent)
+        with intent_escalate:
+            await answer_turn(db=object(), claims=_claims(), message="route elsewhere")
+        intent_escalate.get_last_assistant_decision.assert_not_awaited()
+
+    pre_generation_clarify = _Patched(
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+    )
+    with pre_generation_clarify:
+        await answer_turn(db=object(), claims=_claims(), message="need more context")
+    pre_generation_clarify.get_last_assistant_decision.assert_not_awaited()
+
+    sub_floor_escalate = _Patched(
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.2),
+    )
+    with sub_floor_escalate:
+        await answer_turn(db=object(), claims=_claims(), message="out of scope")
+    sub_floor_escalate.get_last_assistant_decision.assert_not_awaited()
 
 
 def test_prompts_require_renderable_formatting_and_grounded_sentinel_only() -> None:
@@ -1570,16 +1714,17 @@ async def test_stream_guardrail_block_after_stream_ends_deltas_and_done(caplog: 
 # -- stream: no-answer protocol after the stream ends -------------------------------------
 
 
-async def test_stream_split_no_answer_sentinel_escalates_at_done_and_stores_schedule_action() -> None:
+async def test_stream_split_no_answer_sentinel_clarifies_at_done_without_schedule_action() -> None:
     """The complete streamed text, not individual chunks, controls the
     no-answer override. Deltas carry the raw protocol token, while the done
-    event and stored turn contain the authoritative escalation."""
+    event and stored turn contain the authoritative early-turn clarify."""
     sentinel_parts = ["NO_ANSWER", "_FOUND"]
     p = _Patched(
         classify_return="question",
         hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
         stream_chunks=sentinel_parts,
-        availability=_availability(),
+        count_messages_return=1,
+        prev_decision=None,
     )
     with p:
         events = await _collect(
@@ -1591,18 +1736,20 @@ async def test_stream_split_no_answer_sentinel_escalates_at_done_and_stores_sche
 
     done = events[-1]
     assert done.type == "done"
-    assert done.data["reply"] == _ESCALATE_REPLY
-    assert done.data["decision"] == "escalate"
+    assert done.data["reply"] == _CLARIFY_REPLY
+    assert done.data["decision"] == "clarify"
     assert done.data["sources"] == []
-    assert done.data["action"] == "schedule_cta"
+    assert done.data["action"] is None
     assert done.data["reply"] != "".join(sentinel_parts)
 
     assistant_call = p._append_calls[1]
-    assert assistant_call["content"] == _ESCALATE_REPLY
-    assert assistant_call["decision"] == "escalate"
+    assert assistant_call["content"] == _CLARIFY_REPLY
+    assert assistant_call["decision"] == "clarify"
     assert assistant_call["grounded"] is False
     assert assistant_call["sources"] == []
-    assert assistant_call["action"] == "schedule_cta"
+    assert assistant_call["action"] is None
+    assert assistant_call["tokens"] is None
+    p.get_availability.assert_not_awaited()
 
 
 # -- stream: empty generation -> empty_output block --------------------------------------
@@ -1857,8 +2004,8 @@ class _FakeConversationDb:
     def __init__(self) -> None:
         # (tenant_id, conversation_id) -> visitor_id
         self.conversations: dict[tuple[str, str], str | None] = {}
-        # (tenant_id, conversation_id, message_id) -> role
-        self.messages: dict[tuple[str, str, str], str] = {}
+        # (tenant_id, conversation_id, message_id) -> (role, decision)
+        self.messages: dict[tuple[str, str, str], tuple[str, str | None]] = {}
 
     async def execute(self, query: str, *args: Any) -> str:
         if query.startswith("INSERT INTO conversations"):
@@ -1869,7 +2016,7 @@ class _FakeConversationDb:
             message_id, tenant_id, conversation_id, role = args[0], args[1], args[2], args[3]
             key = (tenant_id, conversation_id, message_id)
             if key not in self.messages:  # ON CONFLICT ... DO NOTHING
-                self.messages[key] = role
+                self.messages[key] = (role, args[9])
             return "INSERT 1"
         raise AssertionError(f"unexpected execute(): {query}")
 
@@ -1879,10 +2026,19 @@ class _FakeConversationDb:
             role_filter = args[2] if "role = $3" in query else None
             count = sum(
                 1
-                for (t, c, m), role in self.messages.items()
+                for (t, c, _m), (role, _decision) in self.messages.items()
                 if t == tenant_id and c == conversation_id and (role_filter is None or role == role_filter)
             )
             return {"count": count}
+        if query.startswith("SELECT decision FROM messages"):
+            tenant_id, conversation_id, role = args[0], args[1], args[2]
+            if "c.visitor_id = $4" in query:
+                if self.conversations.get((tenant_id, conversation_id)) != args[3]:
+                    return None
+            for (t, c, _m), (stored_role, decision) in reversed(self.messages.items()):
+                if t == tenant_id and c == conversation_id and stored_role == role:
+                    return {"decision": decision}
+            return None
         if query.startswith("SELECT 1 FROM conversations") or query.startswith(
             "SELECT conversation_id"
         ):
@@ -1991,7 +2147,7 @@ async def test_sr3_cross_visitor_conversation_id_rejected_real_store() -> None:
     # A's conversation carries ONLY A's own turn (user + the bot reply to it)
     # -- exactly 2 messages, never a 3rd row from B's rejected hijack attempt.
     a_messages = [
-        role for (t, c, _m), role in db.messages.items() if t == tenant and c == conv_a
+        role for (t, c, _m), (role, _decision) in db.messages.items() if t == tenant and c == conv_a
     ]
     assert sorted(a_messages) == ["bot", "user"]
     assert len(a_messages) == 2  # B's turn never landed a row here
@@ -2023,7 +2179,7 @@ async def test_sr3_same_visitor_resume_appends_to_existing_conversation_real_sto
     assert result_2.conversation_id == conv_a  # no new conversation created
     a_user_messages = [
         role
-        for (t, c, _m), role in db.messages.items()
+        for (t, c, _m), (role, _decision) in db.messages.items()
         if t == tenant and c == conv_a and role == "user"
     ]
     assert len(a_user_messages) == 2  # both turns landed in the same thread
