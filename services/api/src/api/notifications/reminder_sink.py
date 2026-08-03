@@ -14,6 +14,13 @@ Imported lazily (function-local) from ``api.scheduling.reminders
 .reminder_sink_for`` to avoid a module-load-time cycle between the
 scheduling and notifications packages -- do NOT import this module eagerly
 from ``api.scheduling.reminders``.
+
+SR-9.3 D4/Scope §3: passes ``lead_id=contact.lead_id`` (from the
+``get_event_contact`` call this sink already performs at line ~52) onto
+``enqueue_notification`` -- zero extra queries -- so a reminder is
+attributable on the customer-360 timeline. ``contact.lead_id`` is honestly
+``None`` for a Calendly-sourced event (never has a lead) or an event whose
+autolink degraded; that is passed through as-is, never fabricated.
 """
 from __future__ import annotations
 
@@ -67,6 +74,7 @@ class NotificationReminderSink:
             body=body,
             dedupe_key=dedupe_key,
             payload={"kind": "reminder", "event_id": reminder.event_id, "offset": reminder.offset},
+            lead_id=contact.lead_id if contact is not None else None,
         )
 
         if job_id is not None:

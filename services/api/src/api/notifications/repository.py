@@ -52,6 +52,7 @@ class NotificationJob:
     last_error: str | None
     created_at: datetime
     updated_at: datetime
+    lead_id: str | None = None
 
 
 async def enqueue_notification(
@@ -65,6 +66,7 @@ async def enqueue_notification(
     dedupe_key: str,
     template: str | None = None,
     payload: dict[str, Any] | None = None,
+    lead_id: str | None = None,
 ) -> str | None:
     """Idempotently enqueue a notification job on ``(tenant_id, dedupe_key)``.
 
@@ -73,6 +75,13 @@ async def enqueue_notification(
     ``RETURNING`` clause matches no rows -> returns ``None`` and the caller
     does NOT enqueue a duplicate send (S9.1 decision 4).
 
+    ``lead_id`` (SR-9.3 D4): optional, defaults to ``None`` so existing call
+    sites (password reset, admin test-send, Calendly webhook) are unaffected.
+    Only customer-facing sites with a lead already in scope
+    (``notifications/reminder_sink.py``, ``scheduling/routes.py``) pass it.
+    No composite FK is possible here (J4) -- this is a plain nullable column,
+    correctness rests on the query predicate in ``list_jobs_for_leads``.
+
     Raises ``ValidationError`` for global callers.
     """
     _reject_global(claims)
@@ -80,8 +89,9 @@ async def enqueue_notification(
     job_id = uuid4().hex
     result = await db.fetchval(
         "INSERT INTO notification_jobs "
-        "(job_id, tenant_id, channel, template, recipient, subject, body, payload, dedupe_key) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
+        "(job_id, tenant_id, channel, template, recipient, subject, body, payload, "
+        " dedupe_key, lead_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) "
         "ON CONFLICT (tenant_id, dedupe_key) DO NOTHING "
         "RETURNING job_id",
         job_id,
@@ -93,8 +103,55 @@ async def enqueue_notification(
         body,
         payload,
         dedupe_key,
+        lead_id,
     )
     return str(result) if result is not None else None
+
+
+async def list_jobs_for_leads(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    lead_ids: list[str],
+    before: datetime | None = None,
+    limit: int = 50,
+) -> list[NotificationJob]:
+    """Fetch tenant-scoped notification jobs attributed to any of ``lead_ids``.
+
+    Used by the SR-9.3 timeline fan-out. ``WHERE tenant_id = $1 AND
+    lead_id = ANY($2)`` -- this is the ONE join in the timeline sprint that
+    rests purely on a query predicate rather than a composite FK (J4/D4): a
+    ``lead_id`` string colliding across two tenants must never leak a job
+    from the wrong tenant, and that guarantee lives entirely in this
+    ``tenant_id = $1`` clause, not in the schema. Newest-first
+    (``created_at DESC``). Returns ``[]`` for an empty ``lead_ids`` list
+    (no query issued). Raises ``ValidationError`` for global callers.
+    """
+    _reject_global(claims)
+
+    if not lead_ids:
+        return []
+
+    params: list[Any] = [claims.tenant_id, lead_ids]
+    where = "WHERE tenant_id = $1 AND lead_id = ANY($2)"
+
+    if before is not None:
+        params.append(before)
+        where += f" AND created_at < ${len(params)}"
+
+    params.append(max(1, min(limit, 200)))
+
+    # Parameterized SQL; `where` is a safe constant clause built above.
+    # ruff: noqa: S608
+    rows = await db.fetch(
+        "SELECT job_id, channel, template, recipient, subject, body, payload, "
+        "dedupe_key, status, attempts, delivery_ref, last_error, created_at, "
+        "updated_at, lead_id "
+        "FROM notification_jobs " + where + " "
+        f"ORDER BY created_at DESC LIMIT ${len(params)}",
+        *params,
+    )
+    return [_row_to_job(row) for row in rows]
 
 
 async def get_notification_job_id_by_dedupe_key(
@@ -207,4 +264,9 @@ def _row_to_job(row: Any) -> NotificationJob:
         last_error=row["last_error"] if row["last_error"] is None else str(row["last_error"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        lead_id=(
+            row["lead_id"]
+            if "lead_id" in row.keys() and row["lead_id"] is not None
+            else None
+        ),
     )

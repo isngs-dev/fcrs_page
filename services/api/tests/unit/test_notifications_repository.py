@@ -22,6 +22,7 @@ from common.errors import ValidationError
 from api.notifications.repository import (
     enqueue_notification,
     get_notification_job,
+    list_jobs_for_leads,
     mark_notification,
 )
 
@@ -44,7 +45,10 @@ class _StubDatabase:
     async def fetchval(self, query: str, *args: Any) -> Any:
         q = query.strip().upper()
         if q.startswith("INSERT INTO NOTIFICATION_JOBS"):
-            (job_id, tenant_id, channel, template, recipient, subject, body, payload, dedupe_key) = args
+            (
+                job_id, tenant_id, channel, template, recipient, subject, body,
+                payload, dedupe_key, lead_id,
+            ) = args
             for row in self._jobs.values():
                 if row["tenant_id"] == tenant_id and row["dedupe_key"] == dedupe_key:
                     return None  # ON CONFLICT DO NOTHING -> RETURNING empty
@@ -54,6 +58,7 @@ class _StubDatabase:
                 "body": body, "payload": payload, "dedupe_key": dedupe_key,
                 "status": "pending", "attempts": 0, "delivery_ref": None,
                 "last_error": None, "created_at": _NOW, "updated_at": _NOW,
+                "lead_id": lead_id,
             }
             return job_id
         if q.startswith("SELECT JOB_ID FROM NOTIFICATION_JOBS"):
@@ -99,6 +104,15 @@ class _StubDatabase:
         return "OK"
 
     async def fetch(self, query: str, *args: Any) -> list[Any]:
+        q = query.strip().upper()
+        if "FROM NOTIFICATION_JOBS" in q and "LEAD_ID = ANY" in q:
+            tenant_id, lead_ids = args[0], args[1]
+            rows = [
+                row for row in self._jobs.values()
+                if row["tenant_id"] == tenant_id and row.get("lead_id") in lead_ids
+            ]
+            rows.sort(key=lambda r: r["created_at"], reverse=True)
+            return rows
         return []
 
     async def close(self) -> None:
@@ -246,6 +260,74 @@ async def test_cross_tenant_mark_does_not_mutate() -> None:
 # ==============================================================================
 # Global caller rejection
 # ==============================================================================
+
+
+# ==============================================================================
+# lead_id write-path + list_jobs_for_leads (SR-9.3 D4)
+# ==============================================================================
+
+
+async def test_enqueue_persists_lead_id_when_supplied() -> None:
+    db = _StubDatabase()
+    job_id = await enqueue_notification(
+        db, _claims(), channel="email", recipient="a@example.com",
+        subject="hi", body="hello", dedupe_key="test:lead1", lead_id="lead-1",
+    )
+    assert job_id is not None
+    assert db._jobs[job_id]["lead_id"] == "lead-1"
+
+
+async def test_enqueue_persists_null_lead_id_when_omitted() -> None:
+    db = _StubDatabase()
+    job_id = await enqueue_notification(
+        db, _claims(), channel="email", recipient="a@example.com",
+        subject="hi", body="hello", dedupe_key="test:lead2",
+    )
+    assert job_id is not None
+    assert db._jobs[job_id]["lead_id"] is None
+
+
+async def test_list_jobs_for_leads_tenant_isolation_same_lead_id_string() -> None:
+    """The single highest-value test in this sprint (J4/D4): notification_jobs
+    has no composite FK, so this join's safety rests entirely on the query
+    predicate. Seed the SAME lead_id string in two tenants and confirm each
+    tenant's list_jobs_for_leads only ever returns its own job."""
+    db = _StubDatabase()
+    shared_lead_id = "lead-shared-123"
+
+    job_a = await enqueue_notification(
+        db, _claims(_TENANT_A), channel="email", recipient="a@example.com",
+        subject="A's notification", body="hello a", dedupe_key="test:shared-lead-a",
+        lead_id=shared_lead_id,
+    )
+    job_b = await enqueue_notification(
+        db, _claims(_TENANT_B), channel="email", recipient="b@example.com",
+        subject="B's notification", body="hello b", dedupe_key="test:shared-lead-b",
+        lead_id=shared_lead_id,
+    )
+    assert job_a is not None
+    assert job_b is not None
+
+    jobs_a = await list_jobs_for_leads(db, _claims(_TENANT_A), lead_ids=[shared_lead_id])
+    jobs_b = await list_jobs_for_leads(db, _claims(_TENANT_B), lead_ids=[shared_lead_id])
+
+    assert [j.job_id for j in jobs_a] == [job_a]
+    assert [j.job_id for j in jobs_b] == [job_b]
+    assert jobs_a[0].subject == "A's notification"
+    assert jobs_b[0].subject == "B's notification"
+
+
+async def test_list_jobs_for_leads_empty_list_returns_empty_no_query() -> None:
+    db = _StubDatabase()
+    jobs = await list_jobs_for_leads(db, _claims(), lead_ids=[])
+    assert jobs == []
+
+
+async def test_list_jobs_for_leads_global_caller_rejected() -> None:
+    db = _StubDatabase()
+    global_claims = AuthClaims(subject="root", role=Role.PLATFORM_ADMIN, tenant_id=None)
+    with pytest.raises(ValidationError):
+        await list_jobs_for_leads(db, global_claims, lead_ids=["lead-1"])
 
 
 async def test_global_caller_rejected_on_every_op() -> None:

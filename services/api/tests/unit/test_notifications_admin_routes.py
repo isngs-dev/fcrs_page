@@ -48,7 +48,7 @@ class _StubDatabase:
     async def fetchval(self, query: str, *args: Any) -> Any:
         q = query.strip().upper()
         if q.startswith("INSERT INTO NOTIFICATION_JOBS"):
-            (job_id, tenant_id, channel, template, recipient, subject, body, payload, dedupe_key) = args
+            (job_id, tenant_id, channel, template, recipient, subject, body, payload, dedupe_key, lead_id) = args
             for row in self._jobs.values():
                 if row["tenant_id"] == tenant_id and row["dedupe_key"] == dedupe_key:
                     return None
