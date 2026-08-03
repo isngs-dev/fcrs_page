@@ -30,8 +30,8 @@ class Lead:
 
     lead_id: str
     visitor_id: str | None
-    name: str
-    email: str
+    name: str | None
+    email: str | None
     phone: str | None
     status: str
     stage: str
@@ -41,6 +41,7 @@ class Lead:
     source: str
     created_at: datetime
     updated_at: datetime
+    converted_to_contact_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,8 +74,8 @@ async def create_lead(
     claims: AuthClaims,
     *,
     visitor_id: str,
-    name: str,
-    email: str,
+    name: str | None,
+    email: str | None,
     phone: str | None,
     consent: dict[str, Any],
     source: str,
@@ -83,6 +84,12 @@ async def create_lead(
 
     Returns the ``lead_id`` (uuid4().hex). The ``consent`` dict is stored as
     jsonb (the default codec handles dict→jsonb conversion).
+
+    ``name``/``email`` are nullable (SR-9.1 C4): an anonymous booking-created
+    lead stores NULL for both rather than a fabricated placeholder -- honest
+    empty contact info, never fake data. The ``leads.name``/``leads.email``
+    columns must already be nullable (migration 0039) for this to persist
+    cleanly against Postgres.
     """
     _reject_global(claims)
 
@@ -122,7 +129,7 @@ async def get_lead(
     row = await db.fetchrow(
         "SELECT lead_id, visitor_id, name, email, phone, status, stage, "
         "qualification_score, consent, assigned_agent_id, source, "
-        "created_at, updated_at "
+        "created_at, updated_at, converted_to_contact_id "
         "FROM leads "
         "WHERE tenant_id = $1 AND lead_id = $2",
         claims.tenant_id,
@@ -153,6 +160,32 @@ async def get_lead_email_by_visitor_id(
         visitor_id,
     )
     return str(row["email"]) if row is not None else None
+
+
+async def get_lead_id_by_visitor_id(
+    db: Database,
+    claims: AuthClaims,
+    visitor_id: str,
+) -> str | None:
+    """Fetch the most-recent lead's ``lead_id`` for a visitor, tenant-scoped.
+
+    Mirrors ``get_lead_email_by_visitor_id`` (same tenant-scoped, newest-first
+    shape). Used by ``api.scheduling.routes.book_slot`` (SR-9.1) to resolve
+    create-or-link semantics: a visitor who already has a lead in this tenant
+    gets it linked onto their booking; a visitor with none gets a new one
+    created. Returns ``None`` if no lead exists for that visitor in this
+    tenant.
+    """
+    _reject_global(claims)
+
+    row = await db.fetchrow(
+        "SELECT lead_id FROM leads "
+        "WHERE tenant_id = $1 AND visitor_id = $2 "
+        "ORDER BY created_at DESC LIMIT 1",
+        claims.tenant_id,
+        visitor_id,
+    )
+    return str(row["lead_id"]) if row is not None else None
 
 
 async def update_lead_stage(
@@ -190,6 +223,54 @@ async def update_lead_stage(
         return None
 
     return await get_lead(db, claims, lead_id)
+
+
+async def update_lead_contact(
+    db: Database,
+    claims: AuthClaims,
+    lead_id: str,
+    *,
+    name: str | None,
+    email: str | None,
+    consent: dict[str, Any],
+) -> bool:
+    """Fill in name/email/consent on an EXISTING lead, tenant-scoped (SR-14 D6).
+
+    The first repository method that mutates ``leads.name``/``leads.email``
+    (every prior ``UPDATE leads`` statement -- ``update_lead_stage``,
+    ``assign_lead``, ``mark_lead_converted`` -- touches only stage/assignment/
+    conversion). Needed for the conversation-start identity gate's "link"
+    branch (D5): a visitor who already has a lead in this tenant (e.g. an
+    anonymous SR-9.1 booking that left ``name``/``email`` NULL, migration
+    0039) gets their captured identity written onto that SAME row rather than
+    a duplicate lead being created.
+
+    ``COALESCE($1, name)``/``COALESCE($2, email)`` guard against overwriting
+    good data with nothing: a ``None`` argument here keeps whatever the row
+    already had, it never nulls out an existing value. In practice the
+    identity-gate endpoint always supplies non-null ``name``/``email``
+    (both are required fields), so this guard is defense-in-depth, not the
+    primary path.
+
+    Returns ``True`` if a row was updated (tenant + lead_id matched),
+    ``False`` otherwise (missing ``lead_id`` or cross-tenant access --
+    callers cannot distinguish the two, matching ``update_lead_stage``'s
+    no-cross-tenant-existence-leak contract). Raises ``ValidationError`` for
+    global (PLATFORM_ADMIN) callers.
+    """
+    _reject_global(claims)
+
+    result = await db.execute(
+        "UPDATE leads SET name = COALESCE($1, name), email = COALESCE($2, email), "
+        "consent = $3, updated_at = now() "
+        "WHERE tenant_id = $4 AND lead_id = $5",
+        name,
+        email,
+        consent,
+        claims.tenant_id,
+        lead_id,
+    )
+    return _rows_affected(result) > 0
 
 
 async def add_activity(
@@ -286,7 +367,7 @@ async def list_leads_for_export(
     rows = await db.fetch(
         "SELECT lead_id, visitor_id, name, email, phone, status, stage, "
         "qualification_score, consent, assigned_agent_id, source, "
-        "created_at, updated_at "
+        "created_at, updated_at, converted_to_contact_id "
         "FROM leads "
         "WHERE tenant_id = $1 "
         "ORDER BY created_at DESC",
@@ -306,6 +387,7 @@ async def list_leads(
     assigned_agent_id: str | None = None,
     created_from: datetime | None = None,
     created_to: datetime | None = None,
+    include_converted: bool = False,
 ) -> tuple[list[Lead], int]:
     """Fetch a paginated, filtered page of the caller's tenant leads.
 
@@ -316,6 +398,11 @@ async def list_leads(
     sets before calling; this function trusts pre-validated inputs and only
     enforces tenancy + parameterization. ``created_from``/``created_to``
     filter ``created_at`` as a half-open ``[from, to)`` window.
+
+    ``include_converted`` (SR-9.2 D1): when ``False`` (the default), a lead
+    that has been converted to a Contact (``converted_to_contact_id IS NOT
+    NULL``) is excluded from the page -- the tombstone stays out of the
+    working list by default. Pass ``True`` to see conversion history.
 
     Returns ``(rows, total)`` -- ``total`` is a ``count(*)`` over the same
     filtered WHERE (minus LIMIT/OFFSET), newest first
@@ -341,6 +428,8 @@ async def list_leads(
     if created_to is not None:
         params.append(created_to)
         where += f" AND created_at < ${len(params)}"
+    if not include_converted:
+        where += " AND converted_to_contact_id IS NULL"
 
     # Parameterized SQL; `where` is a safe constant clause built above.
     # ruff: noqa: S608
@@ -356,12 +445,78 @@ async def list_leads(
     rows = await db.fetch(
         "SELECT lead_id, visitor_id, name, email, phone, status, stage, "
         "qualification_score, consent, assigned_agent_id, source, "
-        "created_at, updated_at "
+        "created_at, updated_at, converted_to_contact_id "
         "FROM leads " + where + " "
         f"ORDER BY created_at DESC, lead_id DESC LIMIT ${limit_idx} OFFSET ${offset_idx}",
         *page_params,
     )
     return [_row_to_lead(row) for row in rows], total
+
+
+async def list_lead_ids_converted_to_contact(
+    db: Database,
+    claims: AuthClaims,
+    contact_id: str,
+) -> list[str]:
+    """Fetch ``lead_id``s whose ``converted_to_contact_id`` equals ``contact_id``.
+
+    Used by the SR-9.3 timeline's identity resolution (D2) as the
+    belt-and-braces complement to ``contacts.lead_id``: a Contact's identity
+    set includes both its own originating lead (if any) AND any lead whose
+    conversion points at it. SR-9.2 D6's partial unique index on
+    ``contacts(tenant_id, lead_id)`` means this is at most one in practice,
+    but this query does not assume that -- it returns a list. Tenant-scoped;
+    raises ``ValidationError`` for global callers.
+    """
+    _reject_global(claims)
+
+    rows = await db.fetch(
+        "SELECT lead_id FROM leads "
+        "WHERE tenant_id = $1 AND converted_to_contact_id = $2",
+        claims.tenant_id,
+        contact_id,
+    )
+    return [str(row["lead_id"]) for row in rows]
+
+
+async def mark_lead_converted(
+    db: Database,
+    claims: AuthClaims,
+    lead_id: str,
+    *,
+    contact_id: str,
+) -> bool:
+    """Tombstone a lead on conversion (SR-9.2 D1/D5/D6).
+
+    Sets ``stage='converted'``, ``status='won'``, and
+    ``converted_to_contact_id=contact_id`` -- directly, bypassing
+    ``api.leads.pipeline.validate_transition`` entirely (D5): conversion is
+    a lifecycle action, not a funnel step, and must succeed even from
+    ``stage='captured'`` where the pipeline validator would reject it.
+
+    The UPDATE is guarded by ``AND converted_to_contact_id IS NULL`` -- a
+    second, independent idempotency backstop beneath the route's primary
+    ``contacts(tenant_id, lead_id)`` partial-unique-index guard (D6): a lead
+    that is already converted matches zero rows here.
+
+    Does NOT touch ``lead_activities`` -- the Lead row is never deleted
+    (K5/D1); its timeline is untouched by this call.
+
+    Returns ``True`` if a row was updated (first, successful conversion),
+    ``False`` if no row matched (missing/cross-tenant lead_id, OR the lead
+    was already converted).
+    """
+    _reject_global(claims)
+
+    result = await db.execute(
+        "UPDATE leads SET stage = 'converted', status = 'won', "
+        "converted_to_contact_id = $1, updated_at = now() "
+        "WHERE tenant_id = $2 AND lead_id = $3 AND converted_to_contact_id IS NULL",
+        contact_id,
+        claims.tenant_id,
+        lead_id,
+    )
+    return _rows_affected(result) > 0
 
 
 def _rows_affected(command_tag: str) -> int:
@@ -384,8 +539,8 @@ def _row_to_lead(row: Any) -> Lead:
     return Lead(
         lead_id=str(row["lead_id"]),
         visitor_id=row["visitor_id"],
-        name=str(row["name"]),
-        email=str(row["email"]),
+        name=row["name"] if row["name"] is None else str(row["name"]),
+        email=row["email"] if row["email"] is None else str(row["email"]),
         phone=row["phone"],
         status=str(row["status"]),
         stage=str(row["stage"]),
@@ -395,6 +550,9 @@ def _row_to_lead(row: Any) -> Lead:
         source=str(row["source"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        converted_to_contact_id=(
+            row["converted_to_contact_id"] if "converted_to_contact_id" in row.keys() else None
+        ),
     )
 
 

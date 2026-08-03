@@ -72,6 +72,19 @@ class _StubDatabase:
             existing["updated_at"] = _NOW
             return "UPDATE 1"
 
+        if q.startswith("UPDATE LEADS SET NAME"):
+            # update_lead_contact -- args: name, email, consent, tenant_id, lead_id
+            name, email, consent, tenant_id, lead_id = args
+            key = (tenant_id, lead_id)
+            existing = self._leads.get(key)
+            if existing is None:
+                return "UPDATE 0"
+            existing["name"] = existing["name"] if name is None else name
+            existing["email"] = existing["email"] if email is None else email
+            existing["consent"] = consent
+            existing["updated_at"] = _NOW
+            return "UPDATE 1"
+
         if q.startswith("UPDATE LEADS"):
             # args: stage, status, qualification_score, tenant_id, lead_id
             stage = args[0]
@@ -149,8 +162,9 @@ class _StubDatabase:
         q = query.strip().upper()
 
         if "FROM LEADS" in q and "AND VISITOR_ID = $2" in q:
-            # get_lead_email_by_visitor_id -- WHERE tenant_id = $1 AND
-            # visitor_id = $2 ORDER BY created_at DESC LIMIT 1
+            # get_lead_email_by_visitor_id / get_lead_id_by_visitor_id --
+            # WHERE tenant_id = $1 AND visitor_id = $2 ORDER BY created_at
+            # DESC LIMIT 1
             tenant_id, visitor_id = args
             matches = [
                 row
@@ -190,6 +204,17 @@ class _StubDatabase:
             ]
             rows.sort(key=lambda r: r["created_at"], reverse=True)
             return rows
+
+        if "FROM LEADS" in q and "CONVERTED_TO_CONTACT_ID = $2" in q:
+            # list_lead_ids_converted_to_contact -- WHERE tenant_id = $1 AND
+            # converted_to_contact_id = $2
+            tenant_id, contact_id = args
+            return [
+                row
+                for row in self._leads.values()
+                if row["tenant_id"] == tenant_id
+                and row.get("converted_to_contact_id") == contact_id
+            ]
 
         if "FROM LEADS" in q:
             # list_leads page query -- filter by whatever WHERE clause was
@@ -624,6 +649,234 @@ async def test_update_lead_stage_rejects_global_caller() -> None:
                 status="open",
                 qualification_score=55,
             )
+
+
+# ---------------------------------------------------------------------------
+# update_lead_contact (SR-14 D6)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_lead_contact_fills_in_null_name_and_email() -> None:
+    """The SR-9.1 anonymous-booking case: a lead with NULL name/email gets
+    filled in by update_lead_contact -- no second lead row, same lead_id."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, get_lead, update_lead_contact
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        lead_id = await create_lead(
+            db,
+            claims,
+            visitor_id="visitor-1",
+            name=None,
+            email=None,
+            phone=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK"},
+            source="booking",
+        )
+
+        consent = {
+            "granted": True,
+            "purpose": "chat_identification",
+            "text": "I consent...",
+            "captured_at": "2026-01-01T12:00:00Z",
+        }
+        updated = await update_lead_contact(
+            db, claims, lead_id, name="Dana", email="dana@example.com", consent=consent,
+        )
+
+        assert updated is True
+        lead = await get_lead(db, claims, lead_id)
+        assert lead is not None
+        assert lead.lead_id == lead_id
+        assert lead.name == "Dana"
+        assert lead.email == "dana@example.com"
+        assert lead.consent == consent
+
+
+async def test_update_lead_contact_never_nulls_existing_non_null_values() -> None:
+    """A None name/email argument keeps the existing value -- never clobbers
+    good data with nothing (defense-in-depth over the endpoint always
+    supplying non-null values)."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, get_lead, update_lead_contact
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        lead_id = await create_lead(
+            db,
+            claims,
+            visitor_id="visitor-1",
+            name="Existing Name",
+            email="existing@example.com",
+            phone=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK"},
+            source="booking",
+        )
+
+        await update_lead_contact(
+            db,
+            claims,
+            lead_id,
+            name=None,
+            email=None,
+            consent={"granted": True, "purpose": "chat_identification", "text": "..."},
+        )
+
+        lead = await get_lead(db, claims, lead_id)
+        assert lead is not None
+        assert lead.name == "Existing Name"
+        assert lead.email == "existing@example.com"
+
+
+async def test_update_lead_contact_uses_tenant_scoped_positional_sql() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, update_lead_contact
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        lead_id = await create_lead(
+            db,
+            claims,
+            visitor_id="visitor-1",
+            name=None,
+            email=None,
+            phone=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK"},
+            source="booking",
+        )
+
+        await update_lead_contact(
+            db, claims, lead_id, name="Dana", email="dana@example.com", consent={"granted": True},
+        )
+
+        update_query, update_args = db.execute_calls[-1]
+        assert "update leads" in update_query.lower()
+        assert "where" in update_query.lower()
+        assert "tenant_id" in update_query.lower()
+        assert "lead_id" in update_query.lower()
+        assert ":" not in update_query  # no named placeholders
+        assert claims.tenant_id in update_args
+        assert lead_id in update_args
+
+
+async def test_update_lead_contact_cross_tenant_returns_false() -> None:
+    """SR-14 mandatory tenant isolation: a matching lead_id under tenant B
+    is unaffected by an update issued with tenant A's claims."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, get_lead, update_lead_contact
+
+        db = _StubDatabase()
+        claims_a = _claims(tenant_id="tenant-a")
+        claims_b = _claims(tenant_id="tenant-b")
+
+        lead_id = await create_lead(
+            db,
+            claims_b,
+            visitor_id="visitor-1",
+            name=None,
+            email=None,
+            phone=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK"},
+            source="booking",
+        )
+
+        result = await update_lead_contact(
+            db, claims_a, lead_id, name="Dana", email="dana@example.com", consent={"granted": True},
+        )
+
+        assert result is False
+        # Tenant B's lead is untouched.
+        lead_b = await get_lead(db, claims_b, lead_id)
+        assert lead_b is not None
+        assert lead_b.name is None
+        assert lead_b.email is None
+
+
+async def test_update_lead_contact_missing_lead_returns_false() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import update_lead_contact
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        result = await update_lead_contact(
+            db,
+            claims,
+            "nonexistent-id",
+            name="Dana",
+            email="dana@example.com",
+            consent={"granted": True},
+        )
+
+        assert result is False
+
+
+async def test_update_lead_contact_rejects_global_caller() -> None:
+    """MANDATORY tenant isolation: PLATFORM_ADMIN (global, tenant_id=None)
+    raises ValidationError -- _reject_global runs first."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.leads.repository import update_lead_contact
+
+        db = _StubDatabase()
+        global_claims = AuthClaims(subject="admin-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with pytest.raises(ValidationError):
+            await update_lead_contact(
+                db,
+                global_claims,
+                "some-lead-id",
+                name="Dana",
+                email="dana@example.com",
+                consent={"granted": True},
+            )
+
+
+async def test_update_lead_contact_idempotent_resubmission() -> None:
+    """A re-submission with the same values is idempotent -- still one lead
+    row, updated in place, no duplicate."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, get_lead, update_lead_contact
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        lead_id = await create_lead(
+            db,
+            claims,
+            visitor_id="visitor-1",
+            name=None,
+            email=None,
+            phone=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK"},
+            source="booking",
+        )
+
+        consent = {"granted": True, "purpose": "chat_identification", "text": "..."}
+        await update_lead_contact(
+            db, claims, lead_id, name="Dana", email="dana@example.com", consent=consent,
+        )
+        await update_lead_contact(
+            db, claims, lead_id, name="Dana", email="dana@example.com", consent=consent,
+        )
+
+        assert len(db._leads) == 1
+        lead = await get_lead(db, claims, lead_id)
+        assert lead is not None
+        assert lead.name == "Dana"
+        assert lead.email == "dana@example.com"
 
 
 # ---------------------------------------------------------------------------
@@ -1150,3 +1403,237 @@ async def test_list_leads_pagination_limit_offset_order() -> None:
         assert "order by created_at desc, lead_id desc" in query.lower()
         assert 2 in args
         assert 1 in args
+
+
+# ---------------------------------------------------------------------------
+# get_lead_id_by_visitor_id (SR-9.1)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_lead_id_by_visitor_id_returns_most_recent() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, get_lead_id_by_visitor_id
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        await create_lead(
+            db, claims, visitor_id="visitor-1", name="First", email="first@example.com",
+            phone=None, consent={"granted": True, "purpose": "contact", "text": "OK"},
+            source="widget",
+        )
+        second_lead_id = await create_lead(
+            db, claims, visitor_id="visitor-1", name="Second", email="second@example.com",
+            phone=None, consent={"granted": True, "purpose": "contact", "text": "OK"},
+            source="widget",
+        )
+        from datetime import timedelta
+
+        db._leads[("tenant-abc", second_lead_id)]["created_at"] = _NOW + timedelta(minutes=5)
+
+        lead_id = await get_lead_id_by_visitor_id(db, claims, "visitor-1")
+
+        assert lead_id == second_lead_id
+
+
+async def test_get_lead_id_by_visitor_id_returns_none_when_no_lead() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import get_lead_id_by_visitor_id
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        result = await get_lead_id_by_visitor_id(db, claims, "visitor-does-not-exist")
+
+        assert result is None
+
+
+async def test_get_lead_id_by_visitor_id_cross_tenant_isolation() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, get_lead_id_by_visitor_id
+
+        db = _StubDatabase()
+        claims_a = _claims(tenant_id="tenant-a")
+        claims_b = _claims(tenant_id="tenant-b")
+
+        await create_lead(
+            db, claims_a, visitor_id="visitor-shared", name="Jane", email="jane@example.com",
+            phone=None, consent={"granted": True, "purpose": "contact", "text": "OK"},
+            source="widget",
+        )
+
+        result = await get_lead_id_by_visitor_id(db, claims_b, "visitor-shared")
+
+        assert result is None
+
+
+async def test_get_lead_id_by_visitor_id_same_visitor_id_different_tenants_independent() -> None:
+    """Same visitor_id under two tenants resolves to each tenant's own lead."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, get_lead_id_by_visitor_id
+
+        db = _StubDatabase()
+        claims_a = _claims(tenant_id="tenant-a")
+        claims_b = _claims(tenant_id="tenant-b")
+
+        lead_id_a = await create_lead(
+            db, claims_a, visitor_id="visitor-shared", name="A", email="a@example.com",
+            phone=None, consent={"granted": True, "purpose": "contact", "text": "OK"},
+            source="widget",
+        )
+        lead_id_b = await create_lead(
+            db, claims_b, visitor_id="visitor-shared", name="B", email="b@example.com",
+            phone=None, consent={"granted": True, "purpose": "contact", "text": "OK"},
+            source="widget",
+        )
+
+        result_a = await get_lead_id_by_visitor_id(db, claims_a, "visitor-shared")
+        result_b = await get_lead_id_by_visitor_id(db, claims_b, "visitor-shared")
+
+        assert result_a == lead_id_a
+        assert result_b == lead_id_b
+        assert result_a != result_b
+
+
+async def test_get_lead_id_by_visitor_id_uses_positional_placeholders() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import get_lead_id_by_visitor_id
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        await get_lead_id_by_visitor_id(db, claims, "visitor-1")
+
+        query, args = db.fetchrow_calls[-1]
+        assert "$1" in query
+        assert "$2" in query
+        assert ":" not in query
+        assert args[0] == "tenant-abc"
+        assert args[1] == "visitor-1"
+
+
+async def test_get_lead_id_by_visitor_id_rejects_global_caller() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.leads.repository import get_lead_id_by_visitor_id
+
+        db = _StubDatabase()
+        global_claims = AuthClaims(subject="admin-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with pytest.raises(ValidationError):
+            await get_lead_id_by_visitor_id(db, global_claims, "visitor-1")
+
+
+# ---------------------------------------------------------------------------
+# create_lead with nullable name/email (SR-9.1 C4 — anonymous bookings)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_lead_ids_converted_to_contact_returns_matching_ids() -> None:
+    """SR-9.3 D2: the contact-route belt-and-braces lookup -- finds leads
+    whose converted_to_contact_id equals a given contact_id."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import list_lead_ids_converted_to_contact
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc", role=Role.CLIENT_ADMIN)
+        db._leads[("tenant-abc", "lead-1")] = {
+            "tenant_id": "tenant-abc", "lead_id": "lead-1", "visitor_id": "v1",
+            "name": None, "email": None, "phone": None, "status": "won",
+            "stage": "converted", "qualification_score": None, "consent": {},
+            "assigned_agent_id": None, "source": "widget", "created_at": _NOW,
+            "updated_at": _NOW, "converted_to_contact_id": "contact-1",
+        }
+        db._leads[("tenant-abc", "lead-2")] = {
+            "tenant_id": "tenant-abc", "lead_id": "lead-2", "visitor_id": "v2",
+            "name": None, "email": None, "phone": None, "status": "new",
+            "stage": "captured", "qualification_score": None, "consent": {},
+            "assigned_agent_id": None, "source": "widget", "created_at": _NOW,
+            "updated_at": _NOW, "converted_to_contact_id": None,
+        }
+
+        result = await list_lead_ids_converted_to_contact(db, claims, "contact-1")
+        assert result == ["lead-1"]
+
+        result_none = await list_lead_ids_converted_to_contact(db, claims, "contact-nonexistent")
+        assert result_none == []
+
+
+async def test_list_lead_ids_converted_to_contact_tenant_isolation() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import list_lead_ids_converted_to_contact
+
+        db = _StubDatabase()
+        db._leads[("tenant-a", "lead-1")] = {
+            "tenant_id": "tenant-a", "lead_id": "lead-1", "visitor_id": "v1",
+            "name": None, "email": None, "phone": None, "status": "won",
+            "stage": "converted", "qualification_score": None, "consent": {},
+            "assigned_agent_id": None, "source": "widget", "created_at": _NOW,
+            "updated_at": _NOW, "converted_to_contact_id": "contact-shared",
+        }
+        db._leads[("tenant-b", "lead-2")] = {
+            "tenant_id": "tenant-b", "lead_id": "lead-2", "visitor_id": "v2",
+            "name": None, "email": None, "phone": None, "status": "won",
+            "stage": "converted", "qualification_score": None, "consent": {},
+            "assigned_agent_id": None, "source": "widget", "created_at": _NOW,
+            "updated_at": _NOW, "converted_to_contact_id": "contact-shared",
+        }
+
+        result_a = await list_lead_ids_converted_to_contact(
+            db, _claims(tenant_id="tenant-a", role=Role.CLIENT_ADMIN), "contact-shared",
+        )
+        result_b = await list_lead_ids_converted_to_contact(
+            db, _claims(tenant_id="tenant-b", role=Role.CLIENT_ADMIN), "contact-shared",
+        )
+        assert result_a == ["lead-1"]
+        assert result_b == ["lead-2"]
+
+
+async def test_list_lead_ids_converted_to_contact_rejects_global_caller() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.leads.repository import list_lead_ids_converted_to_contact
+
+        db = _StubDatabase()
+        global_claims = AuthClaims(subject="admin-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with pytest.raises(ValidationError):
+            await list_lead_ids_converted_to_contact(db, global_claims, "contact-1")
+
+
+async def test_create_lead_accepts_null_email_and_name() -> None:
+    """C4: an anonymous booking creates a lead with NULL email/name, not a placeholder."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, get_lead
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        lead_id = await create_lead(
+            db,
+            claims,
+            visitor_id="visitor-1",
+            name=None,
+            email=None,
+            phone=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK"},
+            source="booking",
+        )
+
+        lead = await get_lead(db, claims, lead_id)
+        assert lead is not None
+        assert lead.name is None
+        assert lead.email is None
+        assert lead.source == "booking"
