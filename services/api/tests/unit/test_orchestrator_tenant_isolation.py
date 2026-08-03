@@ -124,7 +124,10 @@ async def test_every_downstream_call_carries_tenant_a_claims() -> None:
 
     provider.classify.assert_awaited_once()
     assert provider.classify.await_args.kwargs["model"] == "claude-opus-4-8"
-    count_messages.assert_awaited_once()
+    # count_messages is called twice per turn (SR-14 D10): once for the raw
+    # role="user" turn count, once for role="bot" decision="identity_gate" to
+    # net out gate turns from the turn-cap budget.
+    assert count_messages.await_count == 2
     get_last_assistant_decision.assert_awaited_once()
     get_availability.assert_not_awaited()
 
@@ -340,7 +343,9 @@ async def test_stream_every_downstream_call_carries_tenant_a_claims() -> None:
     assert provider.classify.await_args.kwargs["model"] == "claude-opus-4-8"
     provider.stream.assert_called_once()
     assert provider.stream.call_args.kwargs["model"] == "claude-opus-4-8"
-    count_messages.assert_awaited_once()
+    # count_messages is called twice per turn (SR-14 D10) -- see the
+    # non-streaming twin above.
+    assert count_messages.await_count == 2
     get_last_assistant_decision.assert_awaited_once()
     get_availability.assert_not_awaited()  # answer branch never checks availability
 

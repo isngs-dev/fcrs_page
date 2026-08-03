@@ -157,6 +157,26 @@ describe("sendTurn", () => {
     expect(result.error.errorCode).toBe("INVALID_RESPONSE_SHAPE");
   });
 
+  it("accepts decision=identity_gate and action=identity_form (SR-14) without INVALID_RESPONSE_SHAPE", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        ...sampleResponseBody,
+        decision: "identity_gate",
+        confidence: null,
+        sources: [],
+        action: "identity_form",
+      }),
+    );
+    const { sendTurn } = await import("./turn");
+
+    const result = await sendTurn(baseConfig, { message: "hi", conversationId: null });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok result");
+    expect(result.turn.decision).toBe("identity_gate");
+    expect(result.turn.action).toBe("identity_form");
+  });
+
   it("returns a typed NETWORK_ERROR (no throw) when fetch rejects", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const { sendTurn } = await import("./turn");

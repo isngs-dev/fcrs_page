@@ -54,13 +54,22 @@ def _claims(tenant_id: str | None, role: Role = Role.CLIENT_ADMIN) -> AuthClaims
 
 async def test_get_returns_row_thresholds_when_present() -> None:
     db = _RecordingDatabase(
-        rows=[{"answer_threshold": 0.7, "escalate_threshold": 0.4, "turn_cap": 8}]
+        rows=[
+            {
+                "answer_threshold": 0.7,
+                "escalate_threshold": 0.4,
+                "turn_cap": 8,
+                "identity_gate_enabled": True,
+            }
+        ]
     )
     claims = _claims("tenant-a")
 
     cfg = await get_orchestrator_config(db, claims)
 
-    assert cfg == OrchestratorConfig(answer_threshold=0.7, escalate_threshold=0.4, turn_cap=8)
+    assert cfg == OrchestratorConfig(
+        answer_threshold=0.7, escalate_threshold=0.4, turn_cap=8, identity_gate_enabled=True,
+    )
     assert db.last_params[0] == "tenant-a"
     assert "tenant_orchestrator_configs" in db.last_sql.lower()
 
@@ -77,13 +86,21 @@ async def test_get_returns_settings_defaults_when_no_row() -> None:
     assert cfg.answer_threshold == settings.orchestrator_default_answer_threshold
     assert cfg.escalate_threshold == settings.orchestrator_default_escalate_threshold
     assert cfg.turn_cap == settings.orchestrator_default_turn_cap
+    assert cfg.identity_gate_enabled is False
 
 
 async def test_get_returns_settings_default_turn_cap_when_row_turn_cap_null() -> None:
     """A row with turn_cap IS NULL (an S10.2-era row predating the column) ->
     the settings default, never None -- same resolution as no row at all."""
     db = _RecordingDatabase(
-        rows=[{"answer_threshold": 0.7, "escalate_threshold": 0.4, "turn_cap": None}]
+        rows=[
+            {
+                "answer_threshold": 0.7,
+                "escalate_threshold": 0.4,
+                "turn_cap": None,
+                "identity_gate_enabled": None,
+            }
+        ]
     )
     claims = _claims("tenant-a")
     settings = get_api_settings()
@@ -93,6 +110,46 @@ async def test_get_returns_settings_default_turn_cap_when_row_turn_cap_null() ->
     assert cfg.answer_threshold == 0.7
     assert cfg.escalate_threshold == 0.4
     assert cfg.turn_cap == settings.orchestrator_default_turn_cap
+    assert cfg.identity_gate_enabled is False
+
+
+async def test_get_returns_identity_gate_off_when_row_column_null() -> None:
+    """A row with identity_gate_enabled IS NULL (an S10.4-era row predating
+    this column, SR-14) -> False, never None -- default-OFF (D9), same
+    resolution as no row at all."""
+    db = _RecordingDatabase(
+        rows=[
+            {
+                "answer_threshold": 0.7,
+                "escalate_threshold": 0.4,
+                "turn_cap": 6,
+                "identity_gate_enabled": None,
+            }
+        ]
+    )
+    claims = _claims("tenant-a")
+
+    cfg = await get_orchestrator_config(db, claims)
+
+    assert cfg.identity_gate_enabled is False
+
+
+async def test_get_returns_identity_gate_on_when_explicitly_true() -> None:
+    db = _RecordingDatabase(
+        rows=[
+            {
+                "answer_threshold": 0.7,
+                "escalate_threshold": 0.4,
+                "turn_cap": 6,
+                "identity_gate_enabled": True,
+            }
+        ]
+    )
+    claims = _claims("tenant-a")
+
+    cfg = await get_orchestrator_config(db, claims)
+
+    assert cfg.identity_gate_enabled is True
 
 
 async def test_get_rejects_global_caller() -> None:
@@ -114,7 +171,7 @@ async def test_upsert_binds_tenant_and_thresholds_positionally() -> None:
         db, claims, answer_threshold=0.6, escalate_threshold=0.3,
     )
 
-    assert db.last_params == ("tenant-a", 0.6, 0.3, None)
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None)
     assert "ON CONFLICT (tenant_id)" in db.last_sql
     assert "tenant_orchestrator_configs" in db.last_sql.lower()
 
@@ -127,8 +184,33 @@ async def test_upsert_binds_turn_cap_positionally() -> None:
         db, claims, answer_threshold=0.6, escalate_threshold=0.3, turn_cap=8,
     )
 
-    assert db.last_params == ("tenant-a", 0.6, 0.3, 8)
+    assert db.last_params == ("tenant-a", 0.6, 0.3, 8, None)
     assert "turn_cap" in db.last_sql
+
+
+async def test_upsert_binds_identity_gate_enabled_positionally() -> None:
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a")
+
+    await upsert_orchestrator_config(
+        db, claims, answer_threshold=0.6, escalate_threshold=0.3, identity_gate_enabled=True,
+    )
+
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, True)
+    assert "identity_gate_enabled" in db.last_sql
+
+
+async def test_upsert_identity_gate_enabled_none_clears_to_default() -> None:
+    """identity_gate_enabled=None is a valid, explicit clear-to-default
+    (False/OFF) -- always bound, mirroring turn_cap=None."""
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a")
+
+    await upsert_orchestrator_config(
+        db, claims, answer_threshold=0.6, escalate_threshold=0.3, identity_gate_enabled=None,
+    )
+
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None)
 
 
 async def test_upsert_rejects_turn_cap_below_one() -> None:
@@ -151,7 +233,7 @@ async def test_upsert_turn_cap_none_clears_to_default() -> None:
         db, claims, answer_threshold=0.6, escalate_threshold=0.3, turn_cap=None,
     )
 
-    assert db.last_params == ("tenant-a", 0.6, 0.3, None)
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None)
 
 
 async def test_upsert_rejects_escalate_greater_than_answer() -> None:
@@ -191,7 +273,7 @@ async def test_upsert_allows_equal_thresholds() -> None:
     await upsert_orchestrator_config(
         db, claims, answer_threshold=0.5, escalate_threshold=0.5,
     )
-    assert db.last_params == ("tenant-a", 0.5, 0.5, None)
+    assert db.last_params == ("tenant-a", 0.5, 0.5, None, None)
 
 
 async def test_upsert_rejects_global_caller() -> None:

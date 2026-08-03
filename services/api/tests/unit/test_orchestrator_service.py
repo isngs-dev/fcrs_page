@@ -18,6 +18,7 @@ import pytest
 from common.auth import AuthClaims, Role
 
 from api.conversation_store.repository import Message
+from api.leads.repository import Lead
 from api.llm.config_repository import LLMConfig
 from api.llm.provider import ChatMessage, Chunk, Completion, LLMError
 from api.orchestrator.config_repository import OrchestratorConfig
@@ -36,6 +37,7 @@ from api.orchestrator.service import (
     _FORMATTING_RULES,
     _GROUNDING_SYSTEM_PROMPT,
     _GUARDRAIL_SAFE_REPLY,
+    _IDENTITY_GATE_REPLY,
     _NO_ANSWER_SENTINEL,
     _TURN_CAP_REPLY,
     Source,
@@ -71,10 +73,16 @@ def _config(embedding_model: str | None = "nomic-embed-text") -> LLMConfig:
 
 
 def _orch_cfg(
-    answer_threshold: float = 0.5, escalate_threshold: float = 0.35, turn_cap: int = 6,
+    answer_threshold: float = 0.5,
+    escalate_threshold: float = 0.35,
+    turn_cap: int = 6,
+    identity_gate_enabled: bool = False,
 ) -> OrchestratorConfig:
     return OrchestratorConfig(
-        answer_threshold=answer_threshold, escalate_threshold=escalate_threshold, turn_cap=turn_cap,
+        answer_threshold=answer_threshold,
+        escalate_threshold=escalate_threshold,
+        turn_cap=turn_cap,
+        identity_gate_enabled=identity_gate_enabled,
     )
 
 
@@ -105,6 +113,28 @@ def _wm(
         "summary_message_count": 0,
         "messages": messages or [],
     }
+
+
+def _lead(
+    *, lead_id: str = "lead-1", name: str | None = "Dana", email: str | None = "dana@example.com",
+) -> Lead:
+    from datetime import UTC, datetime
+
+    return Lead(
+        lead_id=lead_id,
+        visitor_id="visitor-1",
+        name=name,
+        email=email,
+        phone=None,
+        status="new",
+        stage="captured",
+        qualification_score=None,
+        consent={},
+        assigned_agent_id=None,
+        source="chat_identity",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
 
 
 def _msg(role: str, content: str, message_id: str = "m1") -> Message:
@@ -139,10 +169,13 @@ class _Patched:
         classify_return: str = "question",
         classify_error: Exception | None = None,
         count_messages_return: int = 1,
+        gate_turns_return: int = 0,
         prev_decision: str | None = None,
         availability: Availability | None = ...,  # type: ignore[assignment]
         stream_chunks: list[str] | None = None,
         stream_error: Exception | None = None,
+        lead_id: str | None = ...,  # type: ignore[assignment]
+        lead: Any = ...,
     ) -> None:
         self.config = _config() if config is ... else config
         self.orchestrator_config = orchestrator_config or _orch_cfg()
@@ -155,8 +188,20 @@ class _Patched:
         self.get_working_memory = AsyncMock(
             return_value=working_memory if working_memory is not None else _wm()
         )
-        self.count_messages = AsyncMock(return_value=count_messages_return)
+        self.count_messages_return = count_messages_return
+        self.gate_turns_return = gate_turns_return
+
+        async def _count_messages_side_effect(*args: Any, **kwargs: Any) -> int:
+            if kwargs.get("decision") == "identity_gate":
+                return self.gate_turns_return
+            return self.count_messages_return
+
+        self.count_messages = AsyncMock(side_effect=_count_messages_side_effect)
         self.get_last_assistant_decision = AsyncMock(return_value=prev_decision)
+        self.lead_id = None if lead_id is ... else lead_id
+        self.lead = None if lead is ... else lead
+        self.get_lead_id_by_visitor_id = AsyncMock(return_value=self.lead_id)
+        self.get_lead = AsyncMock(return_value=self.lead)
         # Default: no availability configured -- matches the S10.3-era
         # unconditional "lead_form" expectation for escalate branches unless
         # a test explicitly opts into `availability=_availability()`.
@@ -233,6 +278,11 @@ class _Patched:
             ),
             patch("api.orchestrator.service.get_availability", self.get_availability),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
+            patch(
+                "api.orchestrator.service.get_lead_id_by_visitor_id",
+                self.get_lead_id_by_visitor_id,
+            ),
+            patch("api.orchestrator.service.get_lead", self.get_lead),
         ]
         for p in self._patchers:
             p.start()
@@ -1434,8 +1484,10 @@ async def test_turn_cap_boundary_cap_plus_one_is_capped() -> None:
 
 
 async def test_turn_cap_counts_role_user_after_user_turn_stored() -> None:
-    """count_messages is called with role="user", and the user append_message
-    call happens before it (order: user turn stored, then counted)."""
+    """count_messages is called with role="user" (the FIRST of its two SR-14
+    D10 calls -- the second nets out identity-gate turns with
+    role="bot"/decision="identity_gate"), and the user append_message call
+    happens before either (order: user turn stored, then counted)."""
     call_order: list[str] = []
     p = _Patched(orchestrator_config=_orch_cfg(turn_cap=6), count_messages_return=1)
 
@@ -1447,7 +1499,7 @@ async def test_turn_cap_counts_role_user_after_user_turn_stored() -> None:
 
     async def _tracking_count(*args: Any, **kwargs: Any) -> int:
         call_order.append("count_messages")
-        return 1
+        return 0 if kwargs.get("decision") == "identity_gate" else 1
 
     p.append_message.side_effect = _tracking_append
     p.count_messages.side_effect = _tracking_count
@@ -1455,9 +1507,148 @@ async def test_turn_cap_counts_role_user_after_user_turn_stored() -> None:
     with p:
         await answer_turn(db=object(), claims=_claims(), message="hi")
 
-    count_call = p.count_messages.await_args
-    assert count_call.kwargs.get("role") == "user"
+    first_count_call = p.count_messages.await_args_list[0]
+    assert first_count_call.kwargs.get("role") == "user"
     assert call_order.index("append_message") < call_order.index("count_messages")
+
+
+# -- SR-14: conversation-start identity gate -----------------------------------------
+
+
+async def test_identity_gate_fires_when_enabled_and_no_captured_identity() -> None:
+    """Tenant flag ON + visitor has no lead at all -> _FixedOutcome with
+    decision="identity_gate", action="identity_form", grounded=False,
+    sources=[], confidence=None -- no classify/RAG/generate (C1)."""
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True),
+        lead_id=None,
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
+
+    assert result.decision == "identity_gate"
+    assert result.action == "identity_form"
+    assert result.confidence is None
+    assert result.sources == []
+    assert result.reply == _IDENTITY_GATE_REPLY
+
+    p.provider.classify.assert_not_awaited()
+    p.retrieve_hybrid.assert_not_awaited()
+    p.provider.generate.assert_not_awaited()
+    # Resource-leak fix: the provider was resolved but never used -- must
+    # still be closed, exactly like the turn-cap short-circuit.
+    p.provider.aclose.assert_awaited_once()
+
+
+async def test_identity_gate_fires_when_lead_exists_but_contact_incomplete() -> None:
+    """A visitor with an existing lead whose name/email are NULL (the SR-9.1
+    anonymous-booking case) still counts as "not yet captured" -- the gate
+    fires so D6's update_lead_contact can fill in the row."""
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True),
+        lead_id="lead-1",
+        lead=_lead(name=None, email=None),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
+
+    assert result.decision == "identity_gate"
+    assert result.action == "identity_form"
+
+
+async def test_identity_gate_user_message_is_durable_before_gate_reply() -> None:
+    """D3's foundation: append_message for the role="user" row happens
+    (durable storage) even on a gate turn."""
+    p = _Patched(orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id=None)
+    with p:
+        await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
+
+    assert len(p._append_calls) == 2
+    user_call, assistant_call = p._append_calls
+    assert user_call["role"] == "user"
+    assert user_call["content"] == "How much does it cost?"
+    assert assistant_call["role"] == "bot"
+    assert assistant_call["decision"] == "identity_gate"
+    assert assistant_call["action"] == "identity_form"
+    assert assistant_call["grounded"] is False
+    assert assistant_call["confidence"] is None
+    assert assistant_call["tokens"] is None
+
+
+async def test_identity_gate_does_not_fire_when_flag_off() -> None:
+    """Default OFF (D9): even with no captured identity, the flag being off
+    (or unset, the OrchestratorConfig default) means normal answering."""
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=False),
+        lead_id=None,
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
+
+    assert result.decision != "identity_gate"
+    p.provider.classify.assert_awaited_once()
+    p.get_lead_id_by_visitor_id.assert_not_awaited()
+
+
+async def test_identity_gate_does_not_fire_once_identity_captured() -> None:
+    """Never re-asked (D2's other half): a visitor whose lead already has
+    both name and email -> normal answering, no gate."""
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True),
+        lead_id="lead-1",
+        lead=_lead(name="Dana", email="dana@example.com"),
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="A follow-up question")
+
+    assert result.decision != "identity_gate"
+    p.provider.classify.assert_awaited_once()
+
+
+async def test_identity_gate_absolute_fires_again_on_second_unsatisfied_message() -> None:
+    """D2: absolute, no escape hatch -- a second message from the SAME
+    not-yet-identified visitor gets the gate reply again."""
+    p = _Patched(orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id=None)
+    with p:
+        first = await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
+        second = await answer_turn(db=object(), claims=_claims(), message="Hello?")
+
+    assert first.decision == "identity_gate"
+    assert second.decision == "identity_gate"
+
+
+async def test_identity_gate_excluded_from_turn_cap_budget() -> None:
+    """D10: a gate turn does not consume a turn_cap slot -- count_messages is
+    called with role="bot"/decision="identity_gate" to net gate turns out of
+    the raw role="user" count. This is proven directly on the turn-cap path
+    (not the gate path, since the gate short-circuits before turn-cap is
+    ever reached) -- 7 raw user turns minus 1 gate turn stays under a
+    turn_cap of 6, so the conversation is NOT capped."""
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=False, turn_cap=6),
+        count_messages_return=7,
+        gate_turns_return=1,
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="a real question")
+
+    assert result.reply != _TURN_CAP_REPLY
+    assert result.decision != "escalate"
+    assert p.count_messages.await_count == 2
+    gate_call = p.count_messages.await_args_list[1]
+    assert gate_call.kwargs.get("role") == "bot"
+    assert gate_call.kwargs.get("decision") == "identity_gate"
+
+
+async def test_identity_gate_reply_is_the_trusted_constant() -> None:
+    assert _IDENTITY_GATE_REPLY
+    assert isinstance(_IDENTITY_GATE_REPLY, str)
 
 
 # -- escalate action conditional on availability (all causes) ------------------------

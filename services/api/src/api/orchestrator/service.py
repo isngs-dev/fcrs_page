@@ -56,6 +56,7 @@ from api.conversation_store.repository import (
     get_message,
     get_working_memory,
 )
+from api.leads.repository import get_lead, get_lead_id_by_visitor_id
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, LLMError, LLMProvider
@@ -253,6 +254,18 @@ _TURN_CAP_REPLY = (
     "happy for us to contact you, and we'll reach out."
 )
 
+# Fixed identity-gate template (SR-14 D1/D4) -- the trusted-constant reply
+# shown on a gated tenant's first bot reply (and every subsequent reply,
+# D2's absolute gate) when the visitor has no captured identity yet. The
+# widget renders the consent-gated <IdentityForm> inline in the thread on
+# action="identity_form"; the visitor's real question is already durable
+# (step 5 ran before this branch, C2) and is auto-answered on capture (D3).
+_IDENTITY_GATE_REPLY = (
+    "Before I answer, could you share your name and email? I'll use it to "
+    "follow up on this conversation -- once you've confirmed, I'll answer "
+    "your question right away."
+)
+
 # Fixed guardrail-block safe reply (S10.3 decision 4) -- substituted for a
 # generated reply that trips scan_output. Never the flagged text; also
 # consent-forward (same downstream UX as a genuine escalate -- offer a human,
@@ -283,6 +296,28 @@ def _decide(confidence: float, cfg: OrchestratorConfig) -> Decision:
     if confidence >= cfg.escalate_threshold:
         return "clarify"
     return "escalate"
+
+
+async def _has_captured_identity(db: Database, claims: AuthClaims) -> bool:
+    """Has this visitor already captured identity in this tenant? (SR-14 D1/D2)
+
+    Reuses SR-9.1's exact create-or-link lookup (``get_lead_id_by_visitor_id``)
+    rather than inventing a new query -- the visitor's most-recent lead,
+    tenant-scoped. A visitor with NO lead at all has not captured identity.
+    A visitor WITH a lead may still have NULL ``name``/``email`` (migration
+    0039 -- an anonymous SR-9.1 booking creates a NULL-contact lead); that
+    case is also "not yet captured" so the gate still fires and D6's
+    ``update_lead_contact`` fills in the existing row rather than a fresh
+    lead being created. Only a lead with BOTH ``name`` and ``email`` set
+    counts as captured -- the never-re-ask half of D2.
+    """
+    lead_id = await get_lead_id_by_visitor_id(db, claims, claims.subject)
+    if lead_id is None:
+        return False
+    lead = await get_lead(db, claims, lead_id)
+    if lead is None:
+        return False
+    return lead.name is not None and lead.email is not None
 
 
 async def _schedule_action(db: Database, claims: AuthClaims) -> str:
@@ -435,12 +470,47 @@ async def _resolve_turn(
 
     provider = provider_for(config)
 
+    # Step 5.5 (SR-14 D1/D2/D9): the identity gate -- an INDEPENDENT,
+    # pre-empting trigger, placed AFTER the user turn is durably stored (C2)
+    # and BEFORE the turn-cap check. Fires when the tenant has the gate
+    # enabled (default OFF, D9) AND this visitor has no captured identity yet
+    # (D1's "no server-side conversation at widget-open" reconciliation --
+    # this is the earliest point the server can gate). Absolute (D2): every
+    # subsequent ungated message returns this same reply again, forever, until
+    # captured -- no escape hatch, no turn budget spent trying. Zero LLM cost
+    # (C1): classify/retrieve_hybrid/generate never run on a gate turn -- the
+    # provider was resolved but never used, so it is closed here exactly like
+    # the turn-cap short-circuit below.
+    if cfg.identity_gate_enabled and not await _has_captured_identity(db, claims):
+        await provider.aclose()
+        return _FixedOutcome(
+            conversation_id=conversation_id,
+            assistant_id=assistant_id,
+            reply=_IDENTITY_GATE_REPLY,
+            decision="identity_gate",
+            confidence=None,
+            sources=[],
+            intent=None,
+            action="identity_form",
+            grounded=False,
+            tokens=None,
+        )
+
     # Step 6 (S10.4 decision 1): the turn-count cap -- an INDEPENDENT,
     # pre-empting trigger, counted AFTER the user turn is stored, strict `>`.
     # Counts this conversation's visitor turns (role="user"), including the
-    # one just stored. When capped, classify/retrieve_hybrid/generate are
-    # skipped entirely (no LLM cost) -- a deterministic, honest 200 escalate.
-    turns = await count_messages(db, claims, conversation_id, role="user")
+    # one just stored, MINUS any identity-gate turns (SR-14 D10): each gate
+    # bot reply (decision="identity_gate") corresponds 1:1 to a visitor turn
+    # that was never substantively answered, so it must not consume any of
+    # the visitor's limited turn_cap budget -- otherwise D3's deferred
+    # re-send would double-count the same original question. When capped,
+    # classify/retrieve_hybrid/generate are skipped entirely (no LLM cost) --
+    # a deterministic, honest 200 escalate.
+    raw_turns = await count_messages(db, claims, conversation_id, role="user")
+    gate_turns = await count_messages(
+        db, claims, conversation_id, role="bot", decision="identity_gate",
+    )
+    turns = raw_turns - gate_turns
 
     if turns > cfg.turn_cap:
         action = await _schedule_action(db, claims)

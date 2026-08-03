@@ -263,12 +263,18 @@ async def count_messages(
     conversation_id: str,
     *,
     role: str | None = None,
+    decision: str | None = None,
 ) -> int:
     """Count messages in a conversation, tenant- (+ VISITOR-) scoped (S10.4).
 
     Used by the orchestrator's turn-cap check --
     ``count_messages(db, claims, conversation_id, role="user")`` counts this
-    conversation's visitor turns. ``messages`` carries no ``visitor_id``
+    conversation's visitor turns. ``decision`` (SR-14 D10, additive) narrows
+    to a specific stored ``decision`` tag -- used as
+    ``count_messages(db, claims, conversation_id, role="bot",
+    decision="identity_gate")`` to count identity-gate replies, so the
+    orchestrator can net them out of the turn-cap's visitor-turn count
+    without a new ``messages`` column. ``messages`` carries no ``visitor_id``
     column of its own (migration 0007); VISITOR callers are scoped via the
     same ``EXISTS (SELECT 1 FROM conversations ...)`` join
     ``get_message``/``get_messages``/``get_window`` use -- NOT the older,
@@ -285,6 +291,10 @@ async def count_messages(
     if role is not None:
         params.append(role)
         where += f" AND role = ${len(params)}"
+
+    if decision is not None:
+        params.append(decision)
+        where += f" AND decision = ${len(params)}"
 
     if claims.role == Role.VISITOR:
         params.append(claims.subject)
@@ -437,6 +447,7 @@ async def list_conversations(
     status: str | None = None,
     channel: str | None = None,
     escalated: bool | None = None,
+    visitor_ids: list[str] | None = None,
 ) -> tuple[list[ConversationSummaryRow], int]:
     """Fetch a paginated, filtered page of the caller's tenant conversations.
 
@@ -448,6 +459,12 @@ async def list_conversations(
     VISITOR scoping is not relevant here -- this is an admin/agent-only
     surface reached via ``require_roles(CLIENT_ADMIN, CLIENT_AGENT)``, which
     excludes VISITOR; ``_reject_global`` excludes PLATFORM_ADMIN.
+
+    ``visitor_ids`` (SR-9.3 J6/Scope §4): optional -- filters to conversations
+    whose ``visitor_id`` is in the given list (``c.visitor_id = ANY($n)``).
+    Used by the timeline fan-out to resolve "which conversations belong to
+    this identity set" without any SQL against another module's tables.
+    Existing callers are unaffected by the ``None`` default.
 
     Returns ``(rows, total)`` -- ``total`` is a ``count(*)`` over the same
     filtered WHERE (minus LIMIT/OFFSET), newest first
@@ -470,6 +487,9 @@ async def list_conversations(
     if channel is not None:
         params.append(channel)
         where += f" AND c.channel = ${len(params)}"
+    if visitor_ids is not None:
+        params.append(visitor_ids)
+        where += f" AND c.visitor_id = ANY(${len(params)})"
 
     _escalate_sub = (
         "SELECT 1 FROM messages m WHERE m.tenant_id = c.tenant_id "

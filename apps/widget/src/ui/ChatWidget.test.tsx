@@ -6,6 +6,7 @@ import type { WidgetConfig } from "../config";
 import type { TurnResult } from "../turn";
 import type { FetchSlotsResult, FetchAvailabilitySummaryResult, PostHandoffIntentResult } from "../schedule";
 import type { AdmissionResult } from "../session";
+import type { IdentityResult } from "../identity";
 
 // React 19's `act()` only batches/flushes updates when this flag is set —
 // unlike mount.test.tsx's synchronous-only assertions, this suite drives
@@ -14,6 +15,7 @@ import type { AdmissionResult } from "../session";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sendTurnMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<TurnResult>>();
+const submitIdentityMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<IdentityResult>>();
 const fetchSlotsMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<FetchSlotsResult>>();
 const fetchAvailabilitySummaryMock = vi.fn<(config: WidgetConfig) => Promise<FetchAvailabilitySummaryResult>>();
 const postHandoffIntentMock = vi.fn<(config: WidgetConfig, input: { email: string }) => Promise<PostHandoffIntentResult>>();
@@ -30,6 +32,19 @@ const clearResumeRecordMock = vi.fn<() => void>();
 vi.mock("../turn", () => ({
   sendTurn: (config: WidgetConfig, input: unknown) => sendTurnMock(config, input),
 }));
+
+// SR-14: mock identity.ts's submitIdentity so <IdentityForm> (rendered for
+// action=identity_form) doesn't issue a real fetch here — identity.ts's own
+// behavior is covered by identity.test.ts, and <IdentityForm>'s own
+// rendering/a11y by IdentityForm.test.tsx. The consent constants are real
+// (not mocked) so tests can assert on them if needed.
+vi.mock("../identity", async () => {
+  const actual = await vi.importActual<typeof import("../identity")>("../identity");
+  return {
+    ...actual,
+    submitIdentity: (config: WidgetConfig, input: unknown) => submitIdentityMock(config, input),
+  };
+});
 
 // S14.6: mock session's mintVisitorSession so the bounded expired-session
 // re-mint (decision 5) can be asserted without a real fetch — the module
@@ -95,6 +110,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   sendTurnMock.mockReset();
+  submitIdentityMock.mockReset();
   fetchSlotsMock.mockReset();
   fetchSlotsMock.mockResolvedValue({ ok: true, slots: [] });
   fetchAvailabilitySummaryMock.mockReset();
@@ -380,6 +396,178 @@ describe("ChatWidget", () => {
     expect(fetchSlotsMock).toHaveBeenCalledTimes(1);
     expect(container.querySelector(".cw-sched-empty")).not.toBeNull();
     expect(container.querySelector("form.cw-lead-form")).toBeNull();
+  });
+
+  describe("SR-14 conversation-start identity gate", () => {
+    function getIdentityNameInput(): HTMLInputElement {
+      const input = container.querySelector<HTMLInputElement>("#cw-identity-name");
+      if (!input) throw new Error("identity name input not found");
+      return input;
+    }
+
+    function getIdentityEmailInput(): HTMLInputElement {
+      const input = container.querySelector<HTMLInputElement>("#cw-identity-email");
+      if (!input) throw new Error("identity email input not found");
+      return input;
+    }
+
+    function getIdentityConsentCheckbox(): HTMLInputElement {
+      const input = container.querySelector<HTMLInputElement>("#cw-identity-consent");
+      if (!input) throw new Error("identity consent checkbox not found");
+      return input;
+    }
+
+    function getIdentitySubmitButton(): HTMLButtonElement {
+      const button = container.querySelector<HTMLButtonElement>(".cw-identity-submit");
+      if (!button) throw new Error("identity submit button not found");
+      return button;
+    }
+
+    function fillAndSubmitIdentityForm(): void {
+      act(() => {
+        setNativeInputValue(getIdentityNameInput(), "Dana");
+        getIdentityNameInput().dispatchEvent(new Event("input", { bubbles: true }));
+        setNativeInputValue(getIdentityEmailInput(), "dana@example.com");
+        getIdentityEmailInput().dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      act(() => {
+        getIdentityConsentCheckbox().click();
+      });
+      act(() => {
+        getIdentitySubmitButton().click();
+      });
+    }
+
+    it("a decision=identity_gate response renders the real IdentityForm, not LeadForm", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          reply: "Before I answer, could you share your name and email?",
+          decision: "identity_gate",
+          confidence: null,
+          sources: [],
+          action: "identity_form",
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      typeAndSend("How much does it cost?");
+      await flush();
+
+      expect(container.querySelector("form.cw-identity-form")).not.toBeNull();
+      expect(container.querySelector("form.cw-lead-form")).toBeNull();
+    });
+
+    it("on successful capture, the deferred original question is auto-re-sent exactly once with no further visitor action, and answered as the next bot bubble", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          reply: "Before I answer, could you share your name and email?",
+          decision: "identity_gate",
+          confidence: null,
+          sources: [],
+          action: "identity_form",
+        },
+      });
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-1",
+          messageId: "msg-2",
+          reply: "It costs $99/month.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+      submitIdentityMock.mockResolvedValueOnce({ ok: true, identity: { leadId: "lead-1", status: "new" } });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      typeAndSend("How much does it cost?");
+      await flush();
+
+      // Exactly one user bubble so far (the original question) -- the gate
+      // reply is not a duplicate ask.
+      const userBubblesBeforeCapture = container.querySelectorAll(".cw-bubble-row-user");
+      expect(userBubblesBeforeCapture).toHaveLength(1);
+
+      fillAndSubmitIdentityForm();
+      await flush();
+      await flush();
+
+      expect(submitIdentityMock).toHaveBeenCalledTimes(1);
+      // The deferred question was re-sent as the SECOND sendTurn call, on
+      // the same conversation_id, with no visitor action beyond submitting
+      // the identity form.
+      expect(sendTurnMock).toHaveBeenCalledTimes(2);
+      const secondCallInput = sendTurnMock.mock.calls[1]![1] as { message: string; conversationId: string | null };
+      expect(secondCallInput.message).toBe("How much does it cost?");
+      expect(secondCallInput.conversationId).toBe("conv-1");
+
+      // No duplicate user bubble was appended by the auto-re-send.
+      const userBubblesAfterCapture = container.querySelectorAll(".cw-bubble-row-user");
+      expect(userBubblesAfterCapture).toHaveLength(1);
+
+      // The real answer arrives as the next bot bubble.
+      const botBubbles = container.querySelectorAll(".cw-bubble-bot");
+      const lastBotBubbleText = botBubbles[botBubbles.length - 1]?.textContent ?? "";
+      expect(lastBotBubbleText).toContain("$99/month");
+    });
+
+    it("on failed capture, an honest error shows and nothing is auto-re-sent", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          reply: "Before I answer, could you share your name and email?",
+          decision: "identity_gate",
+          confidence: null,
+          sources: [],
+          action: "identity_form",
+        },
+      });
+      submitIdentityMock.mockResolvedValueOnce({
+        ok: false,
+        error: {
+          type: "IDENTITY_ERROR",
+          errorCode: "LLM_ERROR",
+          message: "Backend failed.",
+          correlationId: "corr-1",
+          status: 502,
+          retryAfterSeconds: null,
+        },
+      });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      typeAndSend("How much does it cost?");
+      await flush();
+
+      fillAndSubmitIdentityForm();
+      await flush();
+
+      expect(container.querySelector(".cw-identity-error")).not.toBeNull();
+      // No re-send: sendTurn was called exactly once (the original gated turn).
+      expect(sendTurnMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("S14.5 focus management + live region + TTS gesture gating", () => {

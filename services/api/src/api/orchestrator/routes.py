@@ -53,20 +53,23 @@ class ChatMessageResponse(BaseModel):
 
     ``intent``/``grounded``/``guardrail_flag`` are stored (analytics) but
     never surfaced here -- keep the public surface minimal; still leak-free
-    (never ``tenant_id``/``visitor_id``). ``action`` (S10.3, widened S10.4)
-    IS surfaced -- it tells the widget whether to render the S8.1 scheduling
-    CTA (``"schedule_cta"``) or the S7.1 consent-gated lead form
-    (``"lead_form"``) on a ``decision`` that means "offer a human"
-    (``escalate``/``blocked``).
+    (never ``tenant_id``/``visitor_id``). ``action`` (S10.3, widened S10.4,
+    widened again SR-14) IS surfaced -- it tells the widget whether to render
+    the S8.1 scheduling CTA (``"schedule_cta"``), the S7.1 consent-gated lead
+    form (``"lead_form"``) on a ``decision`` that means "offer a human"
+    (``escalate``/``blocked``), or the SR-14 consent-gated identity form
+    (``"identity_form"``) on ``decision="identity_gate"`` -- a distinct
+    decision value (not a reuse of ``clarify``/``escalate``) so gate-shown
+    counts are a stored, tagged fact (SR-14 D8/D11).
     """
 
     conversation_id: str
     message_id: str
     reply: str
-    decision: Literal["answer", "clarify", "escalate", "blocked"]
+    decision: Literal["answer", "clarify", "escalate", "blocked", "identity_gate"]
     confidence: float | None
     sources: list[ChatSource]
-    action: Literal["lead_form", "schedule_cta"] | None = None
+    action: Literal["lead_form", "schedule_cta", "identity_form"] | None = None
 
 
 @router.post("/message")

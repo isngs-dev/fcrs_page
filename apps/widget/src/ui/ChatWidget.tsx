@@ -154,6 +154,12 @@ export function ChatWidget({
   // auto-retry has stopped) can replay it without re-appending a duplicate
   // optimistic user bubble.
   const lastFailedSendRef = useRef<{ message: string; conversationId: string | null } | null>(null);
+  // SR-14 D3: remembers the visitor's original question when the identity
+  // gate fires (decision="identity_gate"), so a successful capture can
+  // auto-re-send that EXACT message on the same conversation, with no
+  // further visitor action. Cleared once consumed so a capture can never
+  // re-send twice.
+  const pendingIdentityQuestionRef = useRef<{ message: string; conversationId: string | null } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -394,6 +400,17 @@ export function ChatWidget({
       if (isResumeEnabled()) {
         touchResumeRecord(result.turn.conversationId, new Date());
       }
+      // SR-14 D3: on an identity_gate reply, remember the visitor's ORIGINAL
+      // message (the `trimmed` this send was for -- never the gate reply
+      // itself) so a successful capture can auto-re-send it. Any other
+      // decision clears a stale pending question, since the gate satisfying
+      // itself means the NEXT unanswered message is what should be
+      // remembered, not a leftover from an earlier gate turn.
+      if (result.turn.decision === "identity_gate") {
+        pendingIdentityQuestionRef.current = { message: trimmed, conversationId: result.turn.conversationId };
+      } else {
+        pendingIdentityQuestionRef.current = null;
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -497,6 +514,25 @@ export function ChatWidget({
     await runSend(last.message, last.conversationId);
   }, [pending, runSend]);
 
+  /**
+   * SR-14 D3: on a successful identity capture, automatically re-send the
+   * visitor's deferred original question on the SAME conversation, via the
+   * existing `runSendRef` pattern (the same mechanism SR-3's
+   * RESUME_REJECTED recovery already uses to programmatically re-invoke a
+   * send from inside the widget) -- no new re-send mechanism is invented.
+   * Consumes (clears) the pending question first so a duplicate
+   * `onCaptured` call (there should never be one, but this is the
+   * exactly-once guarantee `<IdentityForm>` promises) can never re-send
+   * twice. A no-op if there is no pending question to answer (defensive;
+   * should not happen since `<IdentityForm>` only renders on a gate turn).
+   */
+  const handleIdentityCaptured = useCallback(() => {
+    const pending_ = pendingIdentityQuestionRef.current;
+    if (!pending_) return;
+    pendingIdentityQuestionRef.current = null;
+    void runSendRef.current(pending_.message, pending_.conversationId);
+  }, []);
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter" && !event.shiftKey) {
@@ -547,7 +583,13 @@ export function ChatWidget({
             </span>
           </div>
           <ConnectionStatus state={connectionState} onRetry={() => void handleManualRetry()} />
-          <MessageList messages={messages} pending={pending} config={config} onSuggestion={(message) => void handleSuggestion(message)} />
+          <MessageList
+            messages={messages}
+            pending={pending}
+            config={config}
+            onSuggestion={(message) => void handleSuggestion(message)}
+            onIdentityCaptured={handleIdentityCaptured}
+          />
           {scheduleError && (
             <div className="cw-sched-error" role="alert">
               We couldn&rsquo;t check appointment availability. <button type="button" className="cw-sched-retry" onClick={() => void startScheduling()}>Retry</button>

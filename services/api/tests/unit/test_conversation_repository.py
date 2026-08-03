@@ -1777,6 +1777,33 @@ async def test_list_conversations_escalated_none_omits_clause() -> None:
     assert "EXISTS" not in query
 
 
+async def test_list_conversations_visitor_ids_filter_appends_any_clause() -> None:
+    """SR-9.3 J6/Scope §4: the visitor_ids filter used by the timeline
+    fan-out appends exactly one ANY() clause, values bound not interpolated."""
+    from api.conversation_store.repository import list_conversations
+
+    db = _CountThenPageDatabase(total=1, rows=[_conv_summary_row()])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await list_conversations(db, claims, visitor_ids=["visitor-1", "visitor-2"])
+
+    query, args = db.fetch_calls[-1]
+    assert "visitor_id = any($" in query.lower()
+    assert ["visitor-1", "visitor-2"] in args
+
+
+async def test_list_conversations_visitor_ids_none_omits_clause() -> None:
+    from api.conversation_store.repository import list_conversations
+
+    db = _CountThenPageDatabase(total=1, rows=[_conv_summary_row()])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await list_conversations(db, claims, visitor_ids=None)
+
+    query, _ = db.fetch_calls[-1]
+    assert "visitor_id = any" not in query.lower()
+
+
 async def test_list_conversations_message_count_subselect_present() -> None:
     from api.conversation_store.repository import list_conversations
 

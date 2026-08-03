@@ -26,10 +26,10 @@ const ChatMessageResponseSchema = z.object({
   conversation_id: z.string().min(1),
   message_id: z.string().min(1),
   reply: z.string(),
-  decision: z.enum(["answer", "clarify", "escalate", "blocked"]),
+  decision: z.enum(["answer", "clarify", "escalate", "blocked", "identity_gate"]),
   confidence: z.number().nullable(),
   sources: z.array(ChatSourceSchema),
-  action: z.enum(["lead_form", "schedule_cta"]).nullable().optional(),
+  action: z.enum(["lead_form", "schedule_cta", "identity_form"]).nullable().optional(),
 });
 
 export interface ChatSource {
@@ -43,10 +43,10 @@ export interface Turn {
   conversationId: string;
   messageId: string;
   reply: string;
-  decision: "answer" | "clarify" | "escalate" | "blocked";
+  decision: "answer" | "clarify" | "escalate" | "blocked" | "identity_gate";
   confidence: number | null;
   sources: ChatSource[];
-  action: "lead_form" | "schedule_cta" | null;
+  action: "lead_form" | "schedule_cta" | "identity_form" | null;
 }
 
 /** The typed shape of the backend's central error envelope, mirroring AdmissionError. */
