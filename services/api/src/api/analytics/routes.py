@@ -16,17 +16,16 @@ server-side only -- no row content).
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 from common.auth import AuthClaims, Role
-from common.errors import ValidationError
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.analytics.reports_routes import _resolve_window
 from api.analytics.repository import AnalyticsOverview, get_analytics_overview
 from api.auth.dependencies import require_roles, resolve_tenant_scope
-from api.config import get_api_settings
 
 _log = get_logger(__name__)
 
@@ -130,13 +129,6 @@ def _to_response(overview: AnalyticsOverview) -> AnalyticsOverviewResponse:
     )
 
 
-def _as_utc(value: datetime) -> datetime:
-    """Treat a naive datetime as UTC; pass through an already-aware one."""
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value
-
-
 async def _get_overview(
     request: Request,
     claims: AuthClaims,
@@ -155,26 +147,8 @@ async def _get_overview(
     ``INVALID_BUCKET``).
     """
     db = request.app.state.db
-    settings = get_api_settings()
 
-    resolved_to = _as_utc(date_to) if date_to is not None else datetime.now(tz=UTC)
-    resolved_from = (
-        _as_utc(date_from)
-        if date_from is not None
-        else resolved_to - timedelta(days=settings.analytics_default_window_days)
-    )
-
-    if resolved_from >= resolved_to:
-        raise ValidationError(
-            "from must be strictly before to.",
-            code="INVALID_ANALYTICS_WINDOW",
-        )
-
-    if (resolved_to - resolved_from) > timedelta(days=settings.analytics_max_window_days):
-        raise ValidationError(
-            f"Window span may not exceed {settings.analytics_max_window_days} days.",
-            code="ANALYTICS_WINDOW_TOO_LARGE",
-        )
+    resolved_from, resolved_to = _resolve_window(date_from, date_to)
 
     overview = await get_analytics_overview(
         db,

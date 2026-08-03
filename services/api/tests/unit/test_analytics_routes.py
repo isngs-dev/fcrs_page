@@ -269,7 +269,23 @@ async def test_omitted_window_defaults_to_last_30_days() -> None:
 # ==============================================================================
 
 
-async def test_bucket_month_returns_422_invalid_bucket() -> None:
+async def test_bucket_hour_returns_422_invalid_bucket() -> None:
+    """SR-9.5 D3: "hour" remains rejected (explicitly out of scope)."""
+    app = _build_app()
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.get(
+            "/admin/analytics/overview?bucket=hour",
+            cookies={"access_token": token},
+        )
+    assert resp.status_code == 422
+    assert resp.json()["error_code"] == "INVALID_BUCKET"
+
+
+async def test_bucket_month_returns_200_sr95_d3_widened_contract() -> None:
+    """SR-9.5 D3: the shipped `overview` endpoint gains the `month` bucket
+    too -- this returned 422 before this sprint; the explicit regression
+    test proving the widened contract works live."""
     app = _build_app()
     token = _mint_cookie(role=Role.CLIENT_ADMIN)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -277,8 +293,8 @@ async def test_bucket_month_returns_422_invalid_bucket() -> None:
             "/admin/analytics/overview?bucket=month",
             cookies={"access_token": token},
         )
-    assert resp.status_code == 422
-    assert resp.json()["error_code"] == "INVALID_BUCKET"
+    assert resp.status_code == 200
+    assert resp.json()["window"]["bucket"] == "month"
 
 
 async def test_bucket_week_returns_200() -> None:

@@ -27,6 +27,7 @@ import {
 const BUCKET_LABELS: Record<AnalyticsBucket, string> = {
   day: "Day",
   week: "Week",
+  month: "Month",
 };
 
 /**

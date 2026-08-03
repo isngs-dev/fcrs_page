@@ -268,18 +268,38 @@ async def test_series_merges_per_bucket_rows_missing_metric_is_zero() -> None:
 
 
 async def test_invalid_bucket_rejected_before_any_query() -> None:
-    """bucket='month' -> ValidationError INVALID_BUCKET, no query issued."""
+    """bucket='hour' -> ValidationError INVALID_BUCKET, no query issued.
+
+    SR-9.5 D3 widened `_VALID_BUCKETS` to include "month" (deliberate,
+    disclosed contract widening -- see test_month_bucket_now_accepted
+    below); "hour" remains rejected (explicitly out of scope, D3).
+    """
     db = _ScriptedDatabase()
     claims = _claims("tenant-a")
 
     with pytest.raises(ValidationError) as exc_info:
         await get_analytics_overview(
-            db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="month",
+            db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="hour",
         )
 
     assert exc_info.value.code == "INVALID_BUCKET"
     assert db.fetch_calls == []
     assert db.fetchrow_calls == []
+
+
+async def test_month_bucket_now_accepted_sr95_d3() -> None:
+    """SR-9.5 D3: `_VALID_BUCKETS` is deliberately widened to
+    {"day", "week", "month"} -- a request that previously raised
+    INVALID_BUCKET for "month" now succeeds. This is the explicit
+    regression test for the widened contract."""
+    db = _ScriptedDatabase()
+    claims = _claims("tenant-a")
+
+    overview = await get_analytics_overview(
+        db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="month",
+    )
+
+    assert overview.bucket == "month"
 
 
 async def test_week_bucket_bound_as_parameter_not_interpolated() -> None:

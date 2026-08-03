@@ -12,8 +12,8 @@ const { resolveAnalyticsQuery, getAnalyticsOverview, formatRate, ANALYTICS_BUCKE
   await import("@/lib/analytics");
 
 describe("ANALYTICS_BUCKETS", () => {
-  it("matches the two canonical buckets from repository.py exactly", () => {
-    expect(ANALYTICS_BUCKETS).toEqual(["day", "week"]);
+  it("matches the canonical buckets from repository.py exactly (SR-9.5 D3: month added)", () => {
+    expect(ANALYTICS_BUCKETS).toEqual(["day", "week", "month"]);
   });
 });
 
@@ -57,8 +57,13 @@ describe("resolveAnalyticsQuery", () => {
     expect(params.get("bucket")).toBe("week");
   });
 
-  it("an unknown bucket=month falls back to day (guards against INVALID_BUCKET)", () => {
+  it("bucket=month is included (SR-9.5 D3 widened contract)", () => {
     const params = new URLSearchParams(resolveAnalyticsQuery({ bucket: "month" }));
+    expect(params.get("bucket")).toBe("month");
+  });
+
+  it("an unknown bucket=hour falls back to day (guards against INVALID_BUCKET)", () => {
+    const params = new URLSearchParams(resolveAnalyticsQuery({ bucket: "hour" }));
     expect(params.get("bucket")).toBe("day");
   });
 

@@ -8,6 +8,7 @@ import {
   Bell,
   BookOpen,
   Building2,
+  FileBarChart,
   LayoutDashboard,
   LogOut,
   MessageSquare,
@@ -83,6 +84,12 @@ const toolsItems: NavItem[] = [
     href: "/analytics",
     label: "Analytics",
     icon: BarChart3,
+    roles: ["CLIENT_ADMIN", "CLIENT_AGENT"],
+  },
+  {
+    href: "/reports",
+    label: "Reports",
+    icon: FileBarChart,
     roles: ["CLIENT_ADMIN", "CLIENT_AGENT"],
   },
   {

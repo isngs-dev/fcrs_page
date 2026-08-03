@@ -8,8 +8,10 @@
  *
  * Constants below are sourced verbatim from the real backend, not invented:
  *  - `ANALYTICS_BUCKETS` mirrors `_VALID_BUCKETS`
- *    (services/api/src/api/analytics/repository.py:46) -- exactly
- *    `{day, week}`, no `month`/`hour` (flagged backend gap, S13.5.md).
+ *    (services/api/src/api/analytics/repository.py:46) -- `{day, week,
+ *    month}` since SR-9.5 D3 (a deliberate, disclosed widening of this
+ *    shipped endpoint's contract -- `month` used to 422; `hour` is still
+ *    rejected, explicitly out of scope).
  *  - The response shape mirrors `AnalyticsOverviewResponse`
  *    (services/api/src/api/analytics/routes.py:78-89) exactly.
  *  - `ANALYTICS_RANGES` is a UI choice (S13.5.md decision 5, Q1 default
@@ -20,8 +22,10 @@ import "server-only";
 
 import { adminApiFetch, AdminApiError } from "@/lib/api";
 
-/** The two canonical bucket granularities (repository.py `_VALID_BUCKETS`). */
-export const ANALYTICS_BUCKETS = ["day", "week"] as const;
+/** The canonical bucket granularities (repository.py `_VALID_BUCKETS`).
+ * `month` added SR-9.5 D3 -- `hour` remains unsupported (explicitly
+ * rejected as unsafe at the 366-day maximum window). */
+export const ANALYTICS_BUCKETS = ["day", "week", "month"] as const;
 
 export type AnalyticsBucket = (typeof ANALYTICS_BUCKETS)[number];
 

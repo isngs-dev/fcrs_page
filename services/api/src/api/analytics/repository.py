@@ -43,7 +43,7 @@ from common.auth import AuthClaims
 from common.db import Database
 from common.errors import ValidationError
 
-_VALID_BUCKETS = {"day", "week"}
+_VALID_BUCKETS = {"day", "week", "month"}
 
 
 @dataclass(frozen=True)
