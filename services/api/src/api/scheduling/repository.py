@@ -245,6 +245,30 @@ async def update_event_calendar_ref(
     )
 
 
+async def set_event_lead_id(
+    db: Database,
+    claims: AuthClaims,
+    event_id: str,
+    lead_id: str,
+) -> None:
+    """Link a resolved (created-or-existing) lead onto a booked event.
+
+    Called by ``api.scheduling.routes.book_slot`` (SR-9.1) as part of the
+    best-effort, post-durable-write lead autolink -- never inside the same
+    transaction as ``create_event``. Tenant-scoped: the ``WHERE`` clause
+    filters by ``tenant_id`` so this can never touch another tenant's row.
+    """
+    _reject_global(claims)
+
+    await db.execute(
+        "UPDATE schedule_events SET lead_id = $1 "
+        "WHERE tenant_id = $2 AND event_id = $3",
+        lead_id,
+        claims.tenant_id,
+        event_id,
+    )
+
+
 async def delete_event(db: Database, claims: AuthClaims, event_id: str) -> None:
     """Delete a ``schedule_events`` row.
 
@@ -288,6 +312,58 @@ async def get_event_contact(
         status=str(row["status"]),
         email=row["email"],
     )
+
+
+async def list_events_for_timeline(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    lead_ids: list[str],
+    visitor_ids: list[str],
+    before: datetime | None = None,
+    limit: int = 50,
+) -> list[ScheduleEvent]:
+    """Fetch tenant-scoped events reachable by either identity path (SR-9.3 J8).
+
+    ``AND (lead_id = ANY($2) OR visitor_id = ANY($3))`` -- a Calendly-sourced
+    event never has a ``lead_id`` (see ``ingest_calendly_event``) but does
+    carry a ``visitor_id`` from email correlation, so the OR is required or
+    Calendly bookings silently vanish from the timeline. Both lists may be
+    empty (an empty ``ANY($n)`` array matches nothing, which is correct --
+    not an error). Newest-first by ``starts_at``. Raises ``ValidationError``
+    for global callers.
+    """
+    _reject_global(claims)
+
+    params: list[Any] = [claims.tenant_id, lead_ids, visitor_ids]
+    where = "WHERE tenant_id = $1 AND (lead_id = ANY($2) OR visitor_id = ANY($3))"
+
+    if before is not None:
+        params.append(before)
+        where += f" AND starts_at < ${len(params)}"
+
+    params.append(max(1, min(limit, 200)))
+
+    # Parameterized SQL; `where` is a safe constant clause built above.
+    # ruff: noqa: S608
+    rows = await db.fetch(
+        "SELECT event_id, lead_id, visitor_id, email, name, starts_at, ends_at, "
+        "timezone, status, calendar_ref, consent, created_at, source "
+        "FROM schedule_events " + where + " "
+        f"ORDER BY starts_at DESC LIMIT ${len(params)}",
+        *params,
+    )
+    return [
+        ScheduleEvent(
+            event_id=str(row["event_id"]), lead_id=row["lead_id"], visitor_id=row["visitor_id"],
+            email=row["email"], name=row["name"], starts_at=row["starts_at"],
+            ends_at=row["ends_at"], timezone=str(row["timezone"]), status=str(row["status"]),
+            calendar_ref=row["calendar_ref"], consent=row["consent"], created_at=row["created_at"],
+            source=str(row["source"]) if "source" in row.keys() and row["source"] is not None
+            else "native",
+        )
+        for row in rows
+    ]
 
 
 async def get_upcoming_booking(

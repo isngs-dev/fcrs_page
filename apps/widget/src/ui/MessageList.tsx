@@ -21,11 +21,14 @@ export interface MessageListProps {
   pending: boolean;
   config: WidgetConfig;
   onSuggestion: (message: string) => void;
+  /** SR-14 D3: threaded through to `<Bubble>`/`<IdentityForm>` so a
+   * successful identity capture can trigger the deferred-question re-send. */
+  onIdentityCaptured?: () => void;
 }
 
 const SUGGESTIONS = ["What does your product do?", "How much does it cost?", "Book a call with sales"];
 
-export function MessageList({ messages, pending, config, onSuggestion }: MessageListProps) {
+export function MessageList({ messages, pending, config, onSuggestion, onIdentityCaptured }: MessageListProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -53,7 +56,12 @@ export function MessageList({ messages, pending, config, onSuggestion }: Message
         </section>
       )}
       {messages.map((message) => (
-        <Bubble key={message.id} message={message} config={config} />
+        <Bubble
+          key={message.id}
+          message={message}
+          config={config}
+          {...(onIdentityCaptured ? { onIdentityCaptured } : {})}
+        />
       ))}
       {pending && <TypingIndicator />}
       <div ref={endRef} />

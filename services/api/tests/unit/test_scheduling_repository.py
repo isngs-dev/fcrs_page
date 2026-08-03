@@ -130,6 +130,15 @@ class _StubDatabase:
                     existing["status"] = "cancelled"
             return "UPDATE 1"
 
+        if q.startswith("UPDATE SCHEDULE_EVENTS SET LEAD_ID"):
+            # set_event_lead_id -- args: lead_id, tenant_id, event_id
+            lead_id, tenant_id, event_id = args
+            key = (tenant_id, event_id)
+            if key not in self._events:
+                return "UPDATE 0"
+            self._events[key]["lead_id"] = lead_id
+            return "UPDATE 1"
+
         return "OK"
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
@@ -185,6 +194,21 @@ class _StubDatabase:
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
         self.fetch_calls.append((query, args))
         q = query.strip().upper()
+
+        if "FROM SCHEDULE_EVENTS" in q and "LEAD_ID = ANY" in q:
+            tenant_id, lead_ids, visitor_ids = args[0], args[1], args[2]
+            rows = [
+                row for row in self._events.values()
+                if row["tenant_id"] == tenant_id
+                and (row["lead_id"] in lead_ids or row["visitor_id"] in visitor_ids)
+            ]
+            # args are [tenant_id, lead_ids, visitor_ids, (before,) limit] --
+            # `before` is present only when the query text contains it.
+            if "STARTS_AT < $" in q:
+                before = args[3]
+                rows = [r for r in rows if r["starts_at"] < before]
+            rows.sort(key=lambda r: r["starts_at"], reverse=True)
+            return rows
 
         if "FROM SCHEDULE_EVENTS" in q:
             tenant_id = args[0]
@@ -915,3 +939,194 @@ async def test_get_upcoming_booking_calendly_row_visitor_id_null_not_returned(
         result = await get_upcoming_booking(stub_db, claims, "visitor-1")
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# set_event_lead_id (SR-9.1)
+# ---------------------------------------------------------------------------
+
+
+async def test_set_event_lead_id_updates_the_event(stub_db: _StubDatabase) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.scheduling.repository import create_event, set_event_lead_id
+
+        claims = _claims(tenant_id="tenant-abc")
+        event = await create_event(
+            stub_db, claims,
+            starts_at=datetime(2026, 1, 5, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 1, 5, 14, 30, tzinfo=UTC),
+            timezone="UTC", visitor_id="visitor-1", lead_id=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK", "captured_at": "x"},
+        )
+
+        await set_event_lead_id(stub_db, claims, event.event_id, "lead-abc")
+
+        stored = stub_db._events[(claims.tenant_id, event.event_id)]
+        assert stored["lead_id"] == "lead-abc"
+
+
+async def test_set_event_lead_id_uses_tenant_scoped_positional_sql(stub_db: _StubDatabase) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.scheduling.repository import create_event, set_event_lead_id
+
+        claims = _claims(tenant_id="tenant-abc")
+        event = await create_event(
+            stub_db, claims,
+            starts_at=datetime(2026, 1, 5, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 1, 5, 14, 30, tzinfo=UTC),
+            timezone="UTC", visitor_id="visitor-1", lead_id=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK", "captured_at": "x"},
+        )
+
+        await set_event_lead_id(stub_db, claims, event.event_id, "lead-abc")
+
+        query, args = stub_db.execute_calls[-1]
+        assert "update schedule_events" in query.lower()
+        assert "set lead_id" in query.lower()
+        assert "where" in query.lower()
+        assert "tenant_id" in query.lower()
+        assert "event_id" in query.lower()
+        assert ":" not in query
+        assert "lead-abc" in args
+        assert claims.tenant_id in args
+        assert event.event_id in args
+
+
+async def test_set_event_lead_id_cross_tenant_no_op(stub_db: _StubDatabase) -> None:
+    """A tenant-B caller cannot link a lead onto tenant-A's event."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.scheduling.repository import create_event, set_event_lead_id
+
+        claims_a = _claims(tenant_id="tenant-a")
+        claims_b = _claims(tenant_id="tenant-b")
+        event = await create_event(
+            stub_db, claims_a,
+            starts_at=datetime(2026, 1, 5, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 1, 5, 14, 30, tzinfo=UTC),
+            timezone="UTC", visitor_id="visitor-1", lead_id=None,
+            consent={"granted": True, "purpose": "booking", "text": "OK", "captured_at": "x"},
+        )
+
+        await set_event_lead_id(stub_db, claims_b, event.event_id, "lead-xyz")
+
+        stored = stub_db._events[(claims_a.tenant_id, event.event_id)]
+        assert stored["lead_id"] is None
+
+
+async def test_set_event_lead_id_rejects_global_caller(stub_db: _StubDatabase) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.scheduling.repository import set_event_lead_id
+
+        global_claims = AuthClaims(subject="admin-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with pytest.raises(ValidationError):
+            await set_event_lead_id(stub_db, global_claims, "some-event-id", "lead-1")
+
+
+# ---------------------------------------------------------------------------
+# list_events_for_timeline (SR-9.3 J8/D5)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_events_for_timeline_reachable_by_lead_id(stub_db: _StubDatabase) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.scheduling.repository import create_event, list_events_for_timeline
+
+        claims = _claims(role=Role.CLIENT_ADMIN)
+        event = await create_event(
+            stub_db, claims,
+            starts_at=datetime(2026, 1, 5, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 1, 5, 14, 30, tzinfo=UTC),
+            timezone="UTC", visitor_id=None, lead_id="lead-1",
+            consent={"granted": True, "purpose": "booking", "text": "OK", "captured_at": "x"},
+        )
+
+        results = await list_events_for_timeline(
+            stub_db, claims, lead_ids=["lead-1"], visitor_ids=[],
+        )
+        assert [r.event_id for r in results] == [event.event_id]
+
+
+async def test_list_events_for_timeline_calendly_reachable_only_by_visitor_id(
+    stub_db: _StubDatabase,
+) -> None:
+    """A Calendly-sourced event never has a lead_id (J8) -- it must still
+    appear via the visitor_id OR path."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.scheduling.repository import ingest_calendly_event, list_events_for_timeline
+
+        claims = _claims(role=Role.CLIENT_ADMIN)
+        event = await ingest_calendly_event(
+            stub_db, claims.tenant_id,
+            calendly_uuid="cal-uuid-1",
+            starts_at=datetime(2026, 1, 6, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 1, 6, 14, 30, tzinfo=UTC),
+            timezone="UTC", email="visitor@example.com", name=None,
+            visitor_id="visitor-calendly-1",
+        )
+        assert event.lead_id is None
+
+        # No lead_id match -> still found via visitor_id.
+        results = await list_events_for_timeline(
+            stub_db, claims, lead_ids=["some-other-lead"], visitor_ids=["visitor-calendly-1"],
+        )
+        assert [r.event_id for r in results] == [event.event_id]
+
+        # Nothing shared -> not found.
+        no_match = await list_events_for_timeline(
+            stub_db, claims, lead_ids=["some-other-lead"], visitor_ids=["some-other-visitor"],
+        )
+        assert no_match == []
+
+
+async def test_list_events_for_timeline_tenant_isolation_same_lead_id(
+    stub_db: _StubDatabase,
+) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.scheduling.repository import create_event, list_events_for_timeline
+
+        claims_a = _claims(tenant_id="tenant-a", role=Role.CLIENT_ADMIN)
+        claims_b = _claims(tenant_id="tenant-b", role=Role.CLIENT_ADMIN)
+        shared_lead_id = "lead-shared"
+
+        event_a = await create_event(
+            stub_db, claims_a,
+            starts_at=datetime(2026, 1, 5, 14, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 1, 5, 14, 30, tzinfo=UTC),
+            timezone="UTC", visitor_id=None, lead_id=shared_lead_id,
+            consent={"granted": True, "purpose": "booking", "text": "OK", "captured_at": "x"},
+        )
+        event_b = await create_event(
+            stub_db, claims_b,
+            starts_at=datetime(2026, 1, 5, 15, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 1, 5, 15, 30, tzinfo=UTC),
+            timezone="UTC", visitor_id=None, lead_id=shared_lead_id,
+            consent={"granted": True, "purpose": "booking", "text": "OK", "captured_at": "x"},
+        )
+
+        results_a = await list_events_for_timeline(
+            stub_db, claims_a, lead_ids=[shared_lead_id], visitor_ids=[],
+        )
+        results_b = await list_events_for_timeline(
+            stub_db, claims_b, lead_ids=[shared_lead_id], visitor_ids=[],
+        )
+        assert [r.event_id for r in results_a] == [event_a.event_id]
+        assert [r.event_id for r in results_b] == [event_b.event_id]
+
+
+async def test_list_events_for_timeline_rejects_global_caller(stub_db: _StubDatabase) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.scheduling.repository import list_events_for_timeline
+
+        global_claims = AuthClaims(subject="admin-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with pytest.raises(ValidationError):
+            await list_events_for_timeline(stub_db, global_claims, lead_ids=[], visitor_ids=[])

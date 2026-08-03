@@ -71,6 +71,11 @@ class _StubDatabase:
         self._calendar_configs: dict[str, dict[str, Any]] = {}
         self._reminder_jobs: dict[str, dict[str, Any]] = {}
         self._handoff_intents: list[dict[str, Any]] = []
+        # leads/lead_activities (SR-9.1 booking-lead autolink)
+        self._leads: dict[tuple[str, str], dict[str, Any]] = {}
+        self._lead_activities: dict[tuple[str, str], dict[str, Any]] = {}
+        # When set, create_lead/set_event_lead_id raise this (SR-9.1 C1 test).
+        self.raise_on_lead_write: Exception | None = None
 
     def seed_availability(self, *, tenant_id: str, timezone: str = "UTC", rules: dict[str, Any] = _RULES) -> None:
         self._availability[tenant_id] = {
@@ -92,6 +97,43 @@ class _StubDatabase:
 
     async def execute(self, query: str, *args: Any) -> str:
         q = query.strip().upper()
+
+        if q.startswith("INSERT INTO LEADS"):
+            if self.raise_on_lead_write is not None:
+                exc = self.raise_on_lead_write
+                self.raise_on_lead_write = None
+                raise exc
+            (tenant_id, lead_id, visitor_id, name, email, phone, status, stage,
+             qualification_score, consent, assigned_agent_id, source) = args
+            self._leads[(tenant_id, lead_id)] = {
+                "tenant_id": tenant_id, "lead_id": lead_id, "visitor_id": visitor_id,
+                "name": name, "email": email, "phone": phone, "status": status,
+                "stage": stage, "qualification_score": qualification_score,
+                "consent": consent, "assigned_agent_id": assigned_agent_id,
+                "source": source, "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+                "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
+            }
+            return "INSERT 0 1"
+
+        if q.startswith("INSERT INTO LEAD_ACTIVITIES"):
+            tenant_id, activity_id, lead_id, activity_type, payload, actor = args
+            self._lead_activities[(tenant_id, activity_id)] = {
+                "tenant_id": tenant_id, "activity_id": activity_id, "lead_id": lead_id,
+                "type": activity_type, "payload": payload, "actor": actor,
+                "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            }
+            return "INSERT 0 1"
+
+        if q.startswith("UPDATE SCHEDULE_EVENTS SET LEAD_ID"):
+            if self.raise_on_lead_write is not None:
+                exc = self.raise_on_lead_write
+                self.raise_on_lead_write = None
+                raise exc
+            lead_id, tenant_id, event_id = args
+            key = (tenant_id, event_id)
+            if key in self._events:
+                self._events[key]["lead_id"] = lead_id
+            return "UPDATE 1"
 
         if q.startswith("INSERT INTO AVAILABILITY"):
             tenant_id, timezone, rules = args
@@ -174,6 +216,20 @@ class _StubDatabase:
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         q = query.strip().upper()
+        if "FROM LEADS" in q and "VISITOR_ID = $2" in q:
+            tenant_id, visitor_id = args
+            matches = [
+                row for row in self._leads.values()
+                if row["tenant_id"] == tenant_id and row["visitor_id"] == visitor_id
+            ]
+            if not matches:
+                return None
+            matches.sort(key=lambda r: r["created_at"], reverse=True)
+            return matches[0]
+        if "COUNT(*)" in q and "FROM LEADS" in q:
+            tenant_id = args[0]
+            total = sum(1 for row in self._leads.values() if row["tenant_id"] == tenant_id)
+            return {"count": total}
         if "FROM AVAILABILITY" in q:
             tenant_id = args[0]
             return self._availability.get(tenant_id)
@@ -188,6 +244,11 @@ class _StubDatabase:
 
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
         q = query.strip().upper()
+        if "FROM LEADS" in q:
+            tenant_id = args[0]
+            rows = [row for row in self._leads.values() if row["tenant_id"] == tenant_id]
+            rows.sort(key=lambda r: (r["created_at"], r["lead_id"]), reverse=True)
+            return rows
         if "FROM SCHEDULE_EVENTS" in q:
             tenant_id = args[0]
             rows = [
@@ -853,6 +914,73 @@ async def test_post_book_resolvable_recipient_enqueues_confirmation_and_delays_o
     assert delay_kwargs["job_id"] == "job-confirm-1"
 
 
+async def test_post_book_confirmation_enqueue_carries_autolinked_lead_id() -> None:
+    """SR-9.3 D4/Scope §3: the successful autolink's lead_id (already in
+    scope from SR-9.1's create-or-link block) is passed onto the booking
+    confirmation's enqueue_notification call -- zero extra queries needed."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.resolve_event_recipient",
+            new=AsyncMock(return_value="lead@example.com"),
+        ),
+        patch(
+            "api.scheduling.routes.enqueue_notification",
+            new=AsyncMock(return_value="job-confirm-2"),
+        ) as mock_enqueue,
+        patch("api.scheduling.routes.send_notification"),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token()
+            response = await client.post(
+                "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 201
+    event_id = response.json()["event_id"]
+    stored_event = next(v for v in db._events.values() if v["event_id"] == event_id)
+
+    mock_enqueue.assert_awaited_once()
+    _, kwargs = mock_enqueue.call_args
+    assert kwargs["lead_id"] == stored_event["lead_id"]
+    assert kwargs["lead_id"] is not None
+
+
+async def test_post_book_degraded_autolink_still_enqueues_confirmation_with_null_lead_id() -> None:
+    """SR-9.3 D4/Scope §3: a degraded autolink (create_lead/set_event_lead_id
+    raises) passes lead_id=None to enqueue_notification rather than raising
+    -- the confirmation notification is never lost because the link failed."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    db.raise_on_lead_write = RuntimeError("lead write unavailable")
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.resolve_event_recipient",
+            new=AsyncMock(return_value="lead@example.com"),
+        ),
+        patch(
+            "api.scheduling.routes.enqueue_notification",
+            new=AsyncMock(return_value="job-confirm-3"),
+        ) as mock_enqueue,
+        patch("api.scheduling.routes.send_notification"),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token()
+            response = await client.post(
+                "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 201
+    mock_enqueue.assert_awaited_once()
+    _, kwargs = mock_enqueue.call_args
+    assert kwargs["lead_id"] is None
+
+
 async def test_post_book_no_recipient_skips_enqueue_still_201() -> None:
     """No resolvable recipient (default stub DB) -> no enqueue, booking still 201."""
     db = _StubDatabase()
@@ -1113,6 +1241,292 @@ async def test_post_handoff_intent_ignores_body_supplied_ids() -> None:
     stored = db._handoff_intents[0]
     assert stored["visitor_id"] == "visitor-real"
     assert stored["tenant_id"] == _TENANT_ID
+
+
+# ---------------------------------------------------------------------------
+# SR-9.1: booking-lead autolink
+# ---------------------------------------------------------------------------
+
+
+async def test_post_book_no_prior_lead_creates_lead_and_links_and_activity() -> None:
+    """No prior lead -> exactly one lead created (source=booking), linked onto
+    the event, plus one booked_a_call activity."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    body = _book_body()
+    body.update({"email": "qa+booking@example.com", "name": "QA Person"})
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _visitor_token(visitor_id="visitor-new")
+        response = await client.post(
+            "/public/schedule/book", json=body, headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert response.status_code == 201
+    event_id = response.json()["event_id"]
+
+    assert len(db._leads) == 1
+    lead = next(iter(db._leads.values()))
+    assert lead["tenant_id"] == _TENANT_ID
+    assert lead["source"] == "booking"
+    assert lead["email"] == "qa+booking@example.com"
+    assert lead["name"] == "QA Person"
+    assert lead["stage"] == "captured"
+    assert lead["status"] == "new"
+
+    stored_event = db._events[(_TENANT_ID, event_id)]
+    assert stored_event["lead_id"] == lead["lead_id"]
+
+    activities = [a for a in db._lead_activities.values() if a["lead_id"] == lead["lead_id"]]
+    assert len(activities) == 1
+    assert activities[0]["type"] == "booked_a_call"
+    assert activities[0]["actor"] == "system"
+    assert activities[0]["payload"]["event_id"] == event_id
+    assert "starts_at" in activities[0]["payload"]
+    assert "timezone" in activities[0]["payload"]
+
+
+async def test_post_book_existing_lead_links_without_duplicating() -> None:
+    """A visitor with a prior lead (from POST /public/leads) links onto that
+    lead instead of creating a duplicate."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _visitor_token(visitor_id="visitor-existing")
+        lead_response = await client.post(
+            "/public/leads",
+            json={
+                "name": "Existing Lead",
+                "email": "existing@example.com",
+                "consent": {"granted": True, "purpose": "contact", "text": "OK"},
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert lead_response.status_code == 201
+        existing_lead_id = lead_response.json()["lead_id"]
+
+        response = await client.post(
+            "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert response.status_code == 201
+    event_id = response.json()["event_id"]
+
+    assert len(db._leads) == 1  # no duplicate
+    stored_event = db._events[(_TENANT_ID, event_id)]
+    assert stored_event["lead_id"] == existing_lead_id
+
+    activities = [a for a in db._lead_activities.values() if a["lead_id"] == existing_lead_id]
+    assert any(a["type"] == "booked_a_call" for a in activities)
+
+
+async def test_post_book_anonymous_still_creates_lead_with_null_fields() -> None:
+    """C4: an anonymous booking (no email/name) still creates a lead, NULL fields."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _visitor_token(visitor_id="visitor-anon")
+        response = await client.post(
+            "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert response.status_code == 201
+    assert len(db._leads) == 1
+    lead = next(iter(db._leads.values()))
+    assert lead["email"] is None
+    assert lead["name"] is None
+    assert lead["source"] == "booking"
+
+
+async def test_post_book_idempotent_rebook_does_not_duplicate_lead() -> None:
+    """Two bookings by the same visitor (rebook) never create a second lead."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _visitor_token(visitor_id="visitor-rebook")
+        first = await client.post(
+            "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+        )
+        assert first.status_code == 201
+
+        second_body = _book_body(starts_at=f"{_MONDAY}T10:00:00+00:00")
+        second = await client.post(
+            "/public/schedule/book", json=second_body, headers={"Authorization": f"Bearer {token}"}
+        )
+        assert second.status_code == 201
+
+    assert len(db._leads) == 1
+    lead_id = next(iter(db._leads.values()))["lead_id"]
+    first_event = db._events[(_TENANT_ID, first.json()["event_id"])]
+    second_event = db._events[(_TENANT_ID, second.json()["event_id"])]
+    assert first_event["lead_id"] == lead_id
+    assert second_event["lead_id"] == lead_id
+
+
+async def test_post_book_lead_write_failure_does_not_fail_booking() -> None:
+    """C1: a lead-write failure (create_lead/set_event_lead_id raises) never
+    fails the booking -- still 201, event persists."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    db.raise_on_lead_write = RuntimeError("db unavailable")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _visitor_token(visitor_id="visitor-fail")
+        response = await client.post(
+            "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert response.status_code == 201
+    event_id = response.json()["event_id"]
+    assert (_TENANT_ID, event_id) in db._events
+    assert db._events[(_TENANT_ID, event_id)]["status"] == "booked"
+    # No lead was created (the raise happened inside create_lead).
+    assert db._leads == {}
+
+
+async def test_post_book_lead_write_failure_logs_degraded_warning(caplog: Any) -> None:
+    """C1: on failure, booking_lead_link_degraded is logged (warning), never re-raised."""
+    import logging
+
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    db.raise_on_lead_write = RuntimeError("db unavailable")
+
+    with caplog.at_level(logging.DEBUG):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token(visitor_id="visitor-fail-2")
+            response = await client.post(
+                "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 201
+    assert "booking_lead_link_degraded" in caplog.text
+
+
+async def test_post_book_lead_tenant_isolation() -> None:
+    """MANDATORY: tenant A's booking never creates/links a lead visible to tenant B;
+    the same visitor_id under two tenants resolves independently."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    db.seed_availability(tenant_id=_OTHER_TENANT_ID)
+    app = _build_app(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token_a = _visitor_token(tenant_id=_TENANT_ID, visitor_id="visitor-shared")
+        token_b = _visitor_token(tenant_id=_OTHER_TENANT_ID, visitor_id="visitor-shared")
+
+        response_a = await client.post(
+            "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token_a}"}
+        )
+        response_b = await client.post(
+            "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token_b}"}
+        )
+
+    assert response_a.status_code == 201
+    assert response_b.status_code == 201
+
+    leads_a = [lead for lead in db._leads.values() if lead["tenant_id"] == _TENANT_ID]
+    leads_b = [lead for lead in db._leads.values() if lead["tenant_id"] == _OTHER_TENANT_ID]
+    assert len(leads_a) == 1
+    assert len(leads_b) == 1
+    assert leads_a[0]["lead_id"] != leads_b[0]["lead_id"]
+
+    event_a = db._events[(_TENANT_ID, response_a.json()["event_id"])]
+    event_b = db._events[(_OTHER_TENANT_ID, response_b.json()["event_id"])]
+    assert event_a["lead_id"] == leads_a[0]["lead_id"]
+    assert event_b["lead_id"] == leads_b[0]["lead_id"]
+
+
+async def test_post_book_created_lead_readable_via_admin_leads_rbac() -> None:
+    """MANDATORY RBAC: the booking-created lead is readable by CLIENT_ADMIN/
+    CLIENT_AGENT of that tenant; VISITOR cannot list; PLATFORM_ADMIN (global)
+    is rejected."""
+    from api.auth.tokens import create_access_token
+
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        visitor_token = _visitor_token(visitor_id="visitor-rbac")
+        booking = await client.post(
+            "/public/schedule/book", json=_book_body(),
+            headers={"Authorization": f"Bearer {visitor_token}"},
+        )
+        assert booking.status_code == 201
+
+        admin_token = _admin_token()
+        admin_response = await client.get(
+            "/admin/leads", cookies={"access_token": admin_token},
+        )
+
+        agent_claims = AuthClaims(subject="agent-1", role=Role.CLIENT_AGENT, tenant_id=_TENANT_ID)
+        agent_token, _ = create_access_token(agent_claims, secret=_TEST_JWT_SECRET, ttl_seconds=300)
+        agent_response = await client.get(
+            "/admin/leads", cookies={"access_token": agent_token},
+        )
+
+        visitor_response = await client.get(
+            "/admin/leads", cookies={"access_token": visitor_token},
+        )
+
+        global_claims = AuthClaims(subject="platform-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+        global_token, _ = create_access_token(global_claims, secret=_TEST_JWT_SECRET, ttl_seconds=300)
+        global_response = await client.get(
+            "/admin/leads", cookies={"access_token": global_token},
+        )
+
+    assert admin_response.status_code == 200
+    assert admin_response.json()["total"] == 1
+    assert admin_response.json()["items"][0]["source"] == "booking"
+
+    assert agent_response.status_code == 200
+    assert agent_response.json()["total"] == 1
+
+    assert visitor_response.status_code == 403
+
+    # PLATFORM_ADMIN is global (no tenant_id) and is not one of the roles
+    # accepted by GET /admin/leads (CLIENT_ADMIN/CLIENT_AGENT) -- rejected at
+    # the RBAC layer (403), before the repository's own _reject_global would
+    # ever run.
+    assert global_response.status_code == 403
+
+
+async def test_post_book_lead_link_never_logs_pii(caplog: Any) -> None:
+    """PII: booking_lead_link_degraded and other new log lines carry only
+    event_id/tenant_id, never email/name/phone."""
+    import logging
+
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    db.raise_on_lead_write = RuntimeError("db unavailable")
+
+    secret_email = "super-secret-pii@example.com"
+    secret_name = "Super Secret Name"
+    body = _book_body()
+    body.update({"email": secret_email, "name": secret_name})
+
+    with caplog.at_level(logging.DEBUG):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token(visitor_id="visitor-pii")
+            response = await client.post(
+                "/public/schedule/book", json=body, headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 201
+    assert "booking_lead_link_degraded" in caplog.text
+    assert secret_email not in caplog.text
+    assert secret_name not in caplog.text
 
 
 async def test_post_handoff_intent_no_bearer_returns_401() -> None:

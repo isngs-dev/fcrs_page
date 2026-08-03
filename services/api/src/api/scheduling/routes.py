@@ -25,6 +25,7 @@ from pydantic import BaseModel, field_validator
 
 from api.config import ApiSettings, get_api_settings
 from api.gateway.dependencies import get_visitor_claims
+from api.leads.repository import add_activity, create_lead, get_lead_id_by_visitor_id
 from api.notifications.recipients import resolve_event_recipient
 from api.notifications.repository import enqueue_notification
 from api.notifications.tasks import send_notification
@@ -40,6 +41,7 @@ from api.scheduling.repository import (
     get_availability,
     get_upcoming_booking,
     list_booked,
+    set_event_lead_id,
     update_event_calendar_ref,
 )
 from api.scheduling.slots import Slot, compute_slots
@@ -457,6 +459,57 @@ async def book_slot(
         calendar_ref = f"{ref.provider}:{ref.external_id}"
         await update_event_calendar_ref(db, claims, event.event_id, calendar_ref)
 
+    # Best-effort booking-lead autolink (SR-9.1 C1). Placed AFTER the
+    # calendar-sync block so a CALENDAR_SYNC_FAILED compensation (delete_event
+    # above + raise) never reaches here -- no lead is created/linked for a
+    # rolled-back booking. Runs as a create-or-link (C2, tenant+visitor
+    # scoped, newest-first -- idempotent on rebook) followed by a
+    # "booked_a_call" activity (C3). A failure here must NEVER fail or roll
+    # back the booking (the booking is the customer's real commitment; the
+    # lead is a downstream projection, exactly like the confirmation email).
+    # Never log email/name/phone (PII) -- only event_id/tenant_id.
+    #
+    # `lead_id` is pre-initialized to None (SR-9.3 D4/Scope §3) so it is
+    # ALWAYS bound below when passed to enqueue_notification, even if this
+    # try block raises before ever assigning it -- a degraded autolink must
+    # still enqueue the confirmation, with lead_id NULL, never lost.
+    lead_id: str | None = None
+    try:
+        lead_id = await get_lead_id_by_visitor_id(db, claims, claims.subject)
+        if lead_id is None:
+            lead_id = await create_lead(
+                db,
+                claims,
+                visitor_id=claims.subject,
+                name=body.name,
+                email=str(body.email) if body.email is not None else None,
+                phone=None,
+                consent=consent_with_timestamp,
+                source="booking",
+            )
+        await set_event_lead_id(db, claims, event.event_id, lead_id)
+        await add_activity(
+            db,
+            claims,
+            lead_id,
+            type="booked_a_call",
+            payload={
+                "event_id": event.event_id,
+                "starts_at": event.starts_at.isoformat(),
+                "timezone": event.timezone,
+            },
+            actor="system",
+        )
+    except Exception:
+        _log.warning(
+            "booking_lead_link_degraded",
+            extra={
+                "event": "booking_lead_link_degraded",
+                "event_id": event.event_id,
+                "tenant_id": claims.tenant_id,
+            },
+        )
+
     # Best-effort booking-confirmation enqueue (S9.2 Decisions 1/3/5). Placed
     # AFTER the calendar-sync block so a CALENDAR_SYNC_FAILED compensation
     # (delete_event above + raise) never reaches here -- no confirmation is
@@ -486,6 +539,7 @@ async def book_slot(
                 body=confirm_body,
                 dedupe_key=f"booking_confirm:{event.event_id}",
                 payload={"kind": "booking_confirm", "event_id": event.event_id},
+                lead_id=lead_id,
             )
             if job_id is not None:
                 from common.logging import _correlation_id  # noqa: PLC0415, PLC2701

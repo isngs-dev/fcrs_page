@@ -215,6 +215,31 @@ class ApiSettings(Settings):
     calendly_webhook_tolerance_seconds: int = 300
     calendly_handoff_intent_ttl_seconds: int = 3600
 
+    # Unified customer-360 timeline (SR-9.3).
+    # timeline_cache_ttl_seconds: cache-aside TTL for a resolved timeline page
+    #   (D8) -- short and tunable without a deploy; degraded responses are
+    #   never cached regardless of this value.
+    # timeline_messages_per_conversation: per-conversation cap on how many of
+    #   a conversation's most-recent messages enter the merged timeline (D11)
+    #   -- stops one long chat from monopolizing a page.
+    timeline_cache_ttl_seconds: int = 60
+    timeline_messages_per_conversation: int = 20
+
+    # Opportunities / deals (SR-9.4).
+    # opportunity_default_currency: used by get_opportunity_config when a
+    #   tenant has no explicit tenant_opportunity_configs row -- an
+    #   unconfigured tenant's new opportunities are stamped this currency
+    #   (D7's knowingly-accepted silent default).
+    # opportunity_default_prob_*: the four non-terminal-stage platform
+    #   default win-probabilities (D3). Terminal stages (closed_won/
+    #   closed_lost) are fixed 100/0 and never read from settings --
+    #   see opportunities/pipeline.win_probability_for_stage.
+    opportunity_default_currency: str = "USD"
+    opportunity_default_prob_prospecting: int = 10
+    opportunity_default_prob_qualification: int = 25
+    opportunity_default_prob_proposal: int = 50
+    opportunity_default_prob_negotiation: int = 75
+
 
 @lru_cache(maxsize=1)
 def get_api_settings() -> ApiSettings:

@@ -52,6 +52,7 @@ class _StubDatabase:
             "answer_threshold": answer_threshold,
             "escalate_threshold": escalate_threshold,
             "turn_cap": turn_cap,
+            "identity_gate_enabled": None,
         }
 
     def seed_llm_config(self, *, tenant_id: str, provider: str, model: str) -> None:

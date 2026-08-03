@@ -68,6 +68,21 @@ class AuthorizationError(AppException):
     default_message = "You are not authorized to perform this action."
 
 
+class ConflictError(AppException):
+    """The request conflicts with the current state of the target resource (409).
+
+    Distinct from ``ValidationError`` (422, malformed/invalid input): a
+    ``ConflictError`` is well-formed but cannot be honored because the
+    target already exists in an incompatible state (e.g. a Lead that has
+    already been converted to a Contact) -- an honest, informative error
+    rather than a silent no-op or 200 (no-silent-fallback, CLAUDE.md §3).
+    """
+
+    code = "CONFLICT"
+    http_status = 409
+    default_message = "The request conflicts with the current state of the resource."
+
+
 class RateLimitError(AppException):
     code = "RATE_LIMITED"
     http_status = 429
