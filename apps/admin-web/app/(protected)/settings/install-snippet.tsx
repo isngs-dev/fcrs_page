@@ -53,17 +53,21 @@ export function InstallSnippet({
   }
 
   return (
-    <section className="flex flex-col gap-3 rounded-[14px] border border-[#e7e7e2] p-5">
-      <h2 className="text-sm font-bold text-[#191a17]">Install</h2>
-      <div className="flex items-center justify-between gap-2.5 rounded-[10px] bg-[#191a17] px-3.5 py-3">
-        <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-pre text-[#c6c7bd]">
+    <section className="flex flex-col gap-3 rounded-[14px] border border-border p-5">
+      <h2 className="text-sm font-bold text-foreground">Install</h2>
+      {/* SR-15 D1: the Copy button's citron fill is deleted and re-decided
+          to --secondary/--ink-2 -- it sits on the dark snippet block, so it
+          needs to read as a control, not carry the system's one chromatic
+          accent. */}
+      <div className="flex items-center justify-between gap-2.5 rounded-[10px] bg-primary px-3.5 py-3">
+        <code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs whitespace-pre text-primary-foreground/80">
           {snippet}
         </code>
         <Button
           type="button"
           size="sm"
           onClick={handleCopy}
-          className="shrink-0 bg-[#e4f222] text-[#191a17] hover:bg-[#e4f222]/90"
+          className="shrink-0 bg-primary-foreground text-primary hover:bg-primary-foreground/90"
         >
           {copyStatus === "copied" ? "Copied!" : "Copy"}
         </Button>
@@ -73,13 +77,13 @@ export function InstallSnippet({
           Couldn&apos;t copy automatically — select the snippet text above and copy manually.
         </p>
       ) : isPlaceholder ? (
-        <p className="text-xs text-[#70716a]">
+        <p className="text-xs text-muted-foreground">
           Replace <code className="font-mono">{PLACEHOLDER_CLIENT_KEY}</code> with your real client
           key from the client&apos;s key rotation screen before installing — the real key is only
           shown once when generated and isn&apos;t exposed on this page.
         </p>
       ) : (
-        <p className="text-xs text-[#70716a]">
+        <p className="text-xs text-muted-foreground">
           Paste this one script tag before <code className="font-mono">&lt;/body&gt;</code> on any
           page you want the widget to appear on.
         </p>

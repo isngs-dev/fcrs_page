@@ -13,6 +13,10 @@ const {
   getBookingsReport,
   getFunnelReport,
   getWinLossReport,
+  getLeadSourcesReport,
+  getScoreDistributionReport,
+  getAgentPerformanceReport,
+  getRecentConversionsReport,
   reportCsvPath,
 } = await import("@/lib/reports");
 
@@ -324,6 +328,198 @@ describe("getWinLossReport", () => {
     expect(result.status).toBe("error");
     if (result.status === "error") {
       expect(result.message).toMatch(/tenant/i);
+    }
+  });
+});
+
+// ==============================================================================
+// SR-19: lead-sources, score-distribution, agent-performance,
+// recent-conversions
+// ==============================================================================
+
+describe("getLeadSourcesReport", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    getMock.mockReset();
+  });
+
+  it("maps single_source -> singleSource and does not pad sources (D4)", async () => {
+    getMock.mockReturnValue({ value: "jwt-value" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          window: { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+          sources: [{ source: "widget", count: 5, percentage: 100.0 }],
+          total: 5,
+          single_source: true,
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await getLeadSourcesReport({});
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.data.sources).toHaveLength(1);
+      expect(result.data.singleSource).toBe(true);
+      expect(result.data.total).toBe(5);
+    }
+  });
+
+  it("multiple sources -> singleSource false", async () => {
+    getMock.mockReturnValue({ value: "jwt-value" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          window: { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+          sources: [
+            { source: "widget", count: 3, percentage: 60.0 },
+            { source: "referral", count: 2, percentage: 40.0 },
+          ],
+          total: 5,
+          single_source: false,
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await getLeadSourcesReport({});
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.data.sources).toHaveLength(2);
+      expect(result.data.singleSource).toBe(false);
+    }
+  });
+});
+
+describe("getScoreDistributionReport", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    getMock.mockReset();
+  });
+
+  it("maps all five bands + a separate unscored count (D8)", async () => {
+    getMock.mockReturnValue({ value: "jwt-value" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          window: { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+          bands: { "0-19": 1, "20-39": 0, "40-59": 2, "60-79": 0, "80-100": 1 },
+          unscored: 3,
+          total: 7,
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await getScoreDistributionReport({});
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.data.bands["0-19"]).toBe(1);
+      expect(result.data.unscored).toBe(3);
+      expect(result.data.total).toBe(7);
+    }
+  });
+});
+
+describe("getAgentPerformanceReport", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    getMock.mockReset();
+  });
+
+  it("preserves null win_rate (never coerced to 0) and maps the unassigned row (D7)", async () => {
+    getMock.mockReturnValue({ value: "jwt-value" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          window: { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+          agents: [
+            { assigned_agent_id: "agent-1", assigned: 3, contacted: 0, won: 0, win_rate: null },
+            { assigned_agent_id: "agent-2", assigned: 4, contacted: 2, won: 1, win_rate: 0.5 },
+          ],
+          unassigned: { assigned_agent_id: null, assigned: 1, contacted: 0, won: 0, win_rate: null },
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await getAgentPerformanceReport({});
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.data.agents[0].winRate).toBeNull();
+      expect(result.data.agents[1].winRate).toBe(0.5);
+      expect(result.data.unassigned.assignedAgentId).toBeNull();
+      expect(result.data.unassigned.assigned).toBe(1);
+    }
+  });
+});
+
+describe("getRecentConversionsReport", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    getMock.mockReset();
+  });
+
+  it("maps conversions with no value field anywhere (D6/M5)", async () => {
+    getMock.mockReturnValue({ value: "jwt-value" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          window: { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+          conversions: [
+            {
+              lead_id: "lead-1",
+              name: "Jane Doe",
+              source: "widget",
+              stage: "converted",
+              converted_at: "2026-07-15T00:00:00Z",
+            },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await getRecentConversionsReport({});
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.data.conversions).toHaveLength(1);
+      expect(result.data.conversions[0].leadId).toBe("lead-1");
+      expect(result.data.conversions[0]).not.toHaveProperty("value");
+    }
+  });
+
+  it("empty window -> an empty conversions array, not an error", async () => {
+    getMock.mockReturnValue({ value: "jwt-value" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          window: { from: "2026-07-01T00:00:00Z", to: "2026-08-01T00:00:00Z" },
+          conversions: [],
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await getRecentConversionsReport({});
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.data.conversions).toEqual([]);
+    }
+  });
+});
+
+describe("reportCsvPath (SR-19 reports)", () => {
+  it("supports the four new report names", () => {
+    for (const report of [
+      "lead-sources",
+      "score-distribution",
+      "agent-performance",
+      "recent-conversions",
+    ] as const) {
+      const path = reportCsvPath(report, "from=a&to=b");
+      expect(path).toMatch(new RegExp(`^/reports/csv/${report}\\?`));
     }
   });
 });

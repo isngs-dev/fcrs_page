@@ -27,6 +27,8 @@ from api.accounts.repository import get_account
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
 from api.contacts.repository import (
+    CONTACT_SORT_DEFAULT_DIRECTIONS,
+    CONTACT_SORT_KEYS,
     Contact,
     create_contact,
     get_contact,
@@ -210,20 +212,84 @@ async def post_contact_for_tenant(
 
 
 async def _list_contacts(
-    request: Request, claims: AuthClaims, *, limit: int, offset: int,
+    request: Request,
+    claims: AuthClaims,
+    *,
+    limit: int,
+    offset: int,
+    q: str | None = None,
+    account_id: str | None = None,
+    sort: str | None = None,
+    direction: str | None = None,
 ) -> ContactListResponse:
+    """List/search/sort/filter the caller's tenant contacts, paginated (SR-29).
+
+    Validates a closed ``sort``/``dir`` allowlist (422 ``INVALID_CONTACT_SORT``
+    / ``INVALID_CONTACT_SORT_DIRECTION`` on an unknown value) and a combined,
+    literal Name/Email ``q`` search (422 ``INVALID_CONTACT_SEARCH`` outside
+    2-200 chars; an empty/whitespace-only ``q`` is treated as omitted, not an
+    error). ``limit`` is clamped to ``[1, 200]``, ``offset`` to ``>= 0``.
+
+    ``account_id`` is DELIBERATELY NOT existence-validated on this list path
+    (unlike the write path's ``_validate_account_id``, which 422s
+    ``INVALID_ACCOUNT``) -- an unknown or cross-tenant account_id simply
+    yields an honest, empty page (200), not a caller error. See D-FILTER in
+    the SR-29 handoff: adding a validating round-trip here would cost every
+    list call an extra query to reject a case the tenant-scoped WHERE
+    already handles correctly.
+    """
     db = request.app.state.db
+
+    if sort is None:
+        effective_sort = "created"
+    elif sort in CONTACT_SORT_KEYS:
+        effective_sort = sort
+    else:
+        raise ValidationError(f"Unknown sort key {sort!r}.", code="INVALID_CONTACT_SORT")
+
+    if direction is None:
+        effective_direction = CONTACT_SORT_DEFAULT_DIRECTIONS[effective_sort]
+    elif direction in {"asc", "desc"}:
+        effective_direction = direction
+    else:
+        raise ValidationError(
+            f"Unknown sort direction {direction!r}.", code="INVALID_CONTACT_SORT_DIRECTION",
+        )
+
+    normalized_q = q.strip() if q is not None else None
+    if normalized_q == "":
+        normalized_q = None
+    elif normalized_q is not None and not 2 <= len(normalized_q) <= 200:
+        raise ValidationError(
+            "Contact search must contain between 2 and 200 characters.",
+            code="INVALID_CONTACT_SEARCH",
+        )
 
     clamped_limit = max(1, min(limit, 200))
     clamped_offset = max(0, offset)
 
-    contacts, total = await list_contacts(db, claims, limit=clamped_limit, offset=clamped_offset)
+    contacts, total = await list_contacts(
+        db,
+        claims,
+        limit=clamped_limit,
+        offset=clamped_offset,
+        q=normalized_q,
+        account_id=account_id,
+        sort=effective_sort,
+        direction=effective_direction,
+    )
 
     _log.info(
         "contacts listed",
         extra={
             "event": "contacts_listed",
             "tenant_id": claims.tenant_id,
+            "sort": effective_sort,
+            "direction": effective_direction,
+            "filter_keys": sorted(
+                k for k, v in {"q": normalized_q, "account_id": account_id}.items()
+                if v is not None
+            ),
             "result_count": len(contacts),
         },
     )
@@ -241,9 +307,17 @@ async def list_contacts_route(
     request: Request,
     limit: int = Query(default=50),
     offset: int = Query(default=0),
+    q: str | None = Query(default=None),
+    account_id: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+    direction: str | None = Query(default=None, alias="dir"),
     claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
 ) -> ContactListResponse:
-    return await _list_contacts(request, claims, limit=limit, offset=offset)
+    return await _list_contacts(
+        request, claims,
+        limit=limit, offset=offset, q=q, account_id=account_id,
+        sort=sort, direction=direction,
+    )
 
 
 @tenant_scoped_router.get("")
@@ -251,10 +325,18 @@ async def list_contacts_route_for_tenant(
     request: Request,
     limit: int = Query(default=50),
     offset: int = Query(default=0),
+    q: str | None = Query(default=None),
+    account_id: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+    direction: str | None = Query(default=None, alias="dir"),
     claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
 ) -> ContactListResponse:
     """PLATFORM_ADMIN super-user variant of ``GET /admin/contacts``."""
-    return await _list_contacts(request, claims, limit=limit, offset=offset)
+    return await _list_contacts(
+        request, claims,
+        limit=limit, offset=offset, q=q, account_id=account_id,
+        sort=sort, direction=direction,
+    )
 
 
 async def _get_contact_detail(

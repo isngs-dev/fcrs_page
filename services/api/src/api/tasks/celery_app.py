@@ -74,6 +74,7 @@ celery_app = Celery(
         "api.crm.tasks",
         "api.scheduling.tasks",
         "api.notifications.tasks",
+        "api.notifications.events_tasks",
     ],
 )
 
@@ -98,6 +99,14 @@ celery_app.conf.update(
         "dispatch-due-reminders": {
             "task": "scheduling.dispatch_due_reminders",
             "schedule": get_api_settings().reminder_poll_interval_seconds,
+        },
+        # SR-21 D7: bound the in-console notifications feed, the first
+        # append-only, write-on-every-lead, never-read-again table in the
+        # product. Idempotent (a DELETE ... WHERE created_at < cutoff deletes
+        # nothing extra on a redundant run) -- see api.notifications.events_tasks.
+        "prune-notification-events": {
+            "task": "notifications.prune_notification_events",
+            "schedule": get_api_settings().notification_events_prune_interval_seconds,
         },
     },
 )

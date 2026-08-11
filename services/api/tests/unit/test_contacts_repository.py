@@ -130,14 +130,79 @@ class _StubDatabase:
 
         return "OK"
 
+    def _filtered_contacts(
+        self, query: str, args: tuple[Any, ...],
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Apply WHERE/ORDER BY/LIMIT the way the real repository emits them.
+
+        Hard-fails (``AssertionError``) on any ORDER BY or WHERE fragment it
+        does not recognize, rather than silently ignoring it -- SR-29 F3/8a:
+        a stub that guesses converts a loud failure into a quiet wrong answer.
+        """
+        q = query.strip().upper()
+        tenant_id = args[0]
+        rows = [r for r in self._contacts.values() if r["tenant_id"] == tenant_id]
+        idx = 1
+
+        if "ACCOUNT_ID = $" in q:
+            account_id = args[idx]
+            idx += 1
+            rows = [row for row in rows if row["account_id"] == account_id]
+
+        if "NAME ILIKE $" in q and "EMAIL ILIKE $" in q:
+            pattern = str(args[idx])
+            idx += 2
+            needle = (
+                pattern.removeprefix("%").removesuffix("%")
+                .replace("\\\\", "\\").replace("\\%", "%").replace("\\_", "_")
+                .lower()
+            )
+            rows = [
+                row for row in rows
+                if needle in (row["name"] or "").lower()
+                or needle in (row["email"] or "").lower()
+            ]
+
+        if "ORDER BY " not in q:
+            return rows, len(rows)
+
+        if "ORDER BY NAME " in q:
+            value_for = lambda row: row["name"]  # noqa: E731
+        elif "ORDER BY EMAIL " in q:
+            value_for = lambda row: row["email"]  # noqa: E731
+        elif "ORDER BY ACCOUNT_ID " in q:
+            value_for = lambda row: row["account_id"]  # noqa: E731
+        elif "ORDER BY OWNER_AGENT_ID " in q:
+            value_for = lambda row: row["owner_agent_id"]  # noqa: E731
+        elif "ORDER BY CREATED_AT " in q:
+            value_for = lambda row: row["created_at"]  # noqa: E731
+        else:
+            raise AssertionError(f"stub cannot honor ORDER BY: {query}")
+
+        descending = " DESC NULLS LAST" in q
+        non_null_rows = [row for row in rows if value_for(row) is not None]
+        null_rows = [row for row in rows if value_for(row) is None]
+        non_null_rows.sort(key=lambda row: row["contact_id"], reverse=True)
+        non_null_rows.sort(key=value_for, reverse=descending)
+        null_rows.sort(key=lambda row: row["contact_id"], reverse=True)
+        rows = [*non_null_rows, *null_rows]
+        total = len(rows)
+
+        if "LIMIT $" in q:
+            limit = args[idx]
+            idx += 1
+            offset = args[idx] if idx < len(args) else 0
+            rows = rows[offset : offset + limit]
+
+        return rows, total
+
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         self.fetchrow_calls.append((query, args))
         q = query.strip().upper()
 
         if "COUNT(*)" in q and "FROM CONTACTS" in q:
-            tenant_id = args[0]
-            rows = [r for r in self._contacts.values() if r["tenant_id"] == tenant_id]
-            return {"count": len(rows)}
+            rows, total = self._filtered_contacts(query, args)
+            return {"count": total}
 
         if "FROM CONTACTS" in q and "WHERE TENANT_ID" in q and "LEAD_ID = $2" in q:
             # get_contact_by_lead_id
@@ -176,6 +241,10 @@ class _StubDatabase:
                 if r["tenant_id"] == tenant_id and r["contact_id"] == contact_id
             ]
             rows.sort(key=lambda r: r["created_at"], reverse=True)
+            return rows
+
+        if "FROM CONTACTS" in q:
+            rows, _ = self._filtered_contacts(query, args)
             return rows
 
         if "FROM CONTACTS" in q:
@@ -502,6 +571,227 @@ async def test_list_contacts_rejects_global_caller() -> None:
         assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
         assert db.fetch_calls == []
         assert db.fetchrow_calls == []
+
+
+# ---------------------------------------------------------------------------
+# SR-29: list_contacts sort/search/account_id filter contract (repository
+# defense in depth)
+# ---------------------------------------------------------------------------
+
+
+_SORT_INJECTION_PAYLOADS = [
+    "created_at; DROP TABLE contacts--",
+    "created_at) --",
+    "name, tenant_id",
+    "(SELECT tenant_id)",
+    "created_at DESC; SELECT * FROM users",
+    "tenant_id",
+    "1",
+    "name/**/",
+    "",
+    "NAME",
+]
+
+
+async def _make_contact(
+    db: _StubDatabase, claims: AuthClaims, *, name: str | None = "Jane",
+    email: str | None = "jane@example.com", account_id: str | None = None,
+    owner_agent_id: str | None = None,
+) -> str:
+    from api.contacts.repository import create_contact
+
+    contact_id = await create_contact(
+        db, claims, account_id=account_id, lead_id=None, name=name, email=email,
+        phone=None, consent=_consent(), owner_agent_id=owner_agent_id,
+    )
+    return contact_id
+
+
+@pytest.mark.parametrize("sort", _SORT_INJECTION_PAYLOADS)
+async def test_list_contacts_rejects_unknown_sort_key_at_repository_layer(sort: str) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_contacts(db, _claims(), sort=sort)
+
+        assert exc_info.value.code == "INVALID_CONTACT_SORT"
+        assert not db.fetch_calls
+        assert not db.fetchrow_calls
+
+
+async def test_list_contacts_rejects_unknown_direction_at_repository_layer() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_contacts(db, _claims(), direction="sideways")
+
+        assert exc_info.value.code == "INVALID_CONTACT_SORT_DIRECTION"
+        assert not db.fetch_calls
+        assert not db.fetchrow_calls
+
+
+async def test_list_contacts_default_sort_emits_created_at_desc_pk_desc() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await _make_contact(db, claims)
+
+        await list_contacts(db, claims)
+
+        query, args = db.fetch_calls[-1]
+        assert "ORDER BY created_at DESC NULLS LAST, contact_id DESC" in query
+        assert args[0] == "tenant-abc"
+
+
+@pytest.mark.parametrize("sort", ["name", "email", "account", "owner", "created"])
+async def test_list_contacts_every_sort_key_emits_nulls_last_and_pk_tiebreak(sort: str) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await _make_contact(db, claims)
+
+        await list_contacts(db, claims, sort=sort, direction="asc")
+
+        query, _ = db.fetch_calls[-1]
+        assert "NULLS LAST, contact_id DESC" in query
+
+
+async def test_list_contacts_order_by_binds_no_extra_parameters() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await _make_contact(db, claims)
+
+        await list_contacts(db, claims, sort="created", direction="desc")
+        no_sort_args_len = len(db.fetch_calls[-1][1])
+
+        await list_contacts(db, claims, sort="name", direction="asc")
+        with_sort_args_len = len(db.fetch_calls[-1][1])
+
+        assert no_sort_args_len == with_sort_args_len
+
+
+@pytest.mark.parametrize("payload", _SORT_INJECTION_PAYLOADS)
+async def test_list_contacts_sort_sql_never_contains_caller_string(payload: str) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_contacts(db, _claims(), sort=payload)
+
+        assert exc_info.value.code == "INVALID_CONTACT_SORT"
+        assert db.fetch_calls == []
+        assert db.fetchrow_calls == []
+
+        for query, _args in [*db.fetch_calls, *db.fetchrow_calls]:
+            assert payload not in query
+
+
+async def test_list_contacts_count_query_and_page_query_share_identical_where() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await _make_contact(db, claims, name="Alice Needle", email="a@example.com")
+        await _make_contact(db, claims, name="Bob Other", email="b@example.com")
+
+        rows, total = await list_contacts(db, claims, q="needle")
+
+        assert total == 1
+        assert len(rows) == 1
+
+
+async def test_list_contacts_q_binds_escaped_pattern_never_interpolates() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await _make_contact(db, claims, name="100% Match")
+
+        rows, _ = await list_contacts(db, claims, q="100%")
+
+        assert [r.name for r in rows] == ["100% Match"]
+        query, args = db.fetch_calls[-1]
+        assert "ILIKE $2 ESCAPE '\\' OR email ILIKE $3 ESCAPE '\\'" in query
+        assert args[1:3] == ("%100\\%%", "%100\\%%")
+
+
+async def test_list_contacts_q_where_clause_is_parenthesized() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await _make_contact(db, claims)
+
+        await list_contacts(db, claims, q="ja")
+
+        query, _ = db.fetch_calls[-1]
+        assert "AND (name ILIKE" in query
+        assert "OR email ILIKE" in query and "')" in query
+
+
+async def test_list_contacts_reject_global_runs_before_sort_validation() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        global_claims = AuthClaims(subject="admin-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with pytest.raises(ValidationError) as exc_info:
+            await list_contacts(db, global_claims, sort="bogus-sort-key")
+
+        assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
+
+
+async def test_list_contacts_account_id_filter_binds_parameter() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.contacts.repository import list_contacts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await _make_contact(db, claims, account_id="acct-1")
+        await _make_contact(db, claims, account_id="acct-2")
+
+        rows, total = await list_contacts(db, claims, account_id="acct-1")
+
+        assert total == 1
+        assert rows[0].account_id == "acct-1"
+        query, args = db.fetch_calls[-1]
+        assert "AND account_id = $2" in query
+        assert args[1] == "acct-1"
 
 
 # ---------------------------------------------------------------------------

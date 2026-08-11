@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from api.gateway.dependencies import get_visitor_claims
+from api.notifications.emit import emit_event_safe
 from api.orchestrator.service import StreamEvent, answer_turn, answer_turn_stream
 
 _log = get_logger(__name__)
@@ -113,6 +114,22 @@ async def post_message(
             "action": result.action,
         },
     )
+
+    # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the turn is durably
+    # stored by answer_turn above. payload is ids only (conversation_id) --
+    # never the message/reply text. Only on the real escalation decision,
+    # not clarify/blocked/identity_gate.
+    if result.decision == "escalate":
+        await emit_event_safe(
+            db,
+            claims,
+            kind="conversation_escalated",
+            category="system",
+            target_type="conversation",
+            target_id=result.conversation_id,
+            payload={"conversation_id": result.conversation_id},
+            actor_id=None,
+        )
 
     return ChatMessageResponse(
         conversation_id=result.conversation_id,
@@ -218,6 +235,22 @@ async def post_message_stream(
                     "guardrail_flag": fields.get("guardrail_flag"),
                 },
             )
+
+            # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the turn is
+            # durably stored (the same _resolve_turn/answer_turn_stream
+            # pipeline as the non-streaming route). payload is ids only.
+            if fields.get("decision") == "escalate":
+                conversation_id = last_event.data.get("conversation_id")
+                await emit_event_safe(
+                    db,
+                    claims,
+                    kind="conversation_escalated",
+                    category="system",
+                    target_type="conversation",
+                    target_id=conversation_id,
+                    payload={"conversation_id": conversation_id},
+                    actor_id=None,
+                )
         elif last_event is not None and last_event.type == "error":
             _log.info(
                 "chat stream turn",

@@ -1,0 +1,477 @@
+================================================================================
+ STANDARD OPERATING PROCEDURE (SOP)
+ CHATBOT PLATFORM -- MULTI-TENANT AI CHATBOT FOR MARKETING & LEAD GENERATION
+================================================================================
+
+Purpose: define what this product is, how it works, how to run it locally,
+what is built, and how to resolve common failures.
+
+Audience: business stakeholders, project managers, QA/testers, and developers
+joining the project.
+
+Technical terms are defined once in section 10 (GLOSSARY).
+
+--------------------------------------------------------------------------------
+1. OBJECTIVE
+--------------------------------------------------------------------------------
+
+Problem statement:
+  1. Service businesses lose website visitors who arrive outside business
+     hours with no one available to respond.
+  2. Generic chatbots either fabricate answers or cannot book a meeting,
+     capture contact details, or hand off to a salesperson.
+
+Product response -- an embeddable chat widget installed on a client website
+with one line of code, which:
+  1. Answers visitor questions using only that client's own knowledge base;
+     it does not answer beyond what that material supports.
+  2. Captures visitor contact details with explicit consent and stores them
+     as leads in a built-in CRM.
+  3. Offers to book a call when confidence is low or the conversation runs
+     long, and sends reminder emails before the meeting.
+  4. Provides client staff with an admin console for conversations, leads,
+     analytics, and bot configuration.
+
+--------------------------------------------------------------------------------
+2. TECH STACK
+--------------------------------------------------------------------------------
+
+  Python + FastAPI      -- backend API; handles all chat, auth, and admin
+                           requests.
+  PostgreSQL            -- primary datastore for tenants, conversations,
+                           leads, schedules, and settings.
+  pgvector              -- PostgreSQL extension storing embeddings for RAG
+                           retrieval over client knowledge.
+  PgBouncer             -- connection pooler in front of PostgreSQL.
+  Redis                 -- cache and rate-limit backend.
+  Celery + Celery Beat  -- background task queue and scheduler for emails,
+                           reminders, and document ingestion.
+  LLM providers         -- Anthropic, OpenAI, and Azure supported; selected
+                           per tenant. No default provider ships enabled.
+  Next.js (React)       -- admin console application.
+  React + Shadow DOM    -- embeddable chat widget; Shadow DOM isolates widget
+                           styling from the host site.
+  Docker / Docker Compose -- containerized local infrastructure (Postgres,
+                           PgBouncer, Redis).
+
+--------------------------------------------------------------------------------
+3. SYSTEM DESIGN -- MESSAGE FLOW
+--------------------------------------------------------------------------------
+
+  1. Visitor opens the widget on a client website and submits a message.
+  2. Widget requests a session from the backend using the public client key.
+  3. Gateway validates the client key against that tenant's Origin allowlist
+     and issues a short-lived signed visitor session carrying the tenant and
+     an anonymous visitor ID.
+  4. Widget posts the message to the chat endpoint with that session.
+  5. Orchestrator resolves the tenant and loads its bot settings (provider,
+     model, tone, thresholds).
+  6. Orchestrator persists the visitor message to the conversation store.
+  7. Orchestrator runs a tenant-scoped RAG search over that tenant's
+     knowledge only.
+  8. Orchestrator sends the question plus retrieved snippets to the
+     configured LLM and requests a grounded answer.
+  9. Orchestrator scores answer confidence. On low confidence, or after the
+     turn threshold is exceeded, it offers to book a call instead.
+ 10. Orchestrator persists the reply and returns it to the widget.
+ 11. If the visitor submits contact details with consent, a lead record is
+     created in the CRM.
+ 12. If the visitor books a meeting, scheduling checks availability
+     (optionally against Google Calendar), creates the booking, and queues
+     reminder emails at 3 days, 24 hours, and 1 hour before the meeting.
+ 13. Client staff review conversations, leads, analytics, and settings in the
+     admin console.
+
+--------------------------------------------------------------------------------
+4. LOCAL STARTUP
+--------------------------------------------------------------------------------
+
+Scope: local development only. No production deployment path exists yet --
+see section 8.
+
+Environment: Windows, cmd.exe. Commands use cmd.exe syntax, not PowerShell.
+
+--- 4.1 Prerequisites ---
+
+  1. Docker Desktop, installed and running.
+  2. Python 3.11+ in a virtual environment at venv\python.exe in the project
+     root.
+  3. Node.js LTS 20+ (required only for apps/admin-web and apps/widget).
+  4. cmd.exe (Command Prompt).
+  5. Optional: psql client tools for direct database inspection.
+
+--- 4.2 One-time setup ---
+
+  1. Open Command Prompt at the project root:
+        cd c:\Projects\chatbot\marketing_chatbot
+
+  2. Create the settings file:
+        copy deploy\.env.example .env
+
+  3. Edit .env and set at minimum:
+        DEPLOYMENT_MODE=saas
+        POSTGRES_USER=chatbot
+        POSTGRES_PASSWORD=chatbot
+        POSTGRES_DB=chatbot
+        DATABASE_URL=postgresql://chatbot:chatbot@localhost:6432/chatbot
+        DATABASE_URL_DIRECT=postgresql://chatbot:chatbot@localhost:5432/chatbot
+        REDIS_URL=redis://localhost:6379/0
+        JWT_SECRET=<random string, 32+ characters>
+        SECRET_ENCRYPTION_KEY=<base64-encoded 32-byte key>
+        STORAGE_BACKEND=local
+        STORAGE_LOCAL_ROOT=C:\temp\chatbot-storage
+     The example file is documentation, not defaults. The server refuses to
+     start if a required value is missing.
+
+  4. Create the storage directory:
+        mkdir C:\temp\chatbot-storage
+
+--- 4.3 Start infrastructure ---
+
+  1. Start Postgres, PgBouncer, and Redis:
+        docker compose -f deploy\docker-compose.dev.yml up -d
+
+  2. Verify all three report healthy:
+        docker compose -f deploy\docker-compose.dev.yml ps
+
+--- 4.4 Apply database migrations ---
+
+  1. From the project root:
+        cd services\api
+        ..\..\venv\python.exe -m alembic upgrade head
+        cd ..\..
+
+--- 4.5 Seed a tenant and admin accounts (optional, recommended for testing) ---
+
+  1. From the project root:
+        cd services\api
+        set "SEED_TENANT_NAME=Acme Corp"
+        set "SEED_TENANT_SLUG=acme"
+        set "SEED_PLATFORM_ADMIN_EMAIL=platform-admin@example.com"
+        set "SEED_CLIENT_ADMIN_EMAIL=client-admin@example.com"
+        ..\..\venv\python.exe -m api.seed
+        cd ..\..
+
+  2. Record the one-time passwords printed for both accounts. They are not
+     retrievable afterwards; recovery requires the password-reset flow.
+
+--- 4.6 Start the backend API ---
+
+  1. From the project root:
+        venv\python.exe -m uvicorn api.app:create_app --factory --reload --host 127.0.0.1 --port 8000
+
+--- 4.7 Start background workers (separate terminals, leave running) ---
+
+  1. Terminal 2:
+        venv\python.exe -m celery -A api.tasks.celery_app worker --loglevel=info --pool=solo
+  2. Terminal 3:
+        venv\python.exe -m celery -A api.tasks.celery_app beat --loglevel=info
+
+  --pool=solo is required on Windows; Celery's multiprocessing pool is not
+  reliable there.
+
+--- 4.8 Start the admin console ---
+
+  1. Create its environment file:
+        copy apps\admin-web\.env.example apps\admin-web\.env.local
+     JWT_SECRET must match the backend's JWT_SECRET from step 4.2 exactly.
+  2. In a new terminal:
+        cd apps\admin-web
+        npm install
+        npm run dev
+  3. Open the printed URL (typically http://localhost:3000) and log in with
+     the credentials from step 4.5.
+
+--- 4.9 Start the chat widget ---
+
+  1. In a new terminal:
+        cd apps\widget
+        npm install
+        npm run dev
+  2. Open apps\widget\dev\host.html, or the printed dev-server URL. This is a
+     sample host page for widget testing.
+
+--- 4.10 Verification ---
+
+  1. Liveness:
+        curl http://localhost:8000/healthz
+     Expect an immediate success response.
+  2. Readiness:
+        curl http://localhost:8000/readyz
+     Expect {"ready": true, "checks": {"database": true, "redis": true}}.
+     Any false value -- see section 7.
+  3. Log in to the admin console.
+  4. Send a message in the widget test page and confirm a reply returns.
+
+--------------------------------------------------------------------------------
+5. FEATURES
+--------------------------------------------------------------------------------
+
+  - Embeddable chat widget -- one-line install on any client site.
+    Users: website visitors.
+  - Grounded AI answers (RAG) -- answers drawn only from the tenant's own
+    knowledge; declines rather than guessing. Users: website visitors.
+  - Multi-provider LLM support -- Anthropic, OpenAI, or Azure, selected and
+    keyed per tenant. Users: Client Admin.
+  - Consent-gated lead capture -- contact details stored only after explicit
+    agreement. Users: visitors (submit), Client Admin/Agent (review).
+  - Built-in CRM -- leads, contacts, and accounts with stages, notes,
+    activity history, and assignment. Users: Client Admin/Agent.
+  - Deals / opportunities pipeline -- stages, expected value, close date.
+    Users: Client Admin/Agent.
+  - CSV export -- leads and reports downloadable as CSV. Users: Client
+    Admin/Agent.
+  - Outbound CRM sync (webhook) -- pushes lead data to an external system.
+    Users: Client Admin.
+  - Scheduling -- in-chat booking with real availability, optional Google
+    Calendar sync, and Calendly hand-off. Users: visitors, client staff.
+  - Automated reminders -- email at 3 days, 24 hours, and 1 hour before a
+    booking. Users: booking party.
+  - Document ingestion -- .txt and .docx upload, chunked and embedded for
+    retrieval. PDF/OCR not supported. Users: Client Admin.
+  - Conversation analytics -- volume, conversion, top questions, peak hours.
+    Users: Client Admin/Agent.
+  - CRM reports -- fixed reports including leads by stage, bookings over
+    time, win/loss, funnel, agent performance, lead sources, recent
+    conversions, and score distribution. Users: Client Admin/Agent.
+  - Notifications inbox -- in-console feed of lead and system notifications.
+    Users: Client Admin/Agent.
+  - Client onboarding -- guided tenant creation with bot settings and a
+    public client key. Users: Platform Admin.
+  - Team member management -- staff accounts, role assignment, round-robin
+    lead assignment. Users: Client Admin.
+  - Per-tenant bot settings -- greeting, business hours, tone, confidence
+    threshold, escalation policy, provider/model. Users: Client Admin (edit),
+    Client Agent (view).
+  - Multi-tenant isolation -- enforced at the data layer, not the UI.
+    Applies to all users.
+  - Consent / GDPR support -- consent required before storing contact details
+    or scheduling reminders; export and deletion supported.
+  - Audit trail -- records admin actions and auth events. Users: Platform
+    Admin.
+
+--------------------------------------------------------------------------------
+6. ADMIN CONSOLE PAGES (apps/admin-web)
+--------------------------------------------------------------------------------
+
+Roles: Platform Admin (all tenants), Client Admin (one tenant, full
+control), Client Agent (one tenant, no settings changes), Visitor (no
+console access).
+
+  /login
+      Staff sign-in. Public.
+
+  /
+      Chatbot performance overview: headline metrics and a responses-over-time
+      chart. Default landing page for Client Admin/Agent. Platform Admins are
+      routed to /clients.
+
+  /clients
+      Tile list of onboarded tenants. Platform Admin only.
+
+  /clients/[tenant]/settings, /knowledge, /leads, /analytics
+      Per-tenant drill-down views. Platform Admin only.
+
+  /tenants/new
+      Onboarding wizard; creates the tenant account and public widget key.
+      Platform Admin only.
+
+  /leads
+      Lead review console: table or kanban board, filters, detail panel,
+      export. Client Admin/Agent.
+
+  /deals
+      Opportunity pipeline in table or board view, with values and close
+      dates. Client Admin/Agent.
+
+  /contacts
+      Individual contacts with activity timelines. Client Admin/Agent; only
+      Client Admin can create.
+
+  /accounts
+      Companies linked to contacts and leads. Client Admin/Agent; only Client
+      Admin can create.
+
+  /conversations
+      Read-only conversation list with transcript viewer. Client Admin/Agent.
+
+  /knowledge
+      Document upload and knowledge status. Client Admin only.
+
+  /analytics
+      Stat cards, weekly volume, funnel, top questions, peak hours. Client
+      Admin/Agent.
+
+  /reports (and /reports/leads-by-stage, /bookings, /win-loss, /funnel,
+  /agent-performance, /lead-sources, /recent-conversions,
+  /score-distribution, /csv/[report])
+      Fixed CRM reports with CSV download. Not a custom report builder.
+      Client Admin/Agent.
+
+  /notifications
+      Notification feed with read/unread state. Client Admin/Agent.
+
+  /members
+      Staff accounts, roles, round-robin assignment. Client Admin only.
+
+  /settings
+      Bot configuration: greeting, business hours, tone, confidence
+      threshold, escalation policy, provider/model. Client Admin/Agent can
+      view; only Client Admin can save.
+
+--------------------------------------------------------------------------------
+7. COMMON ISSUES
+--------------------------------------------------------------------------------
+
+  Issue: Backend fails to start with a configuration error.
+  Cause: A required .env value is missing, commonly JWT_SECRET or
+  SECRET_ENCRYPTION_KEY.
+  Fix: Populate every value listed in section 4.2. This is intended fail-fast
+  behavior.
+
+  Issue: /readyz reports database or redis as false.
+  Fix: Confirm Docker Desktop is running and that
+  "docker compose -f deploy\docker-compose.dev.yml ps" shows all three
+  containers healthy. A restarting container usually indicates a port
+  conflict.
+
+  Issue: Docker Compose fails on port 5432, 6432, or 6379.
+  Cause: Another local Postgres or Redis is bound to that port.
+  Fix: Stop the conflicting service, or override the port in .env (e.g.
+  POSTGRES_PORT=15432) and re-run the compose up command.
+
+  Issue: Migrations fail, or the app reports missing tables.
+  Fix: Confirm DATABASE_URL_DIRECT points at port 5432, not 6432. PgBouncer's
+  pooling mode cannot execute schema changes; migrations must bypass it.
+
+  Issue: Celery worker fails or behaves erratically on Windows.
+  Fix: Include --pool=solo exactly as shown in section 4.7.
+
+  Issue: Chat requests fail with an LLM error, or replies state the bot
+  cannot answer.
+  Cause: No provider configured for that tenant. The platform ships no
+  default provider.
+  Fix: Set provider, model, and a valid API key under the tenant's Settings
+  page, and confirm quota with that provider.
+
+  Issue: Admin console requests fail authentication or session drops on
+  login.
+  Fix: JWT_SECRET in apps\admin-web\.env.local must match the root .env value
+  exactly.
+
+  Issue: Widget loads but chat requests fail with an Origin error.
+  Cause: The test page's origin is not on the tenant's Origin allowlist.
+  Fix: Add the test origin to the tenant record via onboarding or settings.
+
+  Issue: PDF upload to the knowledge base fails or is rejected.
+  Cause: Documented gap. Ingestion accepts .txt and .docx only; PDF and OCR
+  are not implemented.
+
+  Issue: Confirmation or reminder emails are not sent.
+  Fix: Confirm both the Celery worker and Celery beat processes from section
+  4.7 are running. Emails are dispatched by background jobs, not the API
+  process.
+
+  Issue: A feature appears disabled or incomplete with an explanatory note.
+  Cause: Intended. The project rule is no silent fallbacks -- unsupported
+  features are shown as unavailable rather than faked.
+  Fix: Check dev_plan/DEVELOPMENT_PLAN.md for that feature's status before
+  filing a defect.
+
+--------------------------------------------------------------------------------
+8. DEPLOYMENT
+--------------------------------------------------------------------------------
+
+Current status: no production deployment tooling exists. Planned sequence,
+per dev_plan/DEVELOPMENT_PLAN.md:
+
+  1. Build Docker images for the API server, Celery worker, Celery beat,
+     admin console, and widget bundle.
+  2. Author a production Docker Compose file (or equivalent) including an
+     Nginx layer for HTTPS and routing.
+  3. Stand up a CI pipeline running lint, typecheck, unit tests, integration
+     tests, build, and smoke tests on every change.
+  4. Complete the pre-sale hardening checklist -- load testing, security
+     pass, and documented tenant on/off-boarding -- before onboarding a first
+     paying client.
+
+--------------------------------------------------------------------------------
+9. BUILT VS. PLANNED
+--------------------------------------------------------------------------------
+
+Note: the root README roadmap and the 2026-07-11 audit are out of date; both
+still list the admin console and widget as not started. The code and the
+sprint files in dev_plan/sprints/ show otherwise. Per the project rule that
+reality outranks documentation, the status below reflects the code.
+
+  BUILT:
+    - Backend: tenants, auth, RBAC, public chat gateway, conversation
+      orchestrator, RAG retrieval, multi-provider LLM support, conversation
+      store, lead capture and CRM (leads, contacts, accounts, deals),
+      scheduling with calendar sync and reminders, email notifications,
+      document ingestion (.txt/.docx), audit trail, metrics.
+    - Admin console (apps/admin-web): all pages in section 6, including
+      onboarding, knowledge upload, lead/deal/contact/account management,
+      conversation review, analytics, CRM reports, notifications, team
+      management, and bot settings.
+    - Chat widget (apps/widget): chat UI, lead capture form, booking flow,
+      Calendly hand-off, browser TTS greeting, accessibility work.
+
+  NOT BUILT:
+    - PDF and OCR document parsing.
+    - Website-crawling knowledge source.
+    - SMS and WhatsApp notification channels.
+    - Production deployment tooling: Dockerfiles, production compose file,
+      Nginx configuration, CI/CD pipeline.
+    - Security-hardening pass and load/abuse testing.
+
+--------------------------------------------------------------------------------
+10. GLOSSARY
+--------------------------------------------------------------------------------
+
+  Tenant -- one client business; all data and configuration are scoped to it.
+
+  Widget -- the embeddable chat box hosted on a client's public website.
+
+  RAG (Retrieval-Augmented Generation) -- supplying the model with retrieved
+  tenant-specific snippets so answers stay grounded in real source material.
+
+  LLM (Large Language Model) -- the model generating bot replies.
+
+  Lead -- a visitor who has submitted contact information.
+
+  CRM (Customer Relationship Management) -- the system tracking leads,
+  contacts, and deals through a sales process.
+
+  Pipeline -- the ordered stages a lead or deal moves through.
+
+  RBAC (Role-Based Access Control) -- access restricted by assigned role.
+
+  API (Application Programming Interface) -- the backend's request contract,
+  consumed by the widget and admin console.
+
+  Repository -- the data-access layer responsible for one data type, always
+  filtered by tenant.
+
+  Webhook -- an outbound HTTP call to an external system on an event.
+
+  Celery worker / Celery beat -- background processes running queued jobs;
+  beat schedules time-based jobs such as reminders.
+
+  Migration -- a versioned, ordered change to the database schema.
+
+  Docker / container -- packaged software bundled with its runtime
+  dependencies.
+
+  Correlation ID -- a per-request identifier propagated through all layers
+  and log lines for tracing.
+
+  GDPR -- European data-protection law; here it requires consent before
+  storing contact details and support for data export and deletion.
+
+  Fail fast -- refusing to start or respond rather than running in a broken
+  or misleading state.
+
+================================================================================
+ End of document.
+================================================================================

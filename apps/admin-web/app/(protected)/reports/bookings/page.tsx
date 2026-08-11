@@ -42,12 +42,12 @@ export default async function BookingsReportPage({ searchParams }: PageProps) {
 
   return (
     <div className="flex flex-1 flex-col gap-[18px] p-[22px] sm:p-[28px]">
-      <Link href="/reports" className="text-sm text-[#70716a] hover:underline">
+      <Link href="/reports" className="text-sm text-[var(--muted-foreground)] hover:underline">
         ← Back to reports
       </Link>
 
       <div className="flex flex-wrap items-center gap-3.5">
-        <h1 className="text-xl font-bold text-[#191a17]">Bookings</h1>
+        <h1 className="text-xl font-bold text-[var(--foreground)]">Bookings</h1>
         <div className="ml-auto flex items-center gap-3">
           <DownloadCsvLink report="bookings" query={csvQuery} />
           <ReportRange
@@ -62,22 +62,22 @@ export default async function BookingsReportPage({ searchParams }: PageProps) {
       {result.status === "error" ? (
         <p
           role="alert"
-          className="rounded-[14px] border border-[#c2452d]/40 bg-[#f6e3df]/60 p-4 text-sm text-[#c2452d]"
+          className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[#f6e3df]/60 p-4 text-sm text-[var(--danger-fg)]"
         >
           {result.message}
           {result.correlationId ? (
-            <span className="block text-xs text-[#c2452d]/80">
+            <span className="block text-xs text-[var(--danger-fg)]/80">
               Correlation ID: {result.correlationId}
             </span>
           ) : null}
         </p>
       ) : (
-        <div className="flex flex-col gap-4 rounded-[14px] border border-[#e7e7e2] p-5">
+        <div className="flex flex-col gap-4 rounded-[14px] border border-[var(--border)] p-5">
           <div className="flex flex-wrap items-baseline gap-4 text-sm">
-            <span className="font-bold text-[#191a17]">
+            <span className="font-bold text-[var(--foreground)]">
               {result.data.totals.totalExcludingCancelled.toLocaleString()} active bookings
             </span>
-            <span className="text-[#70716a]">
+            <span className="text-[var(--muted-foreground)]">
               {result.data.totals.cancelled.toLocaleString()} cancelled
             </span>
           </div>

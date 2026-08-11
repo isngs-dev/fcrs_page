@@ -15,6 +15,8 @@ from common.errors import ValidationError
 
 from api.leads.pipeline import (
     STAGE_ORDER,
+    STAGE_SORT_POSITION,
+    STATUS_SORT_POSITION,
     TERMINAL_STAGES,
     compute_qualification_score,
     status_for_stage,
@@ -125,6 +127,21 @@ def test_terminal_stages_contents() -> None:
 
 def test_stage_order_contents() -> None:
     assert STAGE_ORDER == ["captured", "qualified", "contacted", "converted"]
+
+
+def test_stage_sort_position_covers_the_funnel_and_terminal_off_ramp() -> None:
+    """SR-25 D2: sorting follows the canonical pipeline, never a SQL copy."""
+    assert STAGE_SORT_POSITION == {
+        "captured": 1,
+        "qualified": 2,
+        "contacted": 3,
+        "converted": 4,
+        "disqualified": 5,
+    }
+
+
+def test_status_sort_position_covers_every_derived_status() -> None:
+    assert STATUS_SORT_POSITION == {"new": 1, "open": 2, "won": 3, "lost": 4}
 
 
 # ---------------------------------------------------------------------------

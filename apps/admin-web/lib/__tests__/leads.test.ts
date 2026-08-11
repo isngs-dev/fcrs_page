@@ -18,6 +18,7 @@ const {
   stageBadgeStyle,
   scoreChipStyle,
   initialsFromName,
+  LEAD_SORT_KEYS,
 } = await import("@/lib/leads");
 
 describe("LEAD_STAGES / LEAD_STATUSES", () => {
@@ -66,6 +67,53 @@ describe("buildLeadsQuery", () => {
   it("a blank stage is dropped", () => {
     const params = new URLSearchParams(buildLeadsQuery({ page: 1, stage: "" }));
     expect(params.has("stage")).toBe(false);
+  });
+
+  it("includes valid sort, direction, filters, and a literal search", () => {
+    const params = new URLSearchParams(
+      buildLeadsQuery({
+        page: 2,
+        stage: "qualified",
+        status: "open",
+        assignedAgentId: "agent-1",
+        createdFrom: "2026-01-01T00:00:00.000Z",
+        createdTo: "2026-02-01T00:00:00.000Z",
+        q: "Alice",
+        sort: "score",
+        direction: "desc",
+      })
+    );
+
+    expect(params.get("offset")).toBe("25");
+    expect(params.get("status")).toBe("open");
+    expect(params.get("assigned_agent_id")).toBe("agent-1");
+    expect(params.get("from")).toBe("2026-01-01T00:00:00.000Z");
+    expect(params.get("to")).toBe("2026-02-01T00:00:00.000Z");
+    expect(params.get("q")).toBe("Alice");
+    expect(params.get("sort")).toBe("score");
+    expect(params.get("dir")).toBe("desc");
+  });
+
+  it("drops unknown sort, a direction without sort, and invalid search", () => {
+    const params = new URLSearchParams(
+      buildLeadsQuery({ page: 1, sort: "tenant_id", direction: "asc", q: "a" })
+    );
+
+    expect(params.has("sort")).toBe(false);
+    expect(params.has("dir")).toBe(false);
+    expect(params.has("q")).toBe(false);
+  });
+
+  it("has the same seven sort keys as the backend contract", () => {
+    expect(LEAD_SORT_KEYS).toEqual([
+      "name",
+      "email",
+      "stage",
+      "status",
+      "score",
+      "assigned",
+      "created",
+    ]);
   });
 
   it("URL-encodes values rather than string-concatenating", () => {
@@ -395,15 +443,15 @@ describe("getLeadActivities", () => {
 });
 
 describe("stageBadgeStyle", () => {
-  it("returns the exact HANDOFF-SPEC.md §2 colors for each canonical stage", () => {
-    expect(stageBadgeStyle("captured")).toEqual({ label: "CAPTURED", bg: "#ecece5", fg: "#5a5b54" });
-    expect(stageBadgeStyle("qualified")).toEqual({ label: "QUALIFIED", bg: "#eef7a8", fg: "#191a17" });
-    expect(stageBadgeStyle("contacted")).toEqual({ label: "CONTACTED", bg: "#dcefdc", fg: "#1f6a2f" });
-    expect(stageBadgeStyle("converted")).toEqual({ label: "CONVERTED", bg: "#191a17", fg: "#e4f222" });
+  it("returns the SR-15 monochrome-restyle colors for each canonical stage (citron deleted per D1)", () => {
+    expect(stageBadgeStyle("captured")).toEqual({ label: "CAPTURED", bg: "#efeee6", fg: "var(--ink-2)" });
+    expect(stageBadgeStyle("qualified")).toEqual({ label: "QUALIFIED", bg: "#efeee6", fg: "#333333" });
+    expect(stageBadgeStyle("contacted")).toEqual({ label: "CONTACTED", bg: "#efeee6", fg: "#404040" });
+    expect(stageBadgeStyle("converted")).toEqual({ label: "CONVERTED", bg: "#eaf3ec", fg: "#3f7d57" });
     expect(stageBadgeStyle("disqualified")).toEqual({
       label: "DISQUALIFIED",
       bg: "#f6e3df",
-      fg: "#c2452d",
+      fg: "#a24b4b",
     });
   });
 
@@ -415,8 +463,15 @@ describe("stageBadgeStyle", () => {
 });
 
 describe("scoreChipStyle", () => {
-  it("uses the citron-soft chip for a score >= 60 on a non-converted stage", () => {
-    expect(scoreChipStyle(76, "contacted")).toEqual({ label: "76", bg: "#eef7a8", fg: "#191a17" });
+  // SR-24 item 15: the legacy citron hex (#eef7a8) is retired -- a score
+  // >=60 on a non-converted stage now uses the design system's success
+  // token pair (globals.css's --success-bg/--success-fg), not a one-off hex.
+  it("uses the success-token chip for a score >= 60 on a non-converted stage", () => {
+    expect(scoreChipStyle(76, "contacted")).toEqual({
+      label: "76",
+      bg: "var(--success-bg)",
+      fg: "var(--success-fg)",
+    });
   });
 
   it("uses the converted-green chip regardless of score once stage is converted", () => {
@@ -424,11 +479,11 @@ describe("scoreChipStyle", () => {
   });
 
   it("uses a plain muted style below the 60 threshold", () => {
-    expect(scoreChipStyle(25, "disqualified")).toEqual({ label: "25", bg: "transparent", fg: "#96978e" });
+    expect(scoreChipStyle(25, "disqualified")).toEqual({ label: "25", bg: "transparent", fg: "var(--muted-foreground)" });
   });
 
   it("the 60 boundary itself is highlighted (>= not >)", () => {
-    expect(scoreChipStyle(60, "qualified").bg).toBe("#eef7a8");
+    expect(scoreChipStyle(60, "qualified").bg).toBe("var(--success-bg)");
     expect(scoreChipStyle(59, "qualified").bg).toBe("transparent");
   });
 });

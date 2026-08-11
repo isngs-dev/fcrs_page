@@ -1,11 +1,17 @@
-"""Tenant user-management routes -- GET/POST /admin/users, PATCH /admin/users/{user_id} (S12.2).
+"""Tenant user-management routes (S12.2 + SR-25).
 
-All three routes are ``Role.CLIENT_ADMIN``-only (CLAUDE.md: a ``CLIENT_AGENT``
+The implicit GET/POST ``/admin/users`` and PATCH ``/admin/users/{user_id}``
+routes are ``Role.CLIENT_ADMIN``-only (CLAUDE.md: a ``CLIENT_AGENT``
 "cannot change config", and user management is a config-adjacent, own-tenant
 concern). ``POST /admin/users`` returns a generated temp password exactly
 once, in the response body only (decision 7, mirrors S12.1's
 ``admin_password`` pattern) -- never logged. ``GET /admin/users`` never
 includes ``password_hash``.
+
+SR-25 also adds a read-only ``GET /admin/tenants/{tenant_id}/users`` twin for
+the PLATFORM_ADMIN per-client Leads screen. It uses ``resolve_tenant_scope``
+to derive CLIENT_ADMIN claims for the validated target tenant; no platform
+user-management mutation routes are introduced.
 """
 from __future__ import annotations
 
@@ -19,13 +25,14 @@ from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
 
 from api.admin.users_repository import create_tenant_agent, list_tenant_users, set_user_active
-from api.auth.dependencies import require_roles
+from api.auth.dependencies import require_roles, resolve_tenant_scope
 
 _log = get_logger(__name__)
 
 _EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 router = APIRouter(prefix="/admin/users", tags=["admin"])
+tenant_scoped_router = APIRouter(prefix="/admin/tenants/{tenant_id}/users", tags=["admin"])
 
 
 class AdminCreateUserRequest(BaseModel):
@@ -81,10 +88,23 @@ async def get_users(
     claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
 ) -> list[AdminUserResponse]:
     """List the caller's tenant's users. Never includes ``password_hash``."""
-    db = request.app.state.db
+    return await _get_users(request, claims)
 
+
+async def _get_users(request: Request, claims: AuthClaims) -> list[AdminUserResponse]:
+    """Shared tenant-scoped user read for implicit and platform routes."""
+    db = request.app.state.db
     rows = await list_tenant_users(db, claims)
     return [_to_response(row) for row in rows]
+
+
+@tenant_scoped_router.get("")
+async def get_users_for_tenant(
+    request: Request,
+    claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> list[AdminUserResponse]:
+    """PLATFORM_ADMIN target-tenant variant of ``GET /admin/users``."""
+    return await _get_users(request, claims)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

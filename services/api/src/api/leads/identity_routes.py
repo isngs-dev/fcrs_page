@@ -25,12 +25,14 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, field_validator
 
 from api.gateway.dependencies import get_visitor_claims
+from api.leads.assignment import assign_lead_fail_open
 from api.leads.repository import (
     add_activity,
     create_lead,
     get_lead_id_by_visitor_id,
     update_lead_contact,
 )
+from api.notifications.emit import emit_event_safe
 
 _log = get_logger(__name__)
 
@@ -132,6 +134,25 @@ async def capture_identity(
             phone=None,
             consent=consent_with_timestamp,
             source="chat_identity",
+        )
+        # -- Round-robin auto-assignment (SR-20 D1/D2/D3): fail-open, AFTER
+        # the durable lead write above, as a separate step. Only for the
+        # genuinely-new-lead branch (M3's second call site) -- linking an
+        # existing lead's contact (the `else` branch below) is not a
+        # creation event and must not re-trigger/override assignment.
+        await assign_lead_fail_open(db, claims, lead_id=lead_id)
+        # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable lead
+        # write above. Only for the genuinely-new-lead branch -- linking an
+        # existing lead's contact (the `else` branch) is not a capture.
+        await emit_event_safe(
+            db,
+            claims,
+            kind="lead_captured",
+            category="leads",
+            target_type="lead",
+            target_id=lead_id,
+            payload={"lead_id": lead_id},
+            actor_id=None,
         )
     else:
         updated = await update_lead_contact(

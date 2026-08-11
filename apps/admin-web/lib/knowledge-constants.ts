@@ -85,9 +85,12 @@ export function formatBytes(bytes: number): string {
  *    (repository.py:244, tasks.py:181,211,246,277,319,353,393)
  *
  * This maps every REAL value honestly onto the 5a visual language (success
- * green = done, citron-soft = in progress, danger red = failed) rather than
- * collapsing them into the mock's three invented labels. Nothing here
- * invents a status the backend doesn't report.
+ * green = done, monochrome = in progress, danger red = failed -- SR-15
+ * restyle: "progress" no longer uses the Ink & Citron era's soft-citron
+ * tint, it uses the shared --secondary/--ink-2 pair, matching M3's finding
+ * that the new system's only two chromatic values are success and danger)
+ * rather than collapsing them into the mock's three invented labels.
+ * Nothing here invents a status the backend doesn't report.
  */
 export type BadgeTone = "success" | "progress" | "failed" | "neutral";
 
@@ -97,10 +100,10 @@ export interface StatusBadgeSpec {
 }
 
 const TONE_CLASSES: Record<BadgeTone, string> = {
-  success: "bg-[#dcefdc] text-[#1f6a2f]",
-  progress: "bg-[#eef7a8] text-[#191a17]",
-  failed: "bg-[#f6e3df] text-[#c2452d]",
-  neutral: "bg-[#ecece5] text-[#5a5b54]",
+  success: "bg-[#eaf3ec] text-[#3f7d57]",
+  progress: "bg-secondary text-foreground",
+  failed: "bg-[#f6e3df] text-[#a24b4b]",
+  neutral: "bg-secondary text-[var(--ink-2)]",
 };
 
 export function badgeToneClassName(tone: BadgeTone): string {

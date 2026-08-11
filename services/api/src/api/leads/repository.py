@@ -23,6 +23,8 @@ from common.auth import AuthClaims
 from common.db import Database
 from common.errors import ValidationError
 
+from api.leads.pipeline import STAGE_SORT_POSITION, STATUS_SORT_POSITION
+
 
 @dataclass(frozen=True)
 class Lead:
@@ -54,6 +56,61 @@ class LeadActivity:
     payload: dict[str, Any] | None
     actor: str | None
     created_at: datetime
+
+
+def _case_sort_sql(column: str, positions: dict[str, int]) -> tuple[str, str]:
+    """Build closed CASE expressions for domain order plus unknown-last.
+
+    Labels and positions are owned by the pure pipeline module at import time;
+    neither comes from a request, even indirectly.
+    """
+    branches = " ".join(
+        f"WHEN '{label}' THEN {int(position)}" for label, position in positions.items()
+    )
+    labels = ", ".join(f"'{label}'" for label in positions)
+    return (
+        f"(CASE {column} {branches} ELSE 99 END)",
+        f"(CASE WHEN {column} IN ({labels}) THEN 0 ELSE 1 END)",
+    )
+
+
+# SR-25 D6: ORDER BY identifiers cannot be bound. The values in this dict are
+# the *only* SQL fragments accepted for list ordering; caller values are used
+# exclusively as dictionary keys and are never interpolated into SQL.
+_STAGE_SORT_SQL, _STAGE_UNKNOWN_LAST_SQL = _case_sort_sql("stage", STAGE_SORT_POSITION)
+_STATUS_SORT_SQL, _STATUS_UNKNOWN_LAST_SQL = _case_sort_sql("status", STATUS_SORT_POSITION)
+
+_SORT_COLUMNS: dict[str, str] = {
+    "name": "name",
+    "email": "email",
+    "stage": _STAGE_SORT_SQL,
+    "status": _STATUS_SORT_SQL,
+    "score": "qualification_score",
+    "assigned": "assigned_agent_id",
+    "created": "created_at",
+}
+_SORT_UNKNOWN_LAST: dict[str, str] = {
+    "stage": _STAGE_UNKNOWN_LAST_SQL,
+    "status": _STATUS_UNKNOWN_LAST_SQL,
+}
+LEAD_SORT_KEYS = frozenset(_SORT_COLUMNS)
+
+_DEFAULT_SORT = "created"
+_DEFAULT_DIRECTION = "desc"
+LEAD_SORT_DEFAULT_DIRECTIONS: dict[str, str] = {
+    "name": "asc",
+    "email": "asc",
+    "stage": "asc",
+    "status": "asc",
+    "score": "desc",
+    "assigned": "asc",
+    "created": "desc",
+}
+
+
+def _escape_ilike_pattern(value: str) -> str:
+    """Escape user wildcard characters before binding a literal substring."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _reject_global(claims: AuthClaims) -> None:
@@ -388,16 +445,19 @@ async def list_leads(
     created_from: datetime | None = None,
     created_to: datetime | None = None,
     include_converted: bool = False,
+    q: str | None = None,
+    sort: str = _DEFAULT_SORT,
+    direction: str = _DEFAULT_DIRECTION,
 ) -> tuple[list[Lead], int]:
     """Fetch a paginated, filtered page of the caller's tenant leads.
 
     Tenant-scoped (``WHERE tenant_id = $1``); each supplied filter appends
     exactly one positional ``AND`` clause, values always bound (never
-    interpolated). Does **not** validate filter *values* -- the route
-    validates ``stage``/``status`` against ``api.leads.pipeline``'s canonical
-    sets before calling; this function trusts pre-validated inputs and only
-    enforces tenancy + parameterization. ``created_from``/``created_to``
-    filter ``created_at`` as a half-open ``[from, to)`` window.
+    interpolated). The route validates filter values; ``sort`` and
+    ``direction`` are additionally validated here because ORDER BY structure
+    cannot be bound. ``created_from``/``created_to`` filter ``created_at``
+    as a half-open ``[from, to)`` window. ``q`` is a literal,
+    case-insensitive Name-or-Email substring match.
 
     ``include_converted`` (SR-9.2 D1): when ``False`` (the default), a lead
     that has been converted to a Contact (``converted_to_contact_id IS NOT
@@ -405,10 +465,17 @@ async def list_leads(
     working list by default. Pass ``True`` to see conversion history.
 
     Returns ``(rows, total)`` -- ``total`` is a ``count(*)`` over the same
-    filtered WHERE (minus LIMIT/OFFSET), newest first
-    (``ORDER BY created_at DESC, lead_id DESC``).
+    filtered WHERE (minus LIMIT/OFFSET), ordered by the SR-25 closed
+    allowlist with ``lead_id DESC`` as the mandatory total-order tie-break.
     """
     _reject_global(claims)
+
+    if sort not in _SORT_COLUMNS:
+        raise ValidationError(f"Unknown sort key {sort!r}.", code="INVALID_LEAD_SORT")
+    if direction not in {"asc", "desc"}:
+        raise ValidationError(
+            f"Unknown sort direction {direction!r}.", code="INVALID_LEAD_SORT_DIRECTION",
+        )
 
     where = "WHERE tenant_id = $1"
     params: list[Any] = [claims.tenant_id]
@@ -428,10 +495,30 @@ async def list_leads(
     if created_to is not None:
         params.append(created_to)
         where += f" AND created_at < ${len(params)}"
+    if q:
+        escaped_q = _escape_ilike_pattern(q)
+        params.extend([f"%{escaped_q}%", f"%{escaped_q}%"])
+        name_idx = len(params) - 1
+        email_idx = len(params)
+        where += (
+            f" AND (name ILIKE ${name_idx} ESCAPE '\\' "
+            f"OR email ILIKE ${email_idx} ESCAPE '\\')"
+        )
     if not include_converted:
         where += " AND converted_to_contact_id IS NULL"
 
-    # Parameterized SQL; `where` is a safe constant clause built above.
+    sort_expr = _SORT_COLUMNS[sort]
+    direction_sql = "ASC" if direction == "asc" else "DESC"
+    # sort_expr comes only from the developer-authored dict above; the
+    # request's sort/direction strings are never interpolated.
+    unknown_last_expr = _SORT_UNKNOWN_LAST.get(sort)
+    unknown_last_prefix = f"{unknown_last_expr} ASC, " if unknown_last_expr else ""
+    order_by = (
+        f"ORDER BY {unknown_last_prefix}{sort_expr} {direction_sql} NULLS LAST, lead_id DESC"
+    )
+
+    # Parameterized SQL; `where` is a safe constant clause built above and
+    # order_by is constrained to the developer-authored allowlist above.
     # ruff: noqa: S608
     count_row = await db.fetchrow(
         "SELECT count(*) AS count FROM leads " + where, *params,
@@ -447,7 +534,7 @@ async def list_leads(
         "qualification_score, consent, assigned_agent_id, source, "
         "created_at, updated_at, converted_to_contact_id "
         "FROM leads " + where + " "
-        f"ORDER BY created_at DESC, lead_id DESC LIMIT ${limit_idx} OFFSET ${offset_idx}",
+        f"{order_by} LIMIT ${limit_idx} OFFSET ${offset_idx}",
         *page_params,
     )
     return [_row_to_lead(row) for row in rows], total

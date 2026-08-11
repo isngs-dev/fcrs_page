@@ -1,23 +1,37 @@
 "use client";
 
 /**
- * 4b right-side lead detail drawer (HANDOFF-SPEC.md §1/§2/§3/§4). 440px,
- * shadow `-24px 0 48px rgba(25,26,23,.14)`, tabs Transcript/Details/Activity/
- * Notes with a citron underline on the active tab.
+ * SR-24: right-side lead detail drawer. 410px, shadow
+ * `-24px 0 48px rgba(25,26,23,.14)`, tabs Timeline/Details/Notes with the
+ * `.seg` pill control (matches the Table/Board toggle recipe) -- reduced
+ * from the previous 5-tab strip.
  *
- * State lives in the URL (`?lead=<id>&tab=<tab>`, decision from the task
- * brief) so the drawer is linkable/shareable -- the same pattern
- * `leads-filter.tsx` already uses for the stage filter, just router-driven
- * instead of a `<form method="get">` since this needs client-side Esc/focus
- * handling a plain form navigation can't provide.
+ * SR-24 (supersedes SR-22 scope item 4's "keep 5 tabs" reasoning): the
+ * Transcript tab is DELETED -- `Lead` has no `conversation_id` column
+ * (`services/api/src/api/leads/repository.py`), so it could only ever render
+ * a permanent "not available" state; a tab that can never contain data is
+ * dead chrome, not preserved functionality. The Activity tab is DELETED --
+ * the Timeline endpoint's `lead_activity` items are the exact same
+ * `list_activities()` rows Activity showed, just merged with
+ * bookings/notifications/messages, so Activity was a strict subset of
+ * Timeline and removing it loses nothing. Details and Notes remain: Notes is
+ * a live server-action form (real, irreplaceable functionality); Details
+ * holds the structured field list (stage/score/source/assigned) that used to
+ * sit in a header badge row with no reference equivalent -- moved here.
+ *
+ * Timeline is now the DEFAULT tab (was Transcript) -- opening a lead now
+ * shows the reference's summary-callout + dotted-rail shape immediately,
+ * with no tab interaction required, matching the design reference exactly.
+ *
+ * State lives in the URL (`?lead=<id>&tab=<tab>`) so the drawer is
+ * linkable/shareable -- the same pattern `leads-filter.tsx` uses for the
+ * stage filter, just router-driven instead of a `<form method="get">` since
+ * this needs client-side Esc/focus handling a plain form navigation can't
+ * provide.
  *
  * Data: `page.tsx` fetches the lead detail + activities server-side (this
  * repo's server-first convention) and passes them down as props -- this
  * component only renders what it's given plus owns tab/open/focus state.
- * The Transcript tab has no backend data source at all (no
- * conversation_id link exists on `Lead` yet) -- it renders an honest
- * "not available" state rather than fabricating a transcript
- * (CLAUDE.md §3, no silent fallbacks).
  *
  * Keyboard/focus (mirrors apps/widget/src/ui/ChatWidget.tsx's S14.5 pattern):
  * focus moves into the panel on open, Escape closes, a hand-rolled focus
@@ -26,22 +40,19 @@
  */
 import { useActionState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import type {
-  LeadActivityItem,
-  LeadDetail,
-  LeadDetailResult,
-  LeadActivitiesResult,
-} from "@/lib/leads-presentation";
-import { initialsFromName, scoreChipStyle, stageBadgeStyle } from "@/lib/leads-presentation";
+import type { LeadDetail, LeadDetailResult, LeadActivitiesResult } from "@/lib/leads-presentation";
+import { initialsFromName } from "@/lib/leads-presentation";
 import { addLeadNote, type AddNoteState } from "@/app/(protected)/leads/actions";
+import type { TimelineFetchResult } from "@/lib/timeline";
+import { RecordDrawerTimelinePanel } from "@/components/admin/record-drawer";
+import { cn } from "@/lib/utils";
 
-const TABS = ["transcript", "details", "activity", "notes"] as const;
+const TABS = ["timeline", "details", "notes"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
-  transcript: "Transcript",
+  timeline: "Timeline",
   details: "Details",
-  activity: "Activity",
   notes: "Notes",
 };
 
@@ -57,29 +68,27 @@ function formatDateTime(iso: string): string {
   });
 }
 
-function activitySummary(activity: LeadActivityItem): string {
-  const payload = activity.payload ?? {};
-  switch (activity.type) {
-    case "stage_change":
-      return `Stage changed: ${String(payload.from_stage ?? "?")} → ${String(payload.to_stage ?? "?")}`;
-    case "assignment":
-      return payload.agent_id
-        ? `Assigned to agent ${String(payload.agent_id)}`
-        : "Unassigned";
-    case "note":
-      return typeof payload.text === "string" ? payload.text : "(note)";
-    default:
-      return activity.type;
-  }
-}
-
 const initialNoteState: AddNoteState = { status: "idle" };
+
+/**
+ * SR-24: composes the reference's "This lead is qualified and assigned to
+ * Ava Chen…" callout sentence from REAL `LeadDetail` fields only -- no
+ * "Next step" clause, since no backing field exists for one.
+ */
+function buildSummary(lead: LeadDetail): string {
+  const assignment = lead.assignedAgentId ? `assigned to ${lead.assignedAgentId}` : "unassigned";
+  return `This lead is ${lead.stage} and ${assignment}. Captured via ${lead.source}.`;
+}
 
 interface LeadDrawerProps {
   leadId: string;
   tab: Tab;
   detailResult: LeadDetailResult;
   activitiesResult: LeadActivitiesResult | null;
+  /** SR-17 D3/scope item 9: the lead's timeline, fetched only when
+   * `tab === "timeline"`; `null` otherwise. Rendered via the SAME
+   * `RecordDrawerTimelinePanel` the Contact record drawer uses. */
+  timelineResult: TimelineFetchResult | null;
   /** Base path (`/leads` or `/clients/{tenantId}/leads`) the drawer's URL
    * params are read/written against -- mirrors `leads-filter.tsx`'s
    * `basePath` convention for the S13.7 platform-admin tenant-scoped view. */
@@ -92,6 +101,7 @@ export function LeadDrawer({
   tab,
   detailResult,
   activitiesResult,
+  timelineResult,
   basePath,
   tenantId,
 }: LeadDrawerProps) {
@@ -104,7 +114,7 @@ export function LeadDrawer({
       const params = new URLSearchParams();
       if (nextLeadId) {
         params.set("lead", nextLeadId);
-        if (nextTab !== "transcript") params.set("tab", nextTab);
+        if (nextTab !== "timeline") params.set("tab", nextTab);
       }
       const qs = params.toString();
       router.push(qs ? `${basePath}?${qs}` : basePath, { scroll: false });
@@ -112,7 +122,7 @@ export function LeadDrawer({
     [router, basePath]
   );
 
-  const close = useCallback(() => navigate(null, "transcript"), [navigate]);
+  const close = useCallback(() => navigate(null, "timeline"), [navigate]);
 
   // Focus-in on open + focus-restore on close (mirrors ChatWidget.tsx).
   const triggerRef = useRef<Element | null>(null);
@@ -167,8 +177,8 @@ export function LeadDrawer({
       aria-labelledby="lead-drawer-title"
       ref={panelRef}
       onKeyDown={handleKeyDown}
-      className="fixed top-0 right-0 bottom-0 z-50 flex w-full max-w-[440px] flex-col bg-white"
-      style={{ boxShadow: "-24px 0 48px rgba(25,26,23,.14)", borderLeft: "1px solid #e7e7e2" }}
+      className="fixed top-0 right-0 bottom-0 z-50 flex w-full max-w-[410px] flex-col bg-card"
+      style={{ boxShadow: "-24px 0 48px rgba(25,26,23,.14)", borderLeft: "1px solid var(--row-line)" }}
     >
       {detailResult.status === "error" ? (
         <DrawerErrorState message={detailResult.message} correlationId={detailResult.correlationId} onClose={close} closeButtonRef={closeButtonRef} />
@@ -177,6 +187,7 @@ export function LeadDrawer({
           lead={detailResult.lead}
           tab={tab}
           activitiesResult={activitiesResult}
+          timelineResult={timelineResult}
           onClose={close}
           onTabChange={(nextTab) => navigate(leadId, nextTab)}
           closeButtonRef={closeButtonRef}
@@ -203,12 +214,12 @@ function DrawerErrorState({
   return (
     <div className="flex flex-1 flex-col gap-4 p-6">
       <div className="flex items-center justify-between">
-        <span id="lead-drawer-title" className="text-base font-bold text-[#191a17]">
+        <span id="lead-drawer-title" className="text-base font-bold text-[var(--foreground)]">
           Lead unavailable
         </span>
         <CloseButton onClose={onClose} closeButtonRef={closeButtonRef} />
       </div>
-      <p role="alert" className="rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[#c2452d]">
+      <p role="alert" className="rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]">
         {message}
         {correlationId ? <span className="mt-1 block text-xs opacity-80">Correlation ID: {correlationId}</span> : null}
       </p>
@@ -229,7 +240,7 @@ function CloseButton({
       type="button"
       onClick={onClose}
       aria-label="Close lead detail"
-      className="grid size-11 shrink-0 place-items-center rounded-lg text-[#a8a99f] transition-colors hover:bg-[#f0f0ea] hover:text-[#191a17] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+      className="grid size-11 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
       <span aria-hidden className="text-sm">
         ✕
@@ -242,6 +253,7 @@ function DrawerBody({
   lead,
   tab,
   activitiesResult,
+  timelineResult,
   onClose,
   onTabChange,
   closeButtonRef,
@@ -252,6 +264,7 @@ function DrawerBody({
   lead: LeadDetail;
   tab: Tab;
   activitiesResult: LeadActivitiesResult | null;
+  timelineResult: TimelineFetchResult | null;
   onClose: () => void;
   onTabChange: (tab: Tab) => void;
   closeButtonRef: React.RefObject<HTMLButtonElement | null>;
@@ -259,8 +272,6 @@ function DrawerBody({
   leadId: string;
   basePath: string;
 }) {
-  const stageBadge = stageBadgeStyle(lead.stage);
-  const scoreBadge = lead.qualificationScore !== null ? scoreChipStyle(lead.qualificationScore, lead.stage) : null;
   const noteCount =
     activitiesResult?.status === "ok"
       ? activitiesResult.items.filter((activity) => activity.type === "note").length
@@ -268,64 +279,54 @@ function DrawerBody({
 
   return (
     <>
-      <div className="flex flex-col gap-3.5 border-b border-[#e7e7e2] p-5">
-        <div className="flex items-center gap-3">
-          <div className="grid size-11 shrink-0 place-items-center rounded-full bg-[#191a17] text-sm font-bold text-[#e4f222]">
+      <div className="flex flex-col gap-3 border-b border-[var(--row-line)] px-[22px] py-[18px]">
+        <div className="flex items-center gap-[11px]">
+          <div className="grid size-[34px] shrink-0 place-items-center rounded-full bg-secondary text-[12px] font-semibold text-[var(--ink-2)]">
             {initialsFromName(lead.name)}
           </div>
           <div className="min-w-0 flex-1">
-            <p id="lead-drawer-title" className="truncate text-base font-bold text-[#191a17]">
+            <p id="lead-drawer-title" className="truncate text-[15px] font-semibold text-foreground">
               {lead.name}
             </p>
-            <p className="truncate text-xs text-[#70716a]">
+            <p className="truncate text-[12px] text-muted-foreground">
               {lead.email}
               {lead.phone ? ` · ${lead.phone}` : ""}
             </p>
           </div>
           <CloseButton onClose={onClose} closeButtonRef={closeButtonRef} />
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge label={stageBadge.label} bg={stageBadge.bg} fg={stageBadge.fg} />
-          {scoreBadge ? <Badge label={`SCORE ${scoreBadge.label}`} bg={scoreBadge.bg === "transparent" ? "#f0f0ea" : scoreBadge.bg} fg={scoreBadge.fg} /> : null}
-          <span className="rounded-full border border-[#e7e7e2] px-2.5 py-1 text-[11px] font-semibold text-[#5a5b54]">
-            {lead.source}
-          </span>
+
+        <div className="flex gap-0.5 self-start rounded-[10px] bg-secondary p-[3px]" role="tablist" aria-label="Lead detail sections">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              id={`lead-tab-${t}`}
+              aria-selected={tab === t}
+              aria-controls={`lead-tabpanel-${t}`}
+              onClick={() => onTabChange(t)}
+              className={cn(
+                "flex h-8 items-center rounded-lg px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+                tab === t ? "bg-[#333] text-[#fbfaf7]" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {TAB_LABELS[t]}
+              {t === "notes" && noteCount > 0 ? (
+                <span className="ml-1.5 rounded-full bg-card px-1.5 py-0.5 text-[10px] font-bold text-[var(--ink-2)]">
+                  {noteCount}
+                </span>
+              ) : null}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="flex border-b border-[#e7e7e2] text-[12.5px] font-semibold" role="tablist" aria-label="Lead detail sections">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            id={`lead-tab-${t}`}
-            aria-selected={tab === t}
-            aria-controls={`lead-tabpanel-${t}`}
-            onClick={() => onTabChange(t)}
-            className="min-h-11 px-4 py-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#191a17]"
-            style={{
-              color: tab === t ? "#191a17" : "#96978e",
-              borderBottom: tab === t ? "2px solid #e4f222" : "2px solid transparent",
-            }}
-          >
-            {TAB_LABELS[t]}
-            {t === "notes" && noteCount > 0 ? (
-              <span className="ml-1.5 rounded-full bg-[#ecece5] px-1.5 py-0.5 text-[10px] font-bold text-[#5a5b54]">
-                {noteCount}
-              </span>
-            ) : null}
-          </button>
-        ))}
-      </div>
-
       <div className="flex-1 overflow-y-auto">
-        {tab === "transcript" ? (
-          <TranscriptTab />
-        ) : tab === "details" ? (
+        {tab === "details" ? (
           <DetailsTab lead={lead} />
-        ) : tab === "activity" ? (
-          <ActivityTab activitiesResult={activitiesResult} />
+        ) : tab === "timeline" ? (
+          <TimelineTab leadId={leadId} lead={lead} timelineResult={timelineResult} basePath={basePath} />
         ) : (
           <NotesTab
             activitiesResult={activitiesResult}
@@ -336,39 +337,6 @@ function DrawerBody({
         )}
       </div>
     </>
-  );
-}
-
-function Badge({ label, bg, fg }: { label: string; bg: string; fg: string }) {
-  return (
-    <span
-      className="rounded-full px-2.5 py-1 text-[11px] font-bold"
-      style={{ background: bg, color: fg }}
-    >
-      {label}
-    </span>
-  );
-}
-
-/**
- * No backend endpoint links a lead to a conversation transcript (`Lead` has
- * no `conversation_id` field, per `services/api/src/api/leads/repository.py`)
- * -- this is an honest "not available yet" state, not a fabricated
- * transcript (CLAUDE.md §3, no silent fallbacks).
- */
-function TranscriptTab() {
-  return (
-    <div
-      id="lead-tabpanel-transcript"
-      role="tabpanel"
-      aria-labelledby="lead-tab-transcript"
-      className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center"
-    >
-      <p className="text-sm font-semibold text-[#45463f]">Transcript not available</p>
-      <p className="max-w-[280px] text-xs text-[#96978e]">
-        This lead isn&apos;t linked to a conversation record yet, so there&apos;s no transcript to show here.
-      </p>
-    </div>
   );
 }
 
@@ -385,49 +353,67 @@ function DetailsTab({ lead }: { lead: LeadDetail }) {
   return (
     <dl id="lead-tabpanel-details" role="tabpanel" aria-labelledby="lead-tab-details" className="flex flex-col gap-3 p-5">
       {rows.map(([label, value]) => (
-        <div key={label} className="flex items-center justify-between gap-4 border-b border-[#f0f0ea] pb-3 text-[13px] last:border-b-0">
-          <dt className="text-[#70716a]">{label}</dt>
-          <dd className="truncate font-medium text-[#191a17]">{value}</dd>
+        <div key={label} className="flex items-center justify-between gap-4 border-b border-[var(--row-line)] pb-3 text-[13px] last:border-b-0">
+          <dt className="text-[var(--muted-foreground)]">{label}</dt>
+          <dd className="truncate font-medium text-[var(--foreground)]">{value}</dd>
         </div>
       ))}
     </dl>
   );
 }
 
-function ActivityTab({ activitiesResult }: { activitiesResult: LeadActivitiesResult | null }) {
-  if (activitiesResult === null) {
+/**
+ * SR-17 D3/scope item 9: renders the SAME `RecordDrawerTimelinePanel` the
+ * Contact record drawer uses, fed by `GET /admin/leads/{lead_id}/timeline`.
+ * "Load older" (scope item 10) writes `?lead=<id>&tab=timeline&before=<cursor>`
+ * to the URL -- a fresh server fetch, not client-accumulated state.
+ */
+function TimelineTab({
+  leadId,
+  lead,
+  timelineResult,
+  basePath,
+}: {
+  leadId: string;
+  lead: LeadDetail;
+  timelineResult: TimelineFetchResult | null;
+  basePath: string;
+}) {
+  if (timelineResult === null) {
     return (
-      <p id="lead-tabpanel-activity" role="tabpanel" aria-labelledby="lead-tab-activity" className="p-5 text-sm text-[#96978e]">
-        Loading activity…
+      <p id="lead-tabpanel-timeline" role="tabpanel" aria-labelledby="lead-tab-timeline" className="p-5 text-sm text-muted-foreground">
+        Loading timeline…
       </p>
     );
   }
-  if (activitiesResult.status === "error") {
-    return (
-      <p role="alert" id="lead-tabpanel-activity" className="m-5 rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[#c2452d]">
-        {activitiesResult.message}
-      </p>
-    );
-  }
-  if (activitiesResult.items.length === 0) {
-    return (
-      <p id="lead-tabpanel-activity" role="tabpanel" aria-labelledby="lead-tab-activity" className="p-5 text-sm text-[#96978e]">
-        No activity recorded yet.
-      </p>
-    );
-  }
+
+  const loadOlderHref =
+    timelineResult.status === "ok" && timelineResult.data.nextBefore
+      ? `${basePath}?lead=${encodeURIComponent(leadId)}&tab=timeline&before=${encodeURIComponent(
+          timelineResult.data.nextBefore
+        )}`
+      : null;
+
   return (
-    <ul id="lead-tabpanel-activity" role="tabpanel" aria-labelledby="lead-tab-activity" className="flex flex-col gap-3 p-5">
-      {activitiesResult.items.map((activity) => (
-        <li key={activity.activityId} className="flex flex-col gap-1 border-b border-[#f0f0ea] pb-3 text-[12.5px] last:border-b-0">
-          <span className="text-[#191a17]">{activitySummary(activity)}</span>
-          <span className="text-[11px] text-[#96978e]">
-            {formatDateTime(activity.createdAt)}
-            {activity.actor ? ` · ${activity.actor}` : ""}
-          </span>
-        </li>
-      ))}
-    </ul>
+    <div id="lead-tabpanel-timeline" role="tabpanel" aria-labelledby="lead-tab-timeline" className="px-[22px] py-[18px]">
+      <div className="mb-5 flex gap-2.5 rounded-[10px] bg-[var(--callout-bg)] px-3.5 py-3 text-[12.5px] leading-[1.5] text-[var(--ink-2)]">
+        <svg
+          aria-hidden
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#404040"
+          strokeWidth="1.8"
+          className="mt-0.5 shrink-0"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8h.01M11 12h1v4h1" />
+        </svg>
+        <div>{buildSummary(lead)}</div>
+      </div>
+      <RecordDrawerTimelinePanel result={timelineResult} loadOlderHref={loadOlderHref} />
+    </div>
   );
 }
 
@@ -452,7 +438,7 @@ function NotesTab({
   return (
     <div id="lead-tabpanel-notes" role="tabpanel" aria-labelledby="lead-tab-notes" className="flex flex-1 flex-col gap-4 p-5">
       <form action={formAction} className="flex flex-col gap-2">
-        <label htmlFor="note-text" className="text-xs font-semibold text-[#5a5b54]">
+        <label htmlFor="note-text" className="text-xs font-semibold text-[var(--ink-2)]">
           Add a note
         </label>
         <textarea
@@ -460,35 +446,35 @@ function NotesTab({
           name="text"
           rows={3}
           maxLength={4000}
-          className="rounded-lg border border-[#e7e7e2] p-2.5 text-[13px] text-[#191a17] outline-none focus-visible:border-[#191a17]"
+          className="rounded-lg border border-[var(--border)] p-2.5 text-[13px] text-[var(--foreground)] outline-none focus-visible:border-[var(--foreground)]"
           placeholder="Write a note about this lead…"
         />
         {state.status === "error" ? (
-          <p role="alert" className="text-xs text-[#c2452d]">
+          <p role="alert" className="text-xs text-[var(--danger-fg)]">
             {state.message}
           </p>
         ) : null}
         <button
           type="submit"
           disabled={pending}
-          className="min-h-11 self-start rounded-lg bg-[#191a17] px-4 text-[12.5px] font-bold text-[#e4f222] transition-opacity disabled:opacity-50"
+          className="min-h-11 self-start rounded-lg bg-[var(--foreground)] px-4 text-[12.5px] font-bold text-white transition-opacity disabled:opacity-50"
         >
           {pending ? "Saving…" : "Save note"}
         </button>
       </form>
 
       {activitiesResult?.status === "error" ? (
-        <p role="alert" className="rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[#c2452d]">
+        <p role="alert" className="rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]">
           {activitiesResult.message}
         </p>
       ) : notes.length === 0 ? (
-        <p className="text-sm text-[#96978e]">No notes yet.</p>
+        <p className="text-sm text-muted-foreground">No notes yet.</p>
       ) : (
         <ul className="flex flex-col gap-3">
           {notes.map((note) => (
-            <li key={note.activityId} className="flex flex-col gap-1 border-b border-[#f0f0ea] pb-3 text-[12.5px] last:border-b-0">
-              <span className="text-[#191a17]">{typeof note.payload?.text === "string" ? note.payload.text : ""}</span>
-              <span className="text-[11px] text-[#96978e]">
+            <li key={note.activityId} className="flex flex-col gap-1 border-b border-[var(--row-line)] pb-3 text-[12.5px] last:border-b-0">
+              <span className="text-[var(--foreground)]">{typeof note.payload?.text === "string" ? note.payload.text : ""}</span>
+              <span className="text-[11px] text-muted-foreground">
                 {formatDateTime(note.createdAt)}
                 {note.actor ? ` · ${note.actor}` : ""}
               </span>

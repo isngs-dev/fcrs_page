@@ -352,6 +352,203 @@ export async function getWinLossReport(
 }
 
 // ---------------------------------------------------------------------------
+// Lead sources (SR-19 D4)
+// ---------------------------------------------------------------------------
+
+export interface LeadSource {
+  source: string;
+  count: number;
+  percentage: number;
+}
+
+export interface LeadSourcesReport {
+  window: { from: string; to: string };
+  sources: LeadSource[];
+  total: number;
+  /** D4 -- true when exactly one real source exists in the window. The UI
+   * uses this to show an honest note instead of a padded/broken-looking
+   * donut. A real tenant is expected to be single-source for a long time
+   * (`leads.source` defaults to `'widget'`, currently the only channel) --
+   * this is NOT a bug and must never be "fixed" by padding fake categories. */
+  singleSource: boolean;
+}
+
+interface LeadSourcesResponseBody {
+  window: { from: string; to: string };
+  sources: LeadSource[];
+  total: number;
+  single_source: boolean;
+}
+
+function toLeadSourcesReport(body: LeadSourcesResponseBody): LeadSourcesReport {
+  return { window: body.window, sources: body.sources, total: body.total, singleSource: body.single_source };
+}
+
+export async function getLeadSourcesReport(
+  params: ReportQueryParams,
+  tenantId?: string
+): Promise<ReportResult<LeadSourcesReport>> {
+  const query = resolveReportQuery(params);
+  return fetchReport<LeadSourcesResponseBody, LeadSourcesReport>(
+    `${reportBasePath("lead-sources", tenantId)}?${query}`,
+    toLeadSourcesReport
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Score distribution (SR-19 D8)
+// ---------------------------------------------------------------------------
+
+export interface ScoreDistributionReport {
+  window: { from: string; to: string };
+  bands: Record<string, number>;
+  unscored: number;
+  total: number;
+}
+
+interface ScoreDistributionResponseBody {
+  window: { from: string; to: string };
+  bands: Record<string, number>;
+  unscored: number;
+  total: number;
+}
+
+function toScoreDistributionReport(body: ScoreDistributionResponseBody): ScoreDistributionReport {
+  return { window: body.window, bands: body.bands, unscored: body.unscored, total: body.total };
+}
+
+export async function getScoreDistributionReport(
+  params: ReportQueryParams,
+  tenantId?: string
+): Promise<ReportResult<ScoreDistributionReport>> {
+  const query = resolveReportQuery(params);
+  return fetchReport<ScoreDistributionResponseBody, ScoreDistributionReport>(
+    `${reportBasePath("score-distribution", tenantId)}?${query}`,
+    toScoreDistributionReport
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Agent performance (SR-19 D7)
+// ---------------------------------------------------------------------------
+
+export interface AgentPerformanceRow {
+  assignedAgentId: string | null;
+  assigned: number;
+  contacted: number;
+  won: number;
+  /** null (never 0) when `contacted` is 0 -- render as "No data" (D7). */
+  winRate: number | null;
+}
+
+export interface AgentPerformanceReport {
+  window: { from: string; to: string };
+  agents: AgentPerformanceRow[];
+  /** Leads with no assigned_agent_id -- always present, never dropped, so
+   * the table's counts sum to the tenant's total in the window (D7). */
+  unassigned: AgentPerformanceRow;
+}
+
+interface AgentPerformanceRowResponseBody {
+  assigned_agent_id: string | null;
+  assigned: number;
+  contacted: number;
+  won: number;
+  win_rate: number | null;
+}
+
+interface AgentPerformanceResponseBody {
+  window: { from: string; to: string };
+  agents: AgentPerformanceRowResponseBody[];
+  unassigned: AgentPerformanceRowResponseBody;
+}
+
+function toAgentRow(row: AgentPerformanceRowResponseBody): AgentPerformanceRow {
+  return {
+    assignedAgentId: row.assigned_agent_id,
+    assigned: row.assigned,
+    contacted: row.contacted,
+    won: row.won,
+    // `null` preserved as `null` -- never coerced to `0` (D7/D12).
+    winRate: row.win_rate,
+  };
+}
+
+function toAgentPerformanceReport(body: AgentPerformanceResponseBody): AgentPerformanceReport {
+  return {
+    window: body.window,
+    agents: body.agents.map(toAgentRow),
+    unassigned: toAgentRow(body.unassigned),
+  };
+}
+
+export async function getAgentPerformanceReport(
+  params: ReportQueryParams,
+  tenantId?: string
+): Promise<ReportResult<AgentPerformanceReport>> {
+  const query = resolveReportQuery(params);
+  return fetchReport<AgentPerformanceResponseBody, AgentPerformanceReport>(
+    `${reportBasePath("agent-performance", tenantId)}?${query}`,
+    toAgentPerformanceReport
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Recent conversions (SR-19 D6 -- deliberately NO value field, see lib
+// header + backend docstring for why)
+// ---------------------------------------------------------------------------
+
+export interface RecentConversion {
+  leadId: string;
+  name: string;
+  source: string;
+  stage: string;
+  convertedAt: string;
+}
+
+export interface RecentConversionsReport {
+  window: { from: string; to: string };
+  conversions: RecentConversion[];
+}
+
+interface RecentConversionResponseBody {
+  lead_id: string;
+  name: string;
+  source: string;
+  stage: string;
+  converted_at: string;
+}
+
+interface RecentConversionsResponseBody {
+  window: { from: string; to: string };
+  conversions: RecentConversionResponseBody[];
+}
+
+function toRecentConversionsReport(body: RecentConversionsResponseBody): RecentConversionsReport {
+  return {
+    window: body.window,
+    conversions: body.conversions.map((c) => ({
+      leadId: c.lead_id,
+      name: c.name,
+      source: c.source,
+      stage: c.stage,
+      convertedAt: c.converted_at,
+    })),
+  };
+}
+
+export async function getRecentConversionsReport(
+  params: ReportQueryParams,
+  tenantId?: string
+): Promise<ReportResult<RecentConversionsReport>> {
+  const query = resolveReportQuery(params);
+  return fetchReport<RecentConversionsResponseBody, RecentConversionsReport>(
+    `${reportBasePath("recent-conversions", tenantId)}?${query}`,
+    toRecentConversionsReport
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CSV export links -- point at this app's own `/reports/csv/[report]` route
 // handler (NOT admin-api directly), which forwards the caller's session
 // cookie server-side and streams the bytes back. A raw `<a href>` to
@@ -362,7 +559,15 @@ export async function getWinLossReport(
 // header comment for the full explanation.
 // ---------------------------------------------------------------------------
 
-export type ReportName = "leads-by-stage" | "bookings" | "funnel" | "win-loss";
+export type ReportName =
+  | "leads-by-stage"
+  | "bookings"
+  | "funnel"
+  | "win-loss"
+  | "lead-sources"
+  | "score-distribution"
+  | "agent-performance"
+  | "recent-conversions";
 
 export function reportCsvPath(report: ReportName, query: string, tenantId?: string): string {
   const params = new URLSearchParams(query);

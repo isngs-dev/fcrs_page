@@ -26,6 +26,7 @@ import { LeadForm } from "./LeadForm";
 import { IdentityForm } from "./IdentityForm";
 import { ScheduleCta } from "./ScheduleCta";
 import { CalendlyHandoff } from "./CalendlyHandoff";
+import { SupportHandoff } from "./SupportHandoff";
 import type { WidgetConfig } from "../config";
 import type { AvailabilitySummary } from "../schedule";
 
@@ -38,7 +39,7 @@ export interface ChatMessage {
    * flow, rendered by <CalendlyHandoff> instead of the native <ScheduleCta>
    * picker (SR-6 decision 1). SR-14 adds "identity_form" -- the
    * conversation-start identity gate's inline capture form. */
-  action?: "lead_form" | "schedule_cta" | "calendly_handoff" | "identity_form" | null;
+  action?: "lead_form" | "schedule_cta" | "calendly_handoff" | "identity_form" | "handoff_choice" | null;
   /** Only ever set on a bot message carrying action="schedule_cta"/
    * "calendly_handoff" that originated from the persistent CTA (SR-5
    * decision 5), never from an orchestrator turn. */
@@ -49,12 +50,16 @@ export function Bubble({
   message,
   config,
   onIdentityCaptured,
+  onHandoffTalk,
+  onHandoffStay,
 }: {
   message: ChatMessage;
   config: WidgetConfig;
   /** SR-14 D3: called on a successful identity capture so the caller can
    * auto-re-send the visitor's deferred original question. */
   onIdentityCaptured?: () => void;
+  onHandoffTalk?: () => void;
+  onHandoffStay?: () => void;
 }) {
   if (message.role === "system-error") {
     return (
@@ -65,21 +70,33 @@ export function Bubble({
   }
 
   const isUser = message.role === "user";
-  return (
-    <div className={`cw-bubble-row ${isUser ? "cw-bubble-row-user" : "cw-bubble-row-bot"}`}>
-      <div className={`cw-bubble ${isUser ? "cw-bubble-user" : "cw-bubble-bot"}`}>
-        {isUser ? message.text : <Markdown text={message.text} />}
-        {!isUser && message.action === "lead_form" ? <LeadForm config={config} /> : null}
-        {!isUser && message.action === "identity_form" ? (
-          <IdentityForm config={config} {...(onIdentityCaptured ? { onCaptured: onIdentityCaptured } : {})} />
-        ) : null}
-        {!isUser && message.action === "schedule_cta" ? (
-          <ScheduleCta config={config} {...(message.scheduleSummary ? { summary: message.scheduleSummary } : {})} />
-        ) : null}
-        {!isUser && message.action === "calendly_handoff" && message.scheduleSummary ? (
-          <CalendlyHandoff config={config} summary={message.scheduleSummary} />
-        ) : null}
+  if (!isUser) {
+    return (
+      <div className="cw-bubble-row cw-bubble-row-bot">
+        <span className="cw-bot-mark" aria-hidden="true" />
+        <div className="cw-bot-stack">
+          {message.text ? <div className="cw-bubble cw-bubble-bot"><Markdown text={message.text} /></div> : null}
+          {message.action === "lead_form" ? <LeadForm config={config} /> : null}
+          {message.action === "identity_form" ? (
+            <IdentityForm config={config} {...(onIdentityCaptured ? { onCaptured: onIdentityCaptured } : {})} />
+          ) : null}
+          {message.action === "handoff_choice" && onHandoffTalk && onHandoffStay ? (
+            <SupportHandoff onTalk={onHandoffTalk} onStay={onHandoffStay} />
+          ) : null}
+          {message.action === "schedule_cta" ? (
+            <ScheduleCta config={config} {...(message.scheduleSummary ? { summary: message.scheduleSummary } : {})} />
+          ) : null}
+          {message.action === "calendly_handoff" && message.scheduleSummary ? (
+            <CalendlyHandoff config={config} summary={message.scheduleSummary} />
+          ) : null}
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="cw-bubble-row cw-bubble-row-user">
+      <div className="cw-bubble cw-bubble-user">{message.text}</div>
     </div>
   );
 }
@@ -88,6 +105,7 @@ export function Bubble({
 export function TypingIndicator() {
   return (
     <div className="cw-bubble-row cw-bubble-row-bot" aria-live="off">
+      <span className="cw-bot-mark" aria-hidden="true" />
       <div className="cw-bubble cw-bubble-bot cw-typing" role="status" aria-label="Bot is typing">
         <span className="cw-typing-dot" />
         <span className="cw-typing-dot" />

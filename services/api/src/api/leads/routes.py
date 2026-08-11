@@ -20,7 +20,9 @@ from pydantic import BaseModel, field_validator
 
 from api.crm.tasks import sync_lead
 from api.gateway.dependencies import get_visitor_claims
+from api.leads.assignment import assign_lead_fail_open
 from api.leads.repository import create_lead
+from api.notifications.emit import emit_event_safe
 
 _log = get_logger(__name__)
 
@@ -116,10 +118,32 @@ async def capture_lead(
         source=source,
     )
 
+    # -- Round-robin auto-assignment (SR-20 D1/D2/D3): fail-open, AFTER the
+    # durable lead write above, as a separate step. Never gates or reverses
+    # the capture -- an assignment failure (or round-robin simply being off,
+    # the default) is invisible to the caller and leaves assigned_agent_id
+    # NULL, exactly today's behavior (M2).
+    await assign_lead_fail_open(db, claims, lead_id=lead_id)
+
     # -- Log the event (PII-safe) ------------------------------------------
     _log.info(
         "lead captured",
         extra={"event": "lead_captured", "lead_id": lead_id, "tenant_id": claims.tenant_id},
+    )
+
+    # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable lead write
+    # above. payload is ids only (lead_id) -- never name/email/phone. Never
+    # gates or reverses the capture -- a feed write failing here is not
+    # visible to the caller at all.
+    await emit_event_safe(
+        db,
+        claims,
+        kind="lead_captured",
+        category="leads",
+        target_type="lead",
+        target_id=lead_id,
+        payload={"lead_id": lead_id},
+        actor_id=None,
     )
 
     # -- Enqueue outbound CRM sync (fire-and-forget; S7.4 decision 4) -------

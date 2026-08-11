@@ -208,15 +208,12 @@ describe("ChatWidget", () => {
       root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
     });
 
-    expect(container.querySelector(".cw-launcher-label")?.textContent).toBe("Chat with us");
+    expect(container.querySelector(".cw-launcher-label")?.textContent).toBe("Ask Rebecca");
   });
 
-  it("ships a self-contained full-height drawer CSS contract", () => {
+  it("ships a self-contained floating Rebecca panel CSS contract", () => {
     expect(widgetCss).toContain("@font-face");
     expect(widgetCss).toContain("data:font/woff2;base64,");
-    expect(widgetCss).toContain("top: 0");
-    expect(widgetCss).toContain("height: 100dvh");
-    expect(widgetCss).toContain("width: min(400px, calc(100vw - 32px))");
     expect(widgetCss).toContain("@media (max-width: 480px)");
     expect(widgetCss).toContain("inset: 0");
     expect(widgetCss).not.toMatch(/https?:|\/\/fonts\./i);
@@ -232,6 +229,29 @@ describe("ChatWidget", () => {
     expect(container.querySelector(".cw-panel")).toBeNull();
     openPanel();
     expect(container.querySelector(".cw-panel")).not.toBeNull();
+  });
+
+  it("starts a fresh local thread from the Rebecca header reset control", () => {
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+
+    const input = getInput();
+    act(() => {
+      setNativeInputValue(input, "A draft question");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(input.value).toBe("A draft question");
+
+    const reset = container.querySelector<HTMLButtonElement>('.cw-reset-button[aria-label="Start a new chat"]');
+    act(() => {
+      reset?.click();
+    });
+
+    expect(input.value).toBe("");
+    expect(container.querySelector(".cw-welcome")?.textContent).toMatch(/Rebecca/i);
+    expect(clearResumeRecordMock).not.toHaveBeenCalled();
   });
 
   it("sending a message renders an optimistic user bubble + typing indicator, then a bot bubble; stores conversation_id for the next send", async () => {
@@ -343,7 +363,7 @@ describe("ChatWidget", () => {
     expect(sendTurnMock).toHaveBeenCalledTimes(1);
   });
 
-  it("a success with action=lead_form renders the real LeadForm, not the stub (S14.3)", async () => {
+  it("an escalation with action=lead_form first renders the human-handoff choice, then opens the authoritative lead form", async () => {
     sendTurnMock.mockResolvedValueOnce({
       ok: true,
       turn: {
@@ -366,11 +386,28 @@ describe("ChatWidget", () => {
     await flush();
 
     expect(container.querySelector(".cw-sched")).toBeNull();
+    expect(container.querySelector(".cw-handoff-card")?.textContent).toContain("Connect with a rep");
+    expect(container.querySelector("form.cw-lead-form")).toBeNull();
+
+    fetchAvailabilitySummaryMock.mockResolvedValueOnce({
+      ok: true,
+      summary: {
+        action: "lead_form",
+        timezone: "UTC",
+        days: [],
+        transitionMessage: "Happy to connect you with a sales rep.",
+        existingBooking: null,
+      },
+    });
+    act(() => container.querySelector<HTMLButtonElement>(".cw-handoff-talk")?.click());
+    await flush();
+
+    expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
     expect(container.querySelector("form.cw-lead-form")).not.toBeNull();
     expect(container.querySelector("input[type=email]")).not.toBeNull();
   });
 
-  it("a success with action=schedule_cta renders the real ScheduleCta, not the old stub (S14.4)", async () => {
+  it("an escalation with action=schedule_cta opens the redesigned date picker only after Talk to a rep", async () => {
     sendTurnMock.mockResolvedValueOnce({
       ok: true,
       turn: {
@@ -391,11 +428,55 @@ describe("ChatWidget", () => {
 
     typeAndSend("Can we book a call?");
     await flush();
+
+    expect(container.querySelector(".cw-handoff-card")).not.toBeNull();
+    expect(container.querySelector(".cw-sched-day-strip")).toBeNull();
+    fetchAvailabilitySummaryMock.mockResolvedValueOnce({
+      ok: true,
+      summary: {
+        action: "schedule_cta",
+        timezone: "UTC",
+        days: [{ date: "2026-07-22", hasAvailability: true }],
+        transitionMessage: "Happy to connect you with a sales rep. Please pick a time that works best for you.",
+        existingBooking: null,
+      },
+    });
+    act(() => container.querySelector<HTMLButtonElement>(".cw-handoff-talk")?.click());
     await flush();
 
-    expect(fetchSlotsMock).toHaveBeenCalledTimes(1);
-    expect(container.querySelector(".cw-sched-empty")).not.toBeNull();
+    expect(fetchSlotsMock).not.toHaveBeenCalled();
+    expect(container.querySelector(".cw-sched-day-strip")).not.toBeNull();
     expect(container.querySelector("form.cw-lead-form")).toBeNull();
+    expect(container.querySelectorAll(".cw-bubble-row-user")[1]?.textContent).toBe("Talk to a rep");
+  });
+
+  it("Stay here keeps the visitor with Rebecca and does not open scheduling or call availability", async () => {
+    sendTurnMock.mockResolvedValueOnce({
+      ok: true,
+      turn: {
+        conversationId: "conv-1",
+        messageId: "msg-1",
+        reply: "I can connect you with a human.",
+        decision: "escalate",
+        confidence: 0.2,
+        sources: [],
+        action: "schedule_cta",
+      },
+    });
+
+    act(() => root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />));
+    openPanel();
+    typeAndSend("I need help with a problem");
+    await flush();
+
+    act(() => container.querySelector<HTMLButtonElement>(".cw-handoff-stay")?.click());
+    await flush();
+
+    expect(fetchAvailabilitySummaryMock).not.toHaveBeenCalled();
+    expect(container.querySelector(".cw-sched")).toBeNull();
+    expect(container.textContent).toContain("Stay with Rebecca");
+    expect(container.textContent).toContain("Can you tell me a bit more about what stopped working?");
+    expect(container.querySelector<HTMLButtonElement>(".cw-handoff-stay")?.getAttribute("aria-pressed")).toBe("true");
   });
 
   describe("SR-14 conversation-start identity gate", () => {
@@ -596,7 +677,7 @@ describe("ChatWidget", () => {
       expect(labelledBy).toBeTruthy();
       const headerEl = container.querySelector(`#${labelledBy}`);
       expect(headerEl).not.toBeNull();
-      expect(headerEl?.textContent).toBe("Assistant");
+      expect(headerEl?.textContent).toBe("Rebecca · AI assistant");
     });
 
     it("renders the first-open greeting and sends a selected suggestion through the real turn path", async () => {
@@ -618,9 +699,9 @@ describe("ChatWidget", () => {
       });
       openPanel();
 
-      expect(container.querySelector(".cw-welcome")?.textContent).toMatch(/your assistant/i);
+      expect(container.querySelector(".cw-welcome")?.textContent).toMatch(/Rebecca/i);
       const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
-        (button) => button.textContent?.includes("How much does it cost?"),
+        (button) => button.textContent?.includes("How does the Pro plan compare?"),
       );
       expect(suggestion).toBeDefined();
 
@@ -631,10 +712,75 @@ describe("ChatWidget", () => {
 
       expect(sendTurnMock).toHaveBeenCalledWith(
         baseConfig,
-        expect.objectContaining({ message: "How much does it cost?", conversationId: null }),
+        expect.objectContaining({ message: "How does the Pro plan compare?", conversationId: null }),
       );
-      expect(container.querySelector(".cw-welcome")).toBeNull();
-      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("How much does it cost?");
+      expect(container.querySelector(".cw-welcome")).not.toBeNull();
+      expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain("How does the Pro plan compare?");
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("How does the Pro plan compare?");
+    });
+
+    it("uses browser speech recognition when available and stops it when the panel closes", () => {
+      type ResultHandler = (event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void;
+
+      class FakeRecognition {
+        static latest: FakeRecognition | null = null;
+        continuous = true;
+        interimResults = true;
+        lang = "";
+        onstart: (() => void) | null = null;
+        onend: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        onresult: ResultHandler | null = null;
+        start = vi.fn(() => this.onstart?.());
+        stop = vi.fn(() => this.onend?.());
+        abort = vi.fn();
+
+        constructor() {
+          FakeRecognition.latest = this;
+        }
+      }
+
+      Object.defineProperty(window, "webkitSpeechRecognition", {
+        configurable: true,
+        value: FakeRecognition,
+      });
+
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+
+        const voiceButton = container.querySelector<HTMLButtonElement>('.cw-voice-button[aria-label="Start voice input"]');
+        expect(voiceButton).not.toBeNull();
+        act(() => {
+          voiceButton?.click();
+        });
+        expect(FakeRecognition.latest).not.toBeNull();
+        expect(voiceButton?.getAttribute("aria-pressed")).toBe("true");
+
+        act(() => {
+          FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "Book a demo" } }] });
+        });
+        expect(getInput().value).toBe("Book a demo");
+
+        const closeButton = container.querySelector<HTMLButtonElement>('.cw-close-button[aria-label="Close chat"]');
+        act(() => {
+          closeButton?.click();
+        });
+        expect(FakeRecognition.latest?.stop).toHaveBeenCalled();
+      } finally {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      }
+    });
+
+    it("does not render a dead voice control when speech recognition is unavailable", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      expect(container.querySelector(".cw-voice-button")).toBeNull();
     });
 
     it("has an in-panel close control that restores launcher focus", () => {
@@ -1370,8 +1516,8 @@ describe("ChatWidget", () => {
       const botBubbles = container.querySelectorAll(".cw-bubble-row-bot .cw-bubble-bot");
       expect(botBubbles.length).toBe(1);
       expect(botBubbles[0]?.textContent).toContain("I'd be happy to help you find a time with our sales team.");
-      // The staged picker (calendar) renders IN the bot bubble, inside the message thread.
-      expect(container.querySelector(".cw-bubble-row-bot .cw-sched-calendar")).not.toBeNull();
+      // The staged date strip renders in the bot turn, inside the message thread.
+      expect(container.querySelector(".cw-bubble-row-bot .cw-sched-day-strip")).not.toBeNull();
     });
 
     it("action=lead_form renders the fixed transition bubble + the lead form, not the picker", async () => {

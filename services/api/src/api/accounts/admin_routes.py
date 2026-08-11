@@ -15,12 +15,19 @@ from __future__ import annotations
 from datetime import datetime
 
 from common.auth import AuthClaims, Role
-from common.errors import NotFoundError
+from common.errors import NotFoundError, ValidationError
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
 
-from api.accounts.repository import Account, create_account, get_account, list_accounts
+from api.accounts.repository import (
+    ACCOUNT_SORT_DEFAULT_DIRECTIONS,
+    ACCOUNT_SORT_KEYS,
+    Account,
+    create_account,
+    get_account,
+    list_accounts,
+)
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
 
@@ -121,20 +128,73 @@ async def post_account_for_tenant(
 
 
 async def _list_accounts(
-    request: Request, claims: AuthClaims, *, limit: int, offset: int,
+    request: Request,
+    claims: AuthClaims,
+    *,
+    limit: int,
+    offset: int,
+    q: str | None = None,
+    sort: str | None = None,
+    direction: str | None = None,
 ) -> AccountListResponse:
+    """List/search/sort the caller's tenant accounts, paginated (SR-29).
+
+    Validates a closed ``sort``/``dir`` allowlist (422 ``INVALID_ACCOUNT_SORT``
+    / ``INVALID_ACCOUNT_SORT_DIRECTION`` on an unknown value) and a combined,
+    literal Name/Domain ``q`` search (422 ``INVALID_ACCOUNT_SEARCH`` outside
+    2-200 chars; an empty/whitespace-only ``q`` is treated as omitted, not an
+    error). ``limit`` is clamped to ``[1, 200]``, ``offset`` to ``>= 0``.
+    """
     db = request.app.state.db
+
+    if sort is None:
+        effective_sort = "created"
+    elif sort in ACCOUNT_SORT_KEYS:
+        effective_sort = sort
+    else:
+        raise ValidationError(f"Unknown sort key {sort!r}.", code="INVALID_ACCOUNT_SORT")
+
+    if direction is None:
+        effective_direction = ACCOUNT_SORT_DEFAULT_DIRECTIONS[effective_sort]
+    elif direction in {"asc", "desc"}:
+        effective_direction = direction
+    else:
+        raise ValidationError(
+            f"Unknown sort direction {direction!r}.", code="INVALID_ACCOUNT_SORT_DIRECTION",
+        )
+
+    normalized_q = q.strip() if q is not None else None
+    if normalized_q == "":
+        normalized_q = None
+    elif normalized_q is not None and not 2 <= len(normalized_q) <= 200:
+        raise ValidationError(
+            "Account search must contain between 2 and 200 characters.",
+            code="INVALID_ACCOUNT_SEARCH",
+        )
 
     clamped_limit = max(1, min(limit, 200))
     clamped_offset = max(0, offset)
 
-    accounts, total = await list_accounts(db, claims, limit=clamped_limit, offset=clamped_offset)
+    accounts, total = await list_accounts(
+        db,
+        claims,
+        limit=clamped_limit,
+        offset=clamped_offset,
+        q=normalized_q,
+        sort=effective_sort,
+        direction=effective_direction,
+    )
 
     _log.info(
         "accounts listed",
         extra={
             "event": "accounts_listed",
             "tenant_id": claims.tenant_id,
+            "sort": effective_sort,
+            "direction": effective_direction,
+            "filter_keys": sorted(
+                k for k, v in {"q": normalized_q}.items() if v is not None
+            ),
             "result_count": len(accounts),
         },
     )
@@ -152,9 +212,14 @@ async def list_accounts_route(
     request: Request,
     limit: int = Query(default=50),
     offset: int = Query(default=0),
+    q: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+    direction: str | None = Query(default=None, alias="dir"),
     claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
 ) -> AccountListResponse:
-    return await _list_accounts(request, claims, limit=limit, offset=offset)
+    return await _list_accounts(
+        request, claims, limit=limit, offset=offset, q=q, sort=sort, direction=direction,
+    )
 
 
 @tenant_scoped_router.get("")
@@ -162,10 +227,15 @@ async def list_accounts_route_for_tenant(
     request: Request,
     limit: int = Query(default=50),
     offset: int = Query(default=0),
+    q: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+    direction: str | None = Query(default=None, alias="dir"),
     claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
 ) -> AccountListResponse:
     """PLATFORM_ADMIN super-user variant of ``GET /admin/accounts``."""
-    return await _list_accounts(request, claims, limit=limit, offset=offset)
+    return await _list_accounts(
+        request, claims, limit=limit, offset=offset, q=q, sort=sort, direction=direction,
+    )
 
 
 async def _get_account_detail(

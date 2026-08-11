@@ -1,0 +1,288 @@
+================================================================================
+ STANDARD OPERATING PROCEDURE (SOP)
+ NRC RESERVED BOOKING SUMMARY -- MAKE.COM AUTOMATION
+================================================================================
+
+Document scope: this SOP covers the Make.com scenario named "NRC" (blueprint
+file: NRC.blueprint.json). This is a scheduled automation, not a codebase --
+it runs entirely inside Make.com (formerly Integromat) and has no separate
+application code, admin console, or deployment process outside the Make.com
+platform itself.
+
+--------------------------------------------------------------------------------
+1. OBJECTIVE
+--------------------------------------------------------------------------------
+
+1. Generate a daily summary of NRC reserved booking revenue, broken down by
+   station, for a specific user's bookings ("Yemi Odunowo").
+2. Record that summary in a new Google Sheet each day.
+3. Email the summary (as a Google Sheet link plus an Excel attachment) to a
+   fixed distribution list.
+4. If no booking data exists for the day, send a separate alert email
+   instead, so the absence of data is flagged rather than silently ignored.
+
+--------------------------------------------------------------------------------
+2. TECH STACK / CONNECTIONS USED
+--------------------------------------------------------------------------------
+
+  Platform          -- Make.com (scenario ID/zone: eu2.make.com), scheduled/
+                        triggered scenario, not instant.
+  PostgreSQL         -- source database. Connection: "Reportdb"
+                        (report_alpha_read@13.244.206.27:5502/reportdb),
+                        Make.com account ID 13627823.
+  Google Sheets      -- destination for the daily summary. Connection: "My
+                        Google connection (it@isngs.com)", Make.com account
+                        ID 13627832.
+  Google Drive       -- used to export the finished Google Sheet as an Excel
+                        file for email attachment. Connection: "My Google
+                        Restricted connection (paid@isngs.com)", Make.com
+                        account ID 9093235.
+  Gmail              -- sends the summary/alert emails. Connection: "My
+                        Gmail connection (it@isngs.com)", Make.com account
+                        ID 13647468.
+
+--------------------------------------------------------------------------------
+3. SYSTEM DESIGN -- WHAT THE SCENARIO DOES, STEP BY STEP
+--------------------------------------------------------------------------------
+
+1. Module 3 (Google Sheets - Create a Spreadsheet) creates a new spreadsheet
+   named "Reserved_Summary_<today's date in DD-MM-YYYY>" with a single sheet
+   tab named "Summary".
+2. Module 12 (Google Sheets - Add a Row) writes the 14-column header row into
+   the "Summary" tab: Stations, Base Fare, Medical, Insurance, Stamp Duty,
+   Total tkt revenue, Total cov fee, NRC tkt revenue, NRC_cov_fee, GSDS tkt
+   rev, GSDS cov fee, ICRC tkt rev, Number of Transaction, No of passengers.
+3. Module 2 (PostgreSQL - Execute a Query) runs a query against the Reportdb
+   connection:
+   a. Selects all bookings where booking_date falls on the current day
+      (00:00:00 to next day 00:00:00) AND user_name = 'Yemi Odunowo'.
+   b. Groups results by booking_from (station) and sums: base_fare,
+      medical, insurance, stamp_duty, total_tkt_revenue,
+      updated_total_cov_fee, nrc_tkt_rev, updated_nrc_cov_fee,
+      gsd_tkt_rev, updated_gsd_cov_fee, icrc_tkt_rev, no_of_passengers, and
+      counts total_fare as the transaction count.
+   c. Appends one additional row labeled "TOTAL" that sums all per-station
+      rows into a grand total (via UNION ALL).
+4. Module 8 (Basic Aggregator) collects every row returned by Module 2 into
+   a single array of rows, feeding target 10.rows.
+5. Module 10 (Google Sheets - Add Multiple Rows) writes all aggregated rows
+   (per-station rows plus the TOTAL row) into the "Summary" tab, below the
+   header, using columns A1:Z1.
+6. Module 17 (Google Drive - Get a File) downloads the just-created Google
+   Sheet, converting it to Excel format
+   (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet), for
+   use as an email attachment.
+7. Module 13 (Set Variable) stores the last row of the aggregated array
+   (the "TOTAL" row) into a variable named total_row.
+8. Module 14 (Set Variable) reads position 12 (the "Number of Transaction"
+   column) out of total_row.values and stores it in a variable named
+   total_transactions.
+9. Module 18 (Router) splits the scenario into two branches based on
+   total_transactions:
+   a. Branch A -- filter "Data exists": total_transactions > 0.
+      Module 15 (Gmail - Send an Email) sends the summary email, subject
+      "NRC Reserved Booking Summary - <date>", containing the Google Sheet
+      link and the Excel file as an attachment, to the full distribution
+      list (see section 5).
+   b. Branch B -- filter "No data": total_transactions = 0 (or empty).
+      Module 19 (Gmail - Send an Email) sends an alert email, subject "NRC
+      Alert - No Booking Data for <date>", to a shorter internal list (see
+      section 5), stating no booking data was found and asking the
+      recipient to check booking system activity, data ingestion/sync, and
+      user activity for the day.
+
+--------------------------------------------------------------------------------
+4. HOW TO SET UP / IMPORT THIS SCENARIO IN MAKE.COM
+--------------------------------------------------------------------------------
+
+1. Log in to Make.com (eu2.make.com, since this scenario's zone is eu2).
+2. Go to Scenarios, then click Create a new scenario (or, to restore this
+   exact scenario, use Import Blueprint and select the NRC.blueprint.json
+   file).
+3. If importing the blueprint file directly:
+   a. Click the three-dot menu on the Scenarios screen and choose Import
+      Blueprint.
+   b. Select NRC.blueprint.json.
+   c. Make.com will recreate all 8 modules and the router with their
+      settings, but connection/account references will need to be
+      reattached (see step 4).
+4. Reattach each connection (Make.com does not carry API credentials across
+   exports/imports):
+   a. Module 3 and Module 12 and Module 10 (Google Sheets modules): set the
+      connection to a Google account with edit access to Google Sheets.
+   b. Module 2 (PostgreSQL): set the connection to the Reportdb read-only
+      account (host 13.244.206.27, port 5502, database reportdb). Obtain
+      the actual username/password from whoever administers that database;
+      do not hardcode credentials anywhere outside Make.com's connection
+      manager.
+   c. Module 17 (Google Drive): set the connection to a Google account with
+      access to the Drive file the sheet was created in (this must be the
+      same Google account/domain used in step 4a, since the sheet is
+      created there).
+   d. Module 15 and Module 19 (Gmail): set the connection to the Gmail
+      account that should send these automated emails.
+5. Open Module 2 and confirm the SQL query still references the correct
+   user_name filter ('Yemi Odunowo') -- change this value if the scenario is
+   being adapted for a different user's bookings.
+6. Open Module 15 and Module 19 and confirm the recipient email addresses
+   are current (see section 5 for the list as originally configured).
+7. Set the scenario's schedule:
+   a. Click the clock icon at the bottom-left of the scenario editor.
+   b. Choose "Run on a schedule" (this scenario is not instant/triggered by
+      a webhook).
+   c. Set it to run once per day, after the day's bookings are expected to
+      be complete (confirm the exact time with whoever owns the booking
+      cutoff).
+8. Save the scenario.
+9. Run it once manually (Run once button) to confirm:
+   a. A new Google Sheet is created and named correctly.
+   b. The header row and data rows appear in the "Summary" tab.
+   c. The correct email branch fires (summary email if transactions exist
+      for that test day, alert email if not).
+10. Turn scheduling ON (toggle at the top-left of the scenario editor) once
+    the manual test succeeds.
+
+--------------------------------------------------------------------------------
+5. RECIPIENT LISTS (as configured in the blueprint)
+--------------------------------------------------------------------------------
+
+1. Summary email (Branch A, sent when transactions > 0), Module 15, To:
+   - sbansal@rosemondeltd.com
+   - spencerdsheel749@gmail.com
+   - it@isngs.com
+   - david.r@gsds.com.ng
+   - accounts@gsds.com.ng
+   - sanjeev.b@gsds.com.ng
+   - it@gsds.com.ng
+2. Alert email (Branch B, sent when transactions = 0), Module 19, To:
+   - spencerdsheel749@gmail.com
+   - it@isngs.com
+3. To add or remove a recipient, edit the "To" field on the relevant Gmail
+   module (15 or 19) directly in the Make.com scenario editor -- do not
+   edit the blueprint JSON file and re-import, since that discards any
+   connection/schedule setup already done.
+
+--------------------------------------------------------------------------------
+6. FEATURES
+--------------------------------------------------------------------------------
+
+  - Automatic daily spreadsheet creation -- no manual sheet setup required
+    each day.
+  - Per-station revenue breakdown -- Base Fare, Medical, Insurance, Stamp
+    Duty, ticket revenue, and coverage fee, split across NRC, GSDS, and
+    ICRC categories.
+  - Automatic grand-total row -- appended after all per-station rows.
+  - Excel export -- the Google Sheet is also attached to the email as an
+    .xlsx file for offline use.
+  - Zero-data alerting -- if no bookings exist for the day, a distinct
+    alert email fires instead of silently sending an empty/near-empty
+    summary.
+  - Fixed distribution lists -- different recipient sets for the normal
+    summary versus the no-data alert.
+
+--------------------------------------------------------------------------------
+7. COMMON ISSUES AND HOW TO FIX THEM
+--------------------------------------------------------------------------------
+
+  Issue: Scenario fails at Module 2 with a database connection error.
+  Cause: The Reportdb PostgreSQL connection has expired, been revoked, or
+  the database is unreachable.
+  Fix: Open Module 2 in the scenario editor, click the connection dropdown,
+  and re-authenticate or re-enter credentials. Confirm the database host
+  (13.244.206.27:5502) is reachable from Make.com's IP range if using an
+  IP allowlist on the database side.
+
+  Issue: Scenario fails at Module 3, 10, or 12 with a Google Sheets
+  permission or quota error.
+  Cause: The connected Google account lost edit access, or Google API quota
+  was exceeded.
+  Fix: Reconnect the Google Sheets account in the module's connection
+  dropdown. If it is a quota error, wait and retry, or check the Google
+  Cloud project's API quota.
+
+  Issue: Module 17 (Google Drive - Get a File) fails to find the file.
+  Cause: The Drive connection (paid@isngs.com) does not have access to the
+  spreadsheet created by the Sheets connection (it@isngs.com), because they
+  are different Google accounts/domains.
+  Fix: Ensure the Drive account used in Module 17 has at least viewer access
+  to the file, or use the same Google account for both the Sheets and Drive
+  modules.
+
+  Issue: Both emails fail to send, or send with a missing attachment.
+  Cause: Gmail connection (Module 15/19) expired, or Module 17 (the Excel
+  export) failed earlier in the flow and the attachment binding is empty.
+  Fix: Check Module 17's output first -- if it errored, fix that before
+  troubleshooting the email step. Reconnect the Gmail account if the
+  connection itself is the problem.
+
+  Issue: The "No data" alert fires even though bookings exist for the day.
+  Cause: The user_name = 'Yemi Odunowo' filter in Module 2's SQL query is
+  excluding bookings made under a different user account.
+  Fix: Confirm with the business owner whether the filter should remain
+  scoped to that one user, or be removed/changed. This filter is
+  intentional in the current query and is not a bug by itself.
+
+  Issue: total_transactions comparison in the router behaves unexpectedly
+  (e.g. summary branch fires with zero transactions, or vice versa).
+  Cause: Module 14 reads index 12 of the TOTAL row's values array
+  (get(13.total_row.values; 12)). If the column order in Module 12's header
+  row or Module 8's aggregator values is ever changed, this index will no
+  longer point at "Number of Transaction".
+  Fix: If columns are reordered, update the index in Module 14 to match the
+  new position of "Number of Transaction" (currently the 13th column,
+  0-indexed as 12).
+
+  Issue: Scenario did not run at all on a given day.
+  Cause: Scheduling toggle was switched off, or the scenario hit
+  Make.com's monthly operation/data-transfer limit for the account.
+  Fix: Check the scenario's ON/OFF toggle in the Make.com dashboard, and
+  check the Make.com organization's usage/billing page for limit warnings.
+
+--------------------------------------------------------------------------------
+8. WHERE THIS RUNS / HOW IT IS DEPLOYED
+--------------------------------------------------------------------------------
+
+1. This automation runs entirely inside Make.com -- there is no separate
+   server, hosting environment, or code deployment involved.
+2. Scenario zone: eu2.make.com.
+3. "Deploying" this automation means: importing/maintaining the scenario in
+   the Make.com account described above, keeping its four connections
+   (Reportdb, Google Sheets, Google Drive, Gmail) valid, and keeping its
+   schedule turned on.
+4. To move this automation to a different Make.com organization or team:
+   export the current scenario as a blueprint (Scenario menu -> Export
+   Blueprint), import it into the target organization, then repeat section
+   4 steps 4 through 10 above (reattach connections, verify recipients,
+   re-enable schedule).
+
+--------------------------------------------------------------------------------
+9. GLOSSARY
+--------------------------------------------------------------------------------
+
+  Scenario -- a single automated workflow in Make.com, made up of connected
+  modules.
+
+  Module -- one step in a scenario (e.g. run a database query, send an
+  email).
+
+  Blueprint -- an exported JSON file containing a scenario's full
+  configuration, used to back up or transfer a scenario between accounts.
+
+  Connection -- a saved set of credentials in Make.com that lets a module
+  talk to an external service (a database, Google, Gmail).
+
+  Router -- a module that splits a scenario into multiple branches, each
+  running only if its filter condition is met.
+
+  Filter -- a condition attached to a route or module that determines
+  whether that branch/module runs.
+
+  Aggregator -- a module that collects multiple items (e.g. database rows)
+  produced earlier in the scenario into a single array.
+
+  UNION ALL -- a SQL operation that combines the results of two queries
+  into one result set without removing duplicate rows.
+
+================================================================================
+ End of document.
+================================================================================

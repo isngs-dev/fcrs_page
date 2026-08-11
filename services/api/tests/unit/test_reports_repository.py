@@ -869,3 +869,564 @@ async def test_win_loss_tenant_isolation_exact_values_including_currency() -> No
     assert result_a.currency == "USD"
     assert result_b.won.amount_total == Decimal("10000.00")
     assert result_b.currency == "GBP"
+
+
+# ---------------------------------------------------------------------------
+# SR-19: lead_sources, score_distribution, agent_performance,
+# recent_conversions -- four new read-only aggregates over `leads` (D1/D2).
+# Each takes AuthClaims first, calls _reject_global, filters
+# WHERE tenant_id = $1, single-table over `leads` only.
+# ---------------------------------------------------------------------------
+
+from api.analytics.reports_repository import (  # noqa: E402
+    get_agent_performance,
+    get_lead_sources,
+    get_recent_conversions,
+    get_score_distribution,
+)
+
+
+def _sr19_lead(
+    tenant_id: str,
+    *,
+    stage: str = "captured",
+    created_at: datetime,
+    updated_at: datetime | None = None,
+    source: str = "widget",
+    qualification_score: int | None = None,
+    assigned_agent_id: str | None = None,
+    name: str = "Jane Doe",
+    lead_id: str = "lead-1",
+) -> dict[str, Any]:
+    return {
+        "tenant_id": tenant_id,
+        "lead_id": lead_id,
+        "stage": stage,
+        "created_at": created_at,
+        "updated_at": updated_at if updated_at is not None else created_at,
+        "source": source,
+        "qualification_score": qualification_score,
+        "assigned_agent_id": assigned_agent_id,
+        "name": name,
+    }
+
+
+class _Sr19StubDatabase:
+    """Stub DB for the four SR-19 aggregates -- models the extra `leads`
+    columns (`qualification_score`, `updated_at`, `name`,
+    `converted_to_contact_id`) that the shared `_StubDatabase` above does
+    not need for the SR-9.5 reports. Dispatch is by substring match on the
+    real SQL text, exercising the real query shape (tenant filter, window,
+    GROUP BY/FILTER) without a live DB, matching this file's established
+    convention.
+    """
+
+    def __init__(self, *, leads: list[dict[str, Any]] | None = None) -> None:
+        self.leads = leads or []
+
+    async def execute(self, query: str, *args: Any) -> str:
+        raise AssertionError("Reports repository must not issue writes")
+
+    async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
+        q = query.upper()
+        if "FROM LEADS" not in q or "FILTER (WHERE QUALIFICATION_SCORE" not in q:
+            raise AssertionError(f"Unexpected fetchrow query: {query}")
+
+        tenant_id, window_from, window_to = args[0], args[1], args[2]
+        rows = [
+            r for r in self.leads
+            if r["tenant_id"] == tenant_id and window_from <= r["created_at"] < window_to
+        ]
+        band_0_19 = sum(1 for r in rows if r["qualification_score"] is not None and 0 <= r["qualification_score"] <= 19)
+        band_20_39 = sum(1 for r in rows if r["qualification_score"] is not None and 20 <= r["qualification_score"] <= 39)
+        band_40_59 = sum(1 for r in rows if r["qualification_score"] is not None and 40 <= r["qualification_score"] <= 59)
+        band_60_79 = sum(1 for r in rows if r["qualification_score"] is not None and 60 <= r["qualification_score"] <= 79)
+        band_80_100 = sum(1 for r in rows if r["qualification_score"] is not None and 80 <= r["qualification_score"] <= 100)
+        unscored = sum(1 for r in rows if r["qualification_score"] is None)
+        return {
+            "band_0_19": band_0_19, "band_20_39": band_20_39, "band_40_59": band_40_59,
+            "band_60_79": band_60_79, "band_80_100": band_80_100, "unscored": unscored,
+        }
+
+    async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
+        q = query.upper()
+        if "FROM LEADS" not in q:
+            raise AssertionError(f"Unexpected fetch query: {query}")
+
+        tenant_id, window_from, window_to = args[0], args[1], args[2]
+
+        if "WHERE TENANT_ID = $1 AND STAGE = 'CONVERTED'" in q:
+            # Recent conversions: filtered on stage='converted' AND
+            # updated_at in window -- must NOT inherit include_converted's
+            # AND converted_to_contact_id IS NULL default (D6/M6).
+            rows = [
+                r for r in self.leads
+                if r["tenant_id"] == tenant_id
+                and r["stage"] == "converted"
+                and window_from <= r["updated_at"] < window_to
+            ]
+            rows.sort(key=lambda r: r["updated_at"], reverse=True)
+            limit = args[3]
+            rows = rows[:limit]
+            return [
+                {
+                    "lead_id": r["lead_id"], "name": r["name"], "source": r["source"],
+                    "stage": r["stage"], "converted_at": r["updated_at"],
+                }
+                for r in rows
+            ]
+
+        # All other SR-19 aggregates window on created_at.
+        rows = [
+            r for r in self.leads
+            if r["tenant_id"] == tenant_id and window_from <= r["created_at"] < window_to
+        ]
+
+        if "GROUP BY SOURCE" in q:
+            grouped: dict[str, int] = {}
+            for r in rows:
+                grouped[r["source"]] = grouped.get(r["source"], 0) + 1
+            return [{"source": k, "cnt": v} for k, v in grouped.items()]
+
+        if "GROUP BY ASSIGNED_AGENT_ID" in q:
+            grouped_agents: dict[str | None, dict[str, int]] = {}
+            for r in rows:
+                slot = grouped_agents.setdefault(
+                    r["assigned_agent_id"], {"assigned": 0, "contacted": 0, "won": 0},
+                )
+                slot["assigned"] += 1
+                if r["stage"] in ("contacted", "converted"):
+                    slot["contacted"] += 1
+                if r["stage"] == "converted":
+                    slot["won"] += 1
+            return [
+                {"assigned_agent_id": k, **v} for k, v in grouped_agents.items()
+            ]
+
+        raise AssertionError(f"Unexpected leads query shape (SR-19): {query}")
+
+
+# ---------------------------------------------------------------------------
+# get_lead_sources (D4)
+# ---------------------------------------------------------------------------
+
+
+async def test_lead_sources_single_source_not_padded_and_flagged() -> None:
+    """D4 -- a tenant with only 'widget' leads gets ONE entry, never four
+    padded entries with three zeros. single_source is True."""
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), source="widget"),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 3, tzinfo=UTC), source="widget"),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_lead_sources(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert len(result.sources) == 1
+    assert result.sources[0].source == "widget"
+    assert result.sources[0].count == 2
+    assert result.sources[0].percentage == 100.0
+    assert result.total == 2
+    assert result.single_source is True
+
+
+async def test_lead_sources_multiple_sources_not_single_flagged() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), source="widget"),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 3, tzinfo=UTC), source="referral"),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 4, tzinfo=UTC), source="referral"),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_lead_sources(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result.single_source is False
+    assert result.total == 3
+    by_source = {s.source: s.count for s in result.sources}
+    assert by_source == {"widget": 1, "referral": 2}
+
+
+async def test_lead_sources_empty_window_zero_total_not_single_source() -> None:
+    db = _Sr19StubDatabase(leads=[])
+    claims = _claims("tenant-a")
+
+    result = await get_lead_sources(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result.sources == []
+    assert result.total == 0
+    assert result.single_source is False
+
+
+async def test_lead_sources_rejects_global_caller() -> None:
+    db = _Sr19StubDatabase()
+    claims = _claims(None, role=Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await get_lead_sources(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+    assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
+
+
+async def test_lead_sources_tenant_isolation_exact_values() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), source="widget"),
+        _sr19_lead("tenant-b", created_at=datetime(2026, 7, 2, tzinfo=UTC), source="widget"),
+        _sr19_lead("tenant-b", created_at=datetime(2026, 7, 3, tzinfo=UTC), source="referral"),
+    ])
+
+    result_a = await get_lead_sources(db, _claims("tenant-a"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+    result_b = await get_lead_sources(db, _claims("tenant-b"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result_a.total == 1
+    assert result_a.single_source is True
+    assert result_b.total == 2
+    assert result_b.single_source is False
+
+
+# ---------------------------------------------------------------------------
+# get_score_distribution (D8)
+# ---------------------------------------------------------------------------
+
+
+async def test_score_distribution_all_five_bands_present_when_empty() -> None:
+    db = _Sr19StubDatabase(leads=[])
+    claims = _claims("tenant-a")
+
+    result = await get_score_distribution(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result.bands == {
+        "0-19": 0, "20-39": 0, "40-59": 0, "60-79": 0, "80-100": 0,
+    }
+    assert result.unscored == 0
+    assert result.total == 0
+
+
+async def test_score_distribution_null_score_counted_as_unscored_not_0_19() -> None:
+    """D8 -- a NULL qualification_score is 'unscored', NEVER bucketed into
+    0-19. This is the highest-value no-silent-fallback test for this report."""
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=None),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 3, tzinfo=UTC), qualification_score=5),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_score_distribution(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result.unscored == 1
+    assert result.bands["0-19"] == 1
+    assert result.total == 2
+
+
+async def test_score_distribution_fixed_20_point_bands() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=0),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=19),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=20),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=39),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=40),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=59),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=60),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=79),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=80),
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=100),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_score_distribution(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result.bands == {
+        "0-19": 2, "20-39": 2, "40-59": 2, "60-79": 2, "80-100": 2,
+    }
+    assert result.unscored == 0
+    assert result.total == 10
+
+
+async def test_score_distribution_rejects_global_caller() -> None:
+    db = _Sr19StubDatabase()
+    claims = _claims(None, role=Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await get_score_distribution(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+    assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
+
+
+async def test_score_distribution_tenant_isolation_exact_values() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead("tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=10),
+        _sr19_lead("tenant-b", created_at=datetime(2026, 7, 2, tzinfo=UTC), qualification_score=90),
+        _sr19_lead("tenant-b", created_at=datetime(2026, 7, 3, tzinfo=UTC), qualification_score=None),
+    ])
+
+    result_a = await get_score_distribution(db, _claims("tenant-a"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+    result_b = await get_score_distribution(db, _claims("tenant-b"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result_a.bands["0-19"] == 1
+    assert result_a.total == 1
+    assert result_b.bands["80-100"] == 1
+    assert result_b.unscored == 1
+    assert result_b.total == 2
+
+
+# ---------------------------------------------------------------------------
+# get_agent_performance (D7)
+# ---------------------------------------------------------------------------
+
+
+async def test_agent_performance_zero_denominator_win_rate_is_null_not_zero() -> None:
+    """D7 -- an agent with zero assigned leads must never appear as 0%; this
+    aggregate only reports agents present in the window, so a zero-lead
+    agent simply cannot appear here (the UI's in-memory join is what
+    surfaces the 'No data' state for a listed-but-unassigned agent)."""
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC),
+            stage="captured", assigned_agent_id="agent-1",
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_agent_performance(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    agent_1 = next(a for a in result.agents if a.assigned_agent_id == "agent-1")
+    assert agent_1.assigned == 1
+    assert agent_1.won == 0
+    assert agent_1.win_rate is None  # zero denominator (0 contacted) -- null, not 0
+
+
+async def test_agent_performance_win_rate_computed_when_contacted_nonzero() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC),
+            stage="contacted", assigned_agent_id="agent-1",
+        ),
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 3, tzinfo=UTC),
+            stage="converted", assigned_agent_id="agent-1",
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_agent_performance(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    agent_1 = next(a for a in result.agents if a.assigned_agent_id == "agent-1")
+    assert agent_1.assigned == 2
+    assert agent_1.contacted == 2  # contacted + converted both count as "reached contacted"
+    assert agent_1.won == 1
+    assert agent_1.win_rate == 0.5
+
+
+async def test_agent_performance_unassigned_leads_appear_as_explicit_row() -> None:
+    """D7 -- assigned_agent_id IS NULL leads are their own explicit
+    'Unassigned' row, never dropped; counts sum to the tenant's total."""
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC),
+            stage="captured", assigned_agent_id=None,
+        ),
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 3, tzinfo=UTC),
+            stage="qualified", assigned_agent_id="agent-1",
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_agent_performance(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result.unassigned.assigned == 1
+    total_assigned = sum(a.assigned for a in result.agents) + result.unassigned.assigned
+    assert total_assigned == 2
+
+
+async def test_agent_performance_never_lists_another_tenants_agent_id() -> None:
+    """The highest-value isolation test in this sprint -- an agent id is a
+    recognisable identifier belonging to another business."""
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC),
+            stage="captured", assigned_agent_id="agent-a-1",
+        ),
+        _sr19_lead(
+            "tenant-b", created_at=datetime(2026, 7, 2, tzinfo=UTC),
+            stage="captured", assigned_agent_id="agent-b-secret",
+        ),
+    ])
+
+    result_a = await get_agent_performance(db, _claims("tenant-a"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    agent_ids = {a.assigned_agent_id for a in result_a.agents}
+    assert "agent-b-secret" not in agent_ids
+    assert agent_ids == {"agent-a-1"}
+
+
+async def test_agent_performance_won_le_contacted_le_assigned() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 2, tzinfo=UTC),
+            stage="captured", assigned_agent_id="agent-1",
+        ),
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 3, tzinfo=UTC),
+            stage="contacted", assigned_agent_id="agent-1",
+        ),
+        _sr19_lead(
+            "tenant-a", created_at=datetime(2026, 7, 4, tzinfo=UTC),
+            stage="converted", assigned_agent_id="agent-1",
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_agent_performance(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    agent_1 = next(a for a in result.agents if a.assigned_agent_id == "agent-1")
+    assert agent_1.won <= agent_1.contacted <= agent_1.assigned
+
+
+async def test_agent_performance_rejects_global_caller() -> None:
+    db = _Sr19StubDatabase()
+    claims = _claims(None, role=Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await get_agent_performance(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+    assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
+
+
+# ---------------------------------------------------------------------------
+# get_recent_conversions (D6 -- the M6 trap)
+# ---------------------------------------------------------------------------
+
+
+async def test_recent_conversions_includes_converted_leads_the_d6_trap() -> None:
+    """THE highest-value test in this sprint's fourth report: a naive query
+    copying list_leads' include_converted=False default would ALWAYS return
+    zero rows. This must NOT happen."""
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", lead_id="lead-1", stage="converted",
+            created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 10, tzinfo=UTC),
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_recent_conversions(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert len(result.conversions) == 1
+    assert result.conversions[0].lead_id == "lead-1"
+
+
+async def test_recent_conversions_windows_on_updated_at_not_created_at() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", lead_id="lead-1", stage="converted",
+            created_at=datetime(2026, 6, 1, tzinfo=UTC),  # outside window
+            updated_at=datetime(2026, 7, 10, tzinfo=UTC),  # inside window
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_recent_conversions(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert len(result.conversions) == 1
+
+
+async def test_recent_conversions_excludes_non_converted_stages() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", lead_id="lead-1", stage="qualified",
+            created_at=datetime(2026, 7, 2, tzinfo=UTC),
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_recent_conversions(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert result.conversions == []
+
+
+async def test_recent_conversions_reverse_chronological() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", lead_id="lead-early", stage="converted",
+            created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 5, tzinfo=UTC),
+        ),
+        _sr19_lead(
+            "tenant-a", lead_id="lead-late", stage="converted",
+            created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 20, tzinfo=UTC),
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_recent_conversions(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert [c.lead_id for c in result.conversions] == ["lead-late", "lead-early"]
+
+
+async def test_recent_conversions_no_value_field_anywhere() -> None:
+    """D6/M5 -- a lead has no monetary value; asserted by absence."""
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", lead_id="lead-1", stage="converted",
+            created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 10, tzinfo=UTC),
+        ),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_recent_conversions(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    conversion = result.conversions[0]
+    assert not hasattr(conversion, "value")
+
+
+async def test_recent_conversions_respects_limit() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", lead_id=f"lead-{i}", stage="converted",
+            created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 1 + i, tzinfo=UTC),
+        )
+        for i in range(5)
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_recent_conversions(
+        db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, limit=2,
+    )
+
+    assert len(result.conversions) == 2
+
+
+async def test_recent_conversions_rejects_global_caller() -> None:
+    db = _Sr19StubDatabase()
+    claims = _claims(None, role=Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await get_recent_conversions(db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+    assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
+
+
+async def test_recent_conversions_tenant_isolation_exact_values() -> None:
+    db = _Sr19StubDatabase(leads=[
+        _sr19_lead(
+            "tenant-a", lead_id="lead-a-1", stage="converted",
+            created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 5, tzinfo=UTC),
+        ),
+        _sr19_lead(
+            "tenant-b", lead_id="lead-b-1", stage="converted",
+            created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 5, tzinfo=UTC),
+        ),
+        _sr19_lead(
+            "tenant-b", lead_id="lead-b-2", stage="converted",
+            created_at=datetime(2026, 7, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 7, 6, tzinfo=UTC),
+        ),
+    ])
+
+    result_a = await get_recent_conversions(db, _claims("tenant-a"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+    result_b = await get_recent_conversions(db, _claims("tenant-b"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO)
+
+    assert [c.lead_id for c in result_a.conversions] == ["lead-a-1"]
+    assert {c.lead_id for c in result_b.conversions} == {"lead-b-1", "lead-b-2"}

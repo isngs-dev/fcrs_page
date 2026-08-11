@@ -12,7 +12,7 @@ export function DownloadCsvLink({ report, query }: { report: ReportName; query: 
   return (
     <a
       href={reportCsvPath(report, query)}
-      className="inline-flex h-8 items-center rounded-[9px] border border-[#e7e7e2] px-3.5 text-sm font-semibold text-[#191a17] transition-colors hover:bg-[#f7f7f3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+      className="inline-flex h-8 items-center rounded-[9px] border border-[var(--border)] px-3.5 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--secondary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
     >
       ↧ Download CSV
     </a>

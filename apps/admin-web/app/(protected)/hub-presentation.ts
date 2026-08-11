@@ -20,7 +20,8 @@
  *    lib/hub.ts's single `getChatbotHub({ period, bucket })` read).
  */
 
-import type { HubActiveConversation, HubPeriod } from "@/lib/hub";
+import type { HubActiveConversation, HubBucket, HubPeriod } from "@/lib/hub";
+import type { AnalyticsOverview } from "@/lib/analytics";
 
 export interface ActivityRow {
   /** Stable React key + the honest identity this row is derived from. */
@@ -82,6 +83,82 @@ export function buildActivityRows(
       startedAt: item.startedAt,
     };
   });
+}
+
+/**
+ * SR-16 D3: the gauge and the "Conversation Rate" metric card both render
+ * `deflectionRate` -- and ONLY `deflectionRate`, never `fallbackRate` or
+ * `groundedRate` (D2's per-widget mapping table). Centralizing the read
+ * here, rather than inlining `hub.analytics.deflectionRate` at each call
+ * site, gives the data-mapping tests one function to assert against on a
+ * fixture where all three rates differ, so a future mis-wire (e.g. someone
+ * "simplifying" a prop and grabbing `fallbackRate` by habit) fails a unit
+ * test instead of shipping silently.
+ */
+export function answeredByChatbotRate(analytics: AnalyticsOverview): number | null {
+  return analytics.deflectionRate;
+}
+
+export interface GaugeReading {
+  /** `null` when the rate is undefined (zero-denominator window) -- the
+   * caller MUST render "No data" with no needle, never a 0% sweep (M4/D3). */
+  rate: number | null;
+  /** Rounded whole-percent for display, or `null` to match `rate`. */
+  percent: number | null;
+  /** Full sentence for `aria-label`/screen-reader use -- never says
+   * "0 percent" for a null rate. */
+  label: string;
+}
+
+/** Builds the gauge's honest display reading from the real `deflectionRate`
+ * (D3). A `null` rate never becomes a displayed/announced `0%` (M4). */
+export function buildGaugeReading(analytics: AnalyticsOverview): GaugeReading {
+  const rate = answeredByChatbotRate(analytics);
+  if (rate === null) {
+    return { rate: null, percent: null, label: "Answered by chatbot: No data" };
+  }
+  const percent = Math.round(rate * 100);
+  return { rate, percent, label: `Answered by chatbot: ${percent} percent` };
+}
+
+export interface EscalationReading {
+  /** `null` when there were zero conversations in the window (undefined
+   * denominator) -- render "No data", never a 0% donut sweep. */
+  rate: number | null;
+  percent: number | null;
+  escalations: number;
+  handled: number;
+  label: string;
+}
+
+/**
+ * SR-16 D4: the Escalation Rate card/donut derives from the existing
+ * `series[]` -- summed `escalations` over summed `conversations` across the
+ * window, NOT a new backend aggregate. A window with zero conversations
+ * (every bucket empty) yields `rate: null` ("No data"), distinguished from
+ * a window with real conversations but zero escalations (`rate: 0`, a true
+ * and honestly-renderable 0%).
+ */
+export function buildEscalationReading(analytics: AnalyticsOverview): EscalationReading {
+  const escalations = analytics.series.reduce((sum, entry) => sum + entry.escalations, 0);
+  const conversations = analytics.series.reduce((sum, entry) => sum + entry.conversations, 0);
+  const handled = conversations - escalations;
+  if (conversations === 0) {
+    return { rate: null, percent: null, escalations, handled: 0, label: "Escalation rate: No data" };
+  }
+  const rate = escalations / conversations;
+  const percent = Math.round(rate * 100);
+  return { rate, percent, escalations, handled, label: `Escalation rate: ${percent} percent` };
+}
+
+/** SR-16 D4: the bucket selector on "Responses over time" offers ONLY
+ * `day`/`week` (`HUB_BUCKETS`) -- `month` is deliberately absent because the
+ * hub endpoint's own vocabulary does not include it (widening it is an
+ * explicitly out-of-scope backend change, see the sprint's Out-of-scope
+ * section). This helper exists so the omission is asserted by a unit test
+ * rather than only by visual inspection of the rendered selector. */
+export function isHubBucket(value: string, buckets: readonly HubBucket[]): value is HubBucket {
+  return (buckets as readonly string[]).includes(value);
 }
 
 export interface UsageBar {

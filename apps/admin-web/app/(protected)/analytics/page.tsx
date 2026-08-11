@@ -1,9 +1,12 @@
 /**
- * Conversation analytics dashboard (S13.5), restyled to match design spec
- * screen 5b (HANDOFF-SPEC.md §3: "4 stat cards (last one ink w/ citron
- * number), grouped weekly bars, funnel pill-bars, top-questions progress
- * list, peak-hours mini chart. Range toggle 7d/30d/90d/custom."). CLIENT_ADMIN
- * + CLIENT_AGENT -- gated by the EXISTING `requireAnyRole` (decision 2), no
+ * Conversation analytics dashboard (S13.5), restyled to match the current
+ * reference (`Console.dc.html:558-676`, formerly cited against a
+ * superseded HANDOFF-SPEC.md screen 5b / "citron" design system -- SR-27
+ * re-points this docstring at the live reference): 4 stat cards/gauges
+ * (last one ink), conversation-volume area+line chart, booking-funnel
+ * bars, decision-mix donut, top-intents list, peak-hours + top-questions
+ * honest gap cards. Range toggle 7d/30d/90d/custom. CLIENT_ADMIN +
+ * CLIENT_AGENT -- gated by the EXISTING `requireAnyRole` (decision 2), no
  * new auth helper.
  *
  * SERVER-FIRST (decision 1): this is an `async` server component that reads
@@ -14,15 +17,18 @@
  *
  * Honest per-chart accounting (this restyle does not invent data --
  * CLAUDE.md §3 no-silent-fallback):
- *  - Stat cards, weekly bars, funnel, "Top intents": every number is a
- *    real field off `AnalyticsOverview` (see each component's doc comment
- *    for the exact backend source).
+ *  - Stat cards/gauges, volume chart, funnel, decision-mix donut, "Top
+ *    intents": every number is a real field off `AnalyticsOverview` (see
+ *    each component's doc comment for the exact backend source).
  *  - "Top questions" (literal question text) and "Peak hours" (hourly
  *    volume): NOT backed by any real metric this codebase computes today
  *    (`intent_distribution` is category-level, not per-question; the
- *    repository only buckets `day`/`week`, never `hour`). Rendered as
- *    honest `UnavailableCard`s naming the specific gap, per the restyle
- *    brief, instead of fabricated bars.
+ *    repository buckets by `day`/`week`/`month`, never by hour or
+ *    day-of-week) -- G13/G14, re-verified FRESH at SR-30 planning time
+ *    (`analytics/repository.py:46`'s `_VALID_BUCKETS`,
+ *    `routes.py:80-91`'s response model), still open. Rendered as honest
+ *    `UnavailableCard`s naming the specific gap, instead of fabricated
+ *    bars.
  */
 import Link from "next/link";
 import { requireAnyRole } from "@/lib/auth";
@@ -38,9 +44,10 @@ import {
 } from "@/lib/analytics";
 import { AnalyticsRange } from "@/app/(protected)/analytics/analytics-range";
 import { AnalyticsCards } from "@/app/(protected)/analytics/analytics-cards";
-import { WeeklyBars } from "@/app/(protected)/analytics/weekly-bars";
+import { VolumeAreaChart } from "@/app/(protected)/analytics/volume-area-chart";
 import { FunnelBars } from "@/app/(protected)/analytics/funnel-bars";
 import { DistributionBars } from "@/app/(protected)/analytics/distribution-bars";
+import { DecisionMixDonut } from "@/app/(protected)/analytics/decision-mix-donut";
 import { SeriesTable } from "@/app/(protected)/analytics/series-table";
 import { UnavailableCard } from "@/app/(protected)/analytics/unavailable-card";
 
@@ -77,25 +84,28 @@ export default async function AnalyticsPage({ searchParams }: AnalyticsPageProps
 
   return (
     <div className="flex flex-1 flex-col gap-[18px] p-[22px] sm:p-[28px]">
-      <Link href="/" className="text-sm text-[#70716a] hover:underline">
+      <Link href="/" className="text-sm text-[var(--muted-foreground)] hover:underline">
         ← Back to console
       </Link>
 
-      <div className="flex flex-wrap items-center gap-3.5">
-        <h1 className="text-xl font-bold text-[#191a17]">Analytics</h1>
-        <div className="ml-auto">
-          <AnalyticsRange currentRange={range} currentBucket={bucket} currentFrom={from} currentTo={to} />
+      <div className="flex flex-wrap items-end justify-between gap-3.5">
+        <div>
+          <h1 className="text-[28px] font-semibold text-[var(--foreground)]">Analytics</h1>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            Conversation volume, deflection, and booking outcomes in this window.
+          </p>
         </div>
+        <AnalyticsRange currentRange={range} currentBucket={bucket} currentFrom={from} currentTo={to} />
       </div>
 
       {result.status === "error" ? (
         <p
           role="alert"
-          className="rounded-[14px] border border-[#c2452d]/40 bg-[#f6e3df]/60 p-4 text-sm text-[#c2452d]"
+          className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[#f6e3df]/60 p-4 text-sm text-[var(--danger-fg)]"
         >
           {result.message}
           {result.correlationId ? (
-            <span className="block text-xs text-[#c2452d]/80">
+            <span className="block text-xs text-[var(--danger-fg)]/80">
               Correlation ID: {result.correlationId}
             </span>
           ) : null}
@@ -103,7 +113,7 @@ export default async function AnalyticsPage({ searchParams }: AnalyticsPageProps
       ) : result.data.totals.conversations === 0 ? (
         <p
           role="status"
-          className="rounded-[14px] border border-[#e7e7e2] bg-[#f7f7f3] p-4 text-sm text-[#45463f]"
+          className="rounded-[14px] border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm text-[var(--ink-2)]"
         >
           No conversation activity in this window yet.
         </p>
@@ -112,9 +122,11 @@ export default async function AnalyticsPage({ searchParams }: AnalyticsPageProps
           <AnalyticsCards data={result.data} />
 
           <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
-            <div className="flex flex-col gap-4 rounded-[14px] border border-[#e7e7e2] p-5">
-              <WeeklyBars data={result.data} />
-              <FunnelBars data={result.data} />
+            <div className="flex flex-col gap-4">
+              <VolumeAreaChart data={result.data} />
+              <div className="rounded-[14px] border border-[var(--border)] p-5">
+                <FunnelBars data={result.data} />
+              </div>
             </div>
             <div className="flex flex-col gap-4">
               <DistributionBars title="Top intents" data={result.data.intentDistribution} />
@@ -124,15 +136,15 @@ export default async function AnalyticsPage({ searchParams }: AnalyticsPageProps
               />
               <UnavailableCard
                 title="Peak hours"
-                reason="The analytics repository only aggregates by day or week (no hourly bucket exists in services/api/src/api/analytics/repository.py)."
+                reason="The analytics repository only aggregates by day, week, or month -- never by hour or day-of-week (no hourly bucket exists in services/api/src/api/analytics/repository.py)."
               />
             </div>
           </div>
 
-          <DistributionBars title="Decision distribution" data={result.data.decisionDistribution} />
+          <DecisionMixDonut data={result.data.decisionDistribution} />
 
           <div className="flex flex-col gap-2">
-            <h2 className="text-sm font-bold text-[#191a17]">Time series</h2>
+            <h2 className="text-sm font-bold text-[var(--foreground)]">Time series</h2>
             <SeriesTable series={result.data.series} />
           </div>
         </>

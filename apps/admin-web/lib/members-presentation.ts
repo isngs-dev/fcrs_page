@@ -20,17 +20,22 @@ export interface BadgeStyle {
   fg: string;
 }
 
+// SR-15 D1: the ADMIN badge's citron foreground is deleted and re-decided
+// to white -- it already reads as the emphasized role on the dark badge
+// fill without a chromatic accent, matching the shell's identical
+// re-decision.
 const ROLE_BADGES: Record<string, BadgeStyle> = {
-  CLIENT_ADMIN: { label: "ADMIN", bg: "#191a17", fg: "#e4f222" },
-  CLIENT_AGENT: { label: "AGENT", bg: "#ecece5", fg: "#45463f" },
+  CLIENT_ADMIN: { label: "ADMIN", bg: "#333333", fg: "#ffffff" },
+  CLIENT_AGENT: { label: "AGENT", bg: "#efeee6", fg: "#404040" },
 };
 
-/** Role -> badge color/label (HANDOFF-SPEC.md §3 "7b": "ADMIN badge
- * ink/citron, AGENT/VIEWER #ecece5" -- VIEWER omitted, it does not exist in
- * the real `Role` enum). Unknown roles (e.g. a `PLATFORM_ADMIN` somehow
- * showing up here) fall back to a neutral muted style rather than throwing. */
+/** Role -> badge color/label (SR-15 restyle of HANDOFF-SPEC.md §3 "7b":
+ * "ADMIN badge ink/white, AGENT/VIEWER #ecece5" -- VIEWER omitted, it does
+ * not exist in the real `Role` enum). Unknown roles (e.g. a `PLATFORM_ADMIN`
+ * somehow showing up here) fall back to a neutral muted style rather than
+ * throwing. */
 export function roleBadgeStyle(role: string): BadgeStyle {
-  return ROLE_BADGES[role] ?? { label: role, bg: "#ecece5", fg: "#5a5b54" };
+  return ROLE_BADGES[role] ?? { label: role, bg: "#ecece5", fg: "var(--ink-2)" };
 }
 
 /** Two-letter initials for the member avatar chip, e.g. "Sara Romero" ->

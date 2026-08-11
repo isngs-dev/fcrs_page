@@ -256,7 +256,72 @@ class _StubDatabase:
             idx += 1
             rows = [r for r in rows if r["created_at"] < created_to]
 
-        rows.sort(key=lambda r: (r["created_at"], r["lead_id"]), reverse=True)
+        if "NAME ILIKE $" in q:
+            # Repository escapes %, _, and backslash before binding. The
+            # stub mirrors the resulting literal substring contract rather
+            # than silently treating a wildcard as an all-rows match.
+            pattern = str(args[idx])
+            idx += 2
+            needle = (
+                pattern.removeprefix("%").removesuffix("%")
+                .replace("\\\\", "\\").replace("\\%", "%").replace("\\_", "_")
+                .lower()
+            )
+            rows = [
+                row for row in rows
+                if needle in (row["name"] or "").lower() or needle in (row["email"] or "").lower()
+            ]
+
+        # Count queries deliberately have no ORDER BY. The hard failure below
+        # applies only to a page query, where an unmodeled order would create
+        # a false-green test.
+        if "ORDER BY " not in q:
+            return rows, len(rows)
+
+        sort_key: str
+        if "(CASE STAGE" in q:
+            sort_key = "stage"
+        elif "(CASE STATUS" in q:
+            sort_key = "status"
+        elif "ORDER BY NAME " in q:
+            sort_key = "name"
+        elif "ORDER BY EMAIL " in q:
+            sort_key = "email"
+        elif "ORDER BY QUALIFICATION_SCORE " in q:
+            sort_key = "score"
+        elif "ORDER BY ASSIGNED_AGENT_ID " in q:
+            sort_key = "assigned"
+        elif "ORDER BY CREATED_AT " in q:
+            sort_key = "created"
+        else:
+            raise AssertionError(f"stub cannot honor ORDER BY: {query}")
+
+        value_for = {
+            "stage": lambda row: {"captured": 1, "qualified": 2, "contacted": 3, "converted": 4, "disqualified": 5}.get(row["stage"], 99),
+            "status": lambda row: {"new": 1, "open": 2, "won": 3, "lost": 4}.get(row["status"], 99),
+            "name": lambda row: row["name"],
+            "email": lambda row: row["email"],
+            "score": lambda row: row["qualification_score"],
+            "assigned": lambda row: row["assigned_agent_id"],
+            "created": lambda row: row["created_at"],
+        }[sort_key]
+        descending = " DESC NULLS LAST" in q
+        non_null_rows = [row for row in rows if value_for(row) is not None]
+        null_rows = [row for row in rows if value_for(row) is None]
+        # The SQL's stable total order is value, then lead_id DESC, with null
+        # values always parked last. Two stable Python sorts mirror that.
+        non_null_rows.sort(key=lambda row: row["lead_id"], reverse=True)
+        non_null_rows.sort(key=value_for, reverse=descending)
+        null_rows.sort(key=lambda row: row["lead_id"], reverse=True)
+        if sort_key in {"stage", "status"}:
+            known_rows = [row for row in non_null_rows if value_for(row) != 99]
+            unknown_rows = [row for row in non_null_rows if value_for(row) == 99]
+            known_rows.sort(key=lambda row: row["lead_id"], reverse=True)
+            known_rows.sort(key=value_for, reverse=descending)
+            unknown_rows.sort(key=lambda row: row["lead_id"], reverse=True)
+            rows = [*known_rows, *unknown_rows, *null_rows]
+        else:
+            rows = [*non_null_rows, *null_rows]
         total = len(rows)
 
         if "LIMIT $" in q:
@@ -1214,18 +1279,21 @@ def _seed_lead(
     stage: str = "captured",
     status: str = "new",
     assigned_agent_id: str | None = None,
+    qualification_score: int | None = None,
+    name: str | None = "Jane Doe",
+    email: str | None = "jane@example.com",
     created_at: datetime = _NOW,
 ) -> None:
     db._leads[(tenant_id, lead_id)] = {
         "tenant_id": tenant_id,
         "lead_id": lead_id,
         "visitor_id": "visitor-1",
-        "name": "Jane Doe",
-        "email": "jane@example.com",
+        "name": name,
+        "email": email,
         "phone": None,
         "status": status,
         "stage": stage,
-        "qualification_score": None,
+        "qualification_score": qualification_score,
         "consent": {"granted": True, "purpose": "contact", "text": "OK"},
         "assigned_agent_id": assigned_agent_id,
         "source": "widget",
@@ -1400,7 +1468,7 @@ async def test_list_leads_pagination_limit_offset_order() -> None:
         assert [r.lead_id for r in rows] == ["lead-3", "lead-2"]
 
         query, args = db.fetch_calls[-1]
-        assert "order by created_at desc, lead_id desc" in query.lower()
+        assert "order by created_at desc nulls last, lead_id desc" in query.lower()
         assert 2 in args
         assert 1 in args
 
@@ -1637,3 +1705,176 @@ async def test_create_lead_accepts_null_email_and_name() -> None:
         assert lead.name is None
         assert lead.email is None
         assert lead.source == "booking"
+
+
+# ---------------------------------------------------------------------------
+# SR-25: list_leads sort/search contract (repository defense in depth)
+# ---------------------------------------------------------------------------
+
+
+_SORT_INJECTION_PAYLOADS = [
+    "created_at; DROP TABLE leads--",
+    "created_at) --",
+    "name, tenant_id",
+    "(SELECT tenant_id)",
+    "created_at DESC; SELECT * FROM users",
+    "tenant_id",
+    "1",
+    "name/**/",
+    "",
+    "NAME",
+]
+
+
+@pytest.mark.parametrize("sort", _SORT_INJECTION_PAYLOADS)
+async def test_list_leads_rejects_unknown_sort_key_at_repository_layer(sort: str) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.leads.repository import list_leads
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_leads(db, _claims(), sort=sort)
+
+        assert exc_info.value.code == "INVALID_LEAD_SORT"
+        assert not db.fetch_calls
+        assert not db.fetchrow_calls
+
+
+async def test_list_leads_rejects_unknown_direction_at_repository_layer() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.leads.repository import list_leads
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_leads(db, _claims(), direction="sideways")
+
+        assert exc_info.value.code == "INVALID_LEAD_SORT_DIRECTION"
+        assert not db.fetch_calls
+        assert not db.fetchrow_calls
+
+
+@pytest.mark.parametrize("payload", _SORT_INJECTION_PAYLOADS)
+async def test_list_leads_sort_sql_never_contains_caller_string(payload: str) -> None:
+    """SR-25 6a/6c-bis flagship test: for each rejected sort payload, prove the
+    caller's raw string never reaches SQL. ``list_leads`` validates ``sort``
+    against ``_SORT_COLUMNS`` (repository.py) synchronously, before building
+    ``where``/``order_by`` or calling ``db.fetch``/``db.fetchrow`` at all --
+    so the correct assertion is that the stub captured *no* queries during
+    the call, not that some captured query merely lacks the substring.
+    """
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.leads.repository import list_leads
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_leads(db, _claims(), sort=payload)
+
+        assert exc_info.value.code == "INVALID_LEAD_SORT"
+
+        # Validation is fully synchronous and raises before any SQL is
+        # built, so the stub must not have captured a single query.
+        assert db.fetch_calls == []
+        assert db.fetchrow_calls == []
+
+        # Belt-and-braces: even if the stub had captured something, the
+        # payload string must never appear as a substring of it.
+        for query, _args in [*db.fetch_calls, *db.fetchrow_calls]:
+            assert payload not in query
+
+
+@pytest.mark.parametrize("sort", ["name", "email", "stage", "status", "score", "assigned", "created"])
+async def test_list_leads_every_sort_key_emits_nulls_last_and_lead_id_tiebreak(sort: str) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import list_leads
+
+        db = _StubDatabase()
+        _seed_lead(db, tenant_id="tenant-abc", lead_id="lead-1")
+
+        await list_leads(db, _claims(), sort=sort, direction="asc")
+
+        query, _ = db.fetch_calls[-1]
+        assert "NULLS LAST, lead_id DESC" in query
+
+
+async def test_list_leads_default_sort_emits_created_at_desc_lead_id_desc() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import list_leads
+
+        db = _StubDatabase()
+        _seed_lead(db, tenant_id="tenant-abc", lead_id="lead-1")
+
+        await list_leads(db, _claims())
+
+        query, args = db.fetch_calls[-1]
+        assert "ORDER BY created_at DESC NULLS LAST, lead_id DESC" in query
+        assert args == ("tenant-abc", 50, 0)
+
+
+@pytest.mark.parametrize("sort", ["stage", "status"])
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+async def test_list_leads_domain_sort_keeps_unknown_values_last_in_both_directions(
+    sort: str, direction: str
+) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import list_leads
+
+        db = _StubDatabase()
+        _seed_lead(db, tenant_id="tenant-abc", lead_id="known")
+        _seed_lead(db, tenant_id="tenant-abc", lead_id="future", stage="future", status="future")
+
+        rows, _ = await list_leads(db, _claims(), sort=sort, direction=direction)
+
+        assert rows[-1].lead_id == "future"
+        query, _ = db.fetch_calls[-1]
+        assert "CASE WHEN" in query
+
+
+async def test_list_leads_q_matches_name_or_email_and_escapes_wildcards() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import list_leads
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        _seed_lead(db, tenant_id="tenant-abc", lead_id="name", name="Alice Example")
+        _seed_lead(db, tenant_id="tenant-abc", lead_id="email", email="team@acme.test")
+        _seed_lead(db, tenant_id="tenant-abc", lead_id="percent", name="100% Ready")
+        _seed_lead(db, tenant_id="tenant-abc", lead_id="other", name="Bob Other")
+
+        by_name, _ = await list_leads(db, claims, q="ALI")
+        by_email, _ = await list_leads(db, claims, q="ACME")
+        literal_percent, _ = await list_leads(db, claims, q="100%")
+
+        assert [lead.lead_id for lead in by_name] == ["name"]
+        assert [lead.lead_id for lead in by_email] == ["email"]
+        assert [lead.lead_id for lead in literal_percent] == ["percent"]
+        query, args = db.fetch_calls[-1]
+        assert "ILIKE $2 ESCAPE '\\' OR email ILIKE $3 ESCAPE '\\'" in query
+        assert args[1:3] == ("%100\\%%", "%100\\%%")
+
+
+async def test_list_leads_q_never_crosses_tenant_boundary() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import list_leads
+
+        db = _StubDatabase()
+        _seed_lead(db, tenant_id="tenant-a", lead_id="a", name="Same Needle")
+        _seed_lead(db, tenant_id="tenant-b", lead_id="b", name="Same Needle")
+
+        rows, total = await list_leads(db, _claims(tenant_id="tenant-a"), q="needle")
+
+        assert total == 1
+        assert [lead.lead_id for lead in rows] == ["a"]

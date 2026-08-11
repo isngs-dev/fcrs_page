@@ -84,6 +84,14 @@ def test_whitelisted_extra_included_arbitrary_dropped() -> None:
     assert "hunter2" not in json.dumps(payload)
 
 
+def test_lead_list_sort_observability_fields_are_whitelisted() -> None:
+    """SR-25 logs only the route-validated closed-set sort fields."""
+    payload = json.loads(JsonFormatter().format(_record(sort="score", direction="desc")))
+
+    assert payload["sort"] == "score"
+    assert payload["direction"] == "desc"
+
+
 # ---------------------------------------------------------------------------
 # Reserved-key hardening — get_logger must not crash on reserved extra keys
 # ---------------------------------------------------------------------------

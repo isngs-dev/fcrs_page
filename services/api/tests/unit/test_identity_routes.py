@@ -532,3 +532,94 @@ async def test_post_identity_pii_not_in_logs(caplog: Any) -> None:
     log_text = caplog.text
     assert "dana@example.com" not in log_text
     assert "Dana Doe" not in log_text
+
+
+# ---------------------------------------------------------------------------
+# SR-21: lead_captured feed emit (D2/D3) -- 2nd of 3 mandatory call sites
+# ---------------------------------------------------------------------------
+
+
+async def test_post_identity_new_lead_emits_lead_captured() -> None:
+    """The new-lead branch emits exactly one lead_captured event."""
+    db = _StubDatabase()
+    app = _build_app(db)
+
+    mock_get_lead_id = AsyncMock(return_value=None)
+    mock_create_lead = AsyncMock(return_value="lead-emit-1")
+
+    with (
+        patch("api.leads.identity_routes.get_lead_id_by_visitor_id", new=mock_get_lead_id),
+        patch("api.leads.identity_routes.create_lead", new=mock_create_lead),
+        patch("api.leads.identity_routes.add_activity", new=AsyncMock(return_value="a1")),
+        patch("api.leads.identity_routes.emit_event_safe") as mock_emit,
+    ):
+        mock_emit.return_value = "event-1"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            visitor_token = _create_visitor_token()
+            body = {"name": "Dana", "email": "dana@example.com", "consent": _VALID_CONSENT}
+            response = await client.post(
+                "/public/chat/identity", json=body,
+                headers={"Authorization": f"Bearer {visitor_token}"},
+            )
+
+    assert response.status_code == 201
+    mock_emit.assert_awaited_once()
+    _, kwargs = mock_emit.call_args
+    assert kwargs["kind"] == "lead_captured"
+    assert kwargs["target_id"] == "lead-emit-1"
+    assert kwargs["payload"] == {"lead_id": "lead-emit-1"}
+
+
+async def test_post_identity_existing_lead_does_not_emit_lead_captured() -> None:
+    """Linking an existing lead's contact is NOT a capture -- no event."""
+    db = _StubDatabase()
+    app = _build_app(db)
+
+    mock_get_lead_id = AsyncMock(return_value="lead-existing-1")
+    mock_update_contact = AsyncMock(return_value=True)
+
+    with (
+        patch("api.leads.identity_routes.get_lead_id_by_visitor_id", new=mock_get_lead_id),
+        patch("api.leads.identity_routes.update_lead_contact", new=mock_update_contact),
+        patch("api.leads.identity_routes.add_activity", new=AsyncMock(return_value="a1")),
+        patch("api.leads.identity_routes.emit_event_safe") as mock_emit,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            visitor_token = _create_visitor_token()
+            body = {"name": "Dana", "email": "dana@example.com", "consent": _VALID_CONSENT}
+            response = await client.post(
+                "/public/chat/identity", json=body,
+                headers={"Authorization": f"Bearer {visitor_token}"},
+            )
+
+    assert response.status_code == 201
+    mock_emit.assert_not_awaited()
+
+
+async def test_post_identity_still_201_when_feed_emit_raises() -> None:
+    """MANDATORY (D2): a feed-insert failure must not fail identity capture."""
+    db = _StubDatabase()
+    app = _build_app(db)
+
+    mock_get_lead_id = AsyncMock(return_value=None)
+    mock_create_lead = AsyncMock(return_value="lead-emit-2")
+
+    with (
+        patch("api.leads.identity_routes.get_lead_id_by_visitor_id", new=mock_get_lead_id),
+        patch("api.leads.identity_routes.create_lead", new=mock_create_lead),
+        patch("api.leads.identity_routes.add_activity", new=AsyncMock(return_value="a1")),
+        patch(
+            "api.notifications.emit.emit_event",
+            new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
+        ),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            visitor_token = _create_visitor_token()
+            body = {"name": "Dana", "email": "dana@example.com", "consent": _VALID_CONSENT}
+            response = await client.post(
+                "/public/chat/identity", json=body,
+                headers={"Authorization": f"Bearer {visitor_token}"},
+            )
+
+    assert response.status_code == 201
+    assert response.json()["lead_id"] == "lead-emit-2"

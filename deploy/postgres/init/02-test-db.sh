@@ -13,9 +13,10 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     CREATE DATABASE chatbot_test;
 EOSQL
 
-# Enable vector extension in the test database
+# Enable search/vector extensions in the test database
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "chatbot_test" <<-EOSQL
     CREATE EXTENSION IF NOT EXISTS vector;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
 EOSQL
 
 echo "Test database 'chatbot_test' created with pgvector extension enabled."

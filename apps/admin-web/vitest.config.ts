@@ -12,7 +12,12 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["**/*.test.ts"],
+    // SR-17: widened from `**/*.test.ts` to also match `.test.tsx` --
+    // needed for the RBAC-aware rendering tests, which invoke server/client
+    // components directly and assert on `react-dom/server`'s static markup
+    // (no jsdom/@testing-library added -- neither is a repo dependency, and
+    // CLAUDE.md §4 forbids adding one for this frontend-only sprint).
+    include: ["**/*.test.ts", "**/*.test.tsx"],
     exclude: ["node_modules", ".next"],
     setupFiles: ["./vitest.setup.ts"],
   },

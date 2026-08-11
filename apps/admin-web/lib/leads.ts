@@ -16,6 +16,7 @@ import "server-only";
 
 import { adminApiFetch, AdminApiError } from "@/lib/api";
 import type {
+  LeadListItem,
   LeadDetail,
   LeadDetailResult,
   LeadActivityItem,
@@ -36,7 +37,14 @@ import {
 // why (this module is `server-only` and can't be reached from client code,
 // even transitively for a type-only import, without triggering Next's
 // "'server-only' cannot be imported from a Client Component" build error).
-export type { LeadDetail, LeadDetailResult, LeadActivityItem, LeadActivitiesResult, BadgeStyle };
+export type {
+  LeadListItem,
+  LeadDetail,
+  LeadDetailResult,
+  LeadActivityItem,
+  LeadActivitiesResult,
+  BadgeStyle,
+};
 export { stageBadgeStyle, scoreChipStyle, initialsFromName };
 
 /** The five canonical lead stages (pipeline.py STAGE_ORDER + TERMINAL_STAGES). */
@@ -55,29 +63,45 @@ export const LEAD_STATUSES = ["new", "open", "won", "lost"] as const;
 
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
+/** Closed mirror of api.leads.repository's SR-25 ORDER BY allowlist. */
+export const LEAD_SORT_KEYS = [
+  "name",
+  "email",
+  "stage",
+  "status",
+  "score",
+  "assigned",
+  "created",
+] as const;
+
+export type LeadSortKey = (typeof LEAD_SORT_KEYS)[number];
+export type LeadSortDirection = "asc" | "desc";
+
+const LEAD_SORT_DEFAULT_DIRECTIONS: Record<LeadSortKey, LeadSortDirection> = {
+  name: "asc",
+  email: "asc",
+  stage: "asc",
+  status: "asc",
+  score: "desc",
+  assigned: "asc",
+  created: "desc",
+};
+
+export function defaultLeadSortDirection(sort: LeadSortKey): LeadSortDirection {
+  return LEAD_SORT_DEFAULT_DIRECTIONS[sort];
+}
+
 /** Fixed page size for the console's Prev/Next pagination (decision 3, Q1). */
 export const LEADS_PAGE_SIZE = 25;
 
-/** A single row of `GET /admin/leads` -- mirrors `LeadListItem`
- * (admin_routes.py:136-140) exactly. No `tenant_id`/`visitor_id`/consent --
- * the backend response is already leak-free by construction. */
-export interface LeadListItem {
-  leadId: string;
-  name: string;
-  email: string;
-  phone: string | null;
-  status: string;
-  stage: string;
-  qualificationScore: number | null;
-  assignedAgentId: string | null;
-  source: string;
-  createdAt: string;
-}
+// `LeadListItem` now lives in `@/lib/leads-presentation` (client-safe) and is
+// re-exported at the top of this file -- see that declaration's comment for
+// why. Server-side callers importing it from `@/lib/leads` are unaffected.
 
 interface LeadListItemResponseBody {
   lead_id: string;
-  name: string;
-  email: string;
+  name: string | null;
+  email: string | null;
   phone: string | null;
   status: string;
   stage: string;
@@ -101,6 +125,13 @@ export type LeadsResult =
 export interface LeadsQueryParams {
   page: number;
   stage?: string;
+  status?: string;
+  assignedAgentId?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  q?: string;
+  sort?: string;
+  direction?: string;
 }
 
 /**
@@ -123,6 +154,44 @@ export function buildLeadsQuery(params: LeadsQueryParams): string {
   const stage = params.stage?.trim();
   if (stage && (LEAD_STAGES as readonly string[]).includes(stage)) {
     query.set("stage", stage);
+  }
+
+  const status = params.status?.trim();
+  if (status && (LEAD_STATUSES as readonly string[]).includes(status)) {
+    query.set("status", status);
+  }
+
+  const assignedAgentId = params.assignedAgentId?.trim();
+  if (assignedAgentId && assignedAgentId.length <= 200) {
+    query.set("assigned_agent_id", assignedAgentId);
+  }
+
+  for (const [key, value] of [
+    ["from", params.createdFrom],
+    ["to", params.createdTo],
+  ] as const) {
+    const normalized = value?.trim();
+    if (normalized && !Number.isNaN(Date.parse(normalized))) {
+      query.set(key, normalized);
+    }
+  }
+
+  const q = params.q?.trim();
+  if (q && q.length >= 2 && q.length <= 200) {
+    query.set("q", q);
+  }
+
+  const sort = params.sort?.trim();
+  if (sort && (LEAD_SORT_KEYS as readonly string[]).includes(sort)) {
+    const sortKey = sort as LeadSortKey;
+    query.set("sort", sortKey);
+    const direction = params.direction?.trim();
+    query.set(
+      "dir",
+      direction === "asc" || direction === "desc"
+        ? direction
+        : LEAD_SORT_DEFAULT_DIRECTIONS[sortKey]
+    );
   }
 
   return query.toString();
@@ -194,12 +263,52 @@ function mapErrorMessage(error: AdminApiError): string {
   if (error.status === 401) {
     return "Your session has expired. Please log in again.";
   }
-  if (error.errorCode === "INVALID_LEAD_FILTER" || error.errorCode === "INVALID_LIST_WINDOW") {
+  if (
+    error.errorCode === "INVALID_LEAD_FILTER" ||
+    error.errorCode === "INVALID_LIST_WINDOW" ||
+    error.errorCode === "INVALID_LEAD_SORT" ||
+    error.errorCode === "INVALID_LEAD_SORT_DIRECTION" ||
+    error.errorCode === "INVALID_LEAD_SEARCH"
+  ) {
     return "That filter isn't valid -- showing all leads.";
   }
   return `Something went wrong (${error.errorCode || "UNKNOWN_ERROR"}). Correlation ID: ${
     error.correlationId || "n/a"
   }.`;
+}
+
+/**
+ * Board-only fetch (SR-18 scope items 2/8): all of the tenant's leads
+ * across every stage, in one call at the backend's max clamp (200,
+ * leads/admin_routes.py). SR-18 D2's constrained board needs to see every
+ * stage at once (a card's legal targets are other columns on the SAME
+ * board) -- unlike `listLeads`, this ignores `stage`/`page` entirely and is
+ * not paginated. A future sprint may need real pagination/virtualization
+ * once tenants exceed 200 open leads (SR-18 spec's open question "does the
+ * board scale past a few hundred cards per column?" -- deliberately not
+ * pre-built here, per that question's own "measure first" guidance).
+ */
+export async function listAllLeadsForBoard(): Promise<LeadsResult> {
+  try {
+    const response = await adminApiFetch(`/admin/leads?limit=200&offset=0`);
+    const body = (await response.json()) as LeadListResponseBody;
+    return {
+      status: "ok",
+      items: body.items.map(toLeadListItem),
+      total: body.total,
+      limit: body.limit,
+      offset: body.offset,
+    };
+  } catch (error) {
+    if (error instanceof AdminApiError) {
+      return { status: "error", message: mapErrorMessage(error), correlationId: error.correlationId };
+    }
+    return {
+      status: "error",
+      message: "Unable to reach the server. Please try again.",
+      correlationId: "",
+    };
+  }
 }
 
 function mapDetailErrorMessage(error: AdminApiError): string {

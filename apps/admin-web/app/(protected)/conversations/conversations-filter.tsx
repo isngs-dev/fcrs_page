@@ -4,15 +4,16 @@
  * Lead captured / Ended -- but the real backend `status` query param only
  * accepts `active`/`ended` (admin_routes.py `_VALID_STATUSES`) and there is
  * no lead-linkage field to filter on. Per the mandated scope decision, the
- * pill *values* are the real ones (All / Active / Ended) while keeping the
- * mock's pill visual style (99px radius, ink-filled active pill, bordered
- * inactive pills).
+ * pill *values* are the real ones (All / Active / Ended) -- a fourth "Lead
+ * captured" pill is NOT built (no lead-linkage field exists to back it).
  *
- * Plain `<Link>`s (not client-side `onClick` + router.push) so this stays
- * server-renderable/no-JS-navigable like `leads-filter.tsx`'s form -- no
- * "use client" needed here.
+ * SR-27 slice 2: restyled to consume the shared `SegmentedControl`
+ * (`Console.dc.html:46-48` `.seg` recipe), replacing the old hand-rolled
+ * `rounded-full` pill style. Still plain `<Link>`s under the hood (via
+ * `SegmentedControl`) -- server-renderable/no-JS-navigable, no "use client"
+ * needed here.
  */
-import Link from "next/link";
+import { SegmentedControl } from "@/components/admin/segmented-control";
 import type { ConversationStatus } from "@/lib/conversations";
 
 const STATUS_LABELS: Record<ConversationStatus, string> = {
@@ -36,30 +37,23 @@ export function ConversationsFilter({
   basePath: string;
   statuses: readonly ConversationStatus[];
 }) {
-  const pillClass = (active: boolean) =>
-    active
-      ? "inline-flex min-h-9 items-center rounded-full bg-[#191a17] px-3 text-[11.5px] font-semibold text-white"
-      : "inline-flex min-h-9 items-center rounded-full border border-[#e7e7e2] px-3 text-[11.5px] font-semibold text-[#5a5b54] hover:bg-[#f7f7f3]";
-
   return (
-    <div role="group" aria-label="Filter conversations by status" className="flex flex-wrap gap-1.5">
-      <Link
-        href={pillHref(basePath, undefined)}
-        aria-current={currentStatus === undefined ? "true" : undefined}
-        className={pillClass(currentStatus === undefined)}
-      >
-        All
-      </Link>
-      {statuses.map((status) => (
-        <Link
-          key={status}
-          href={pillHref(basePath, status)}
-          aria-current={currentStatus === status ? "true" : undefined}
-          className={pillClass(currentStatus === status)}
-        >
-          {STATUS_LABELS[status]}
-        </Link>
-      ))}
-    </div>
+    <SegmentedControl
+      ariaLabel="Filter conversations by status"
+      items={[
+        {
+          key: "all",
+          label: "All",
+          href: pillHref(basePath, undefined),
+          active: currentStatus === undefined,
+        },
+        ...statuses.map((status) => ({
+          key: status,
+          label: STATUS_LABELS[status],
+          href: pillHref(basePath, status),
+          active: currentStatus === status,
+        })),
+      ]}
+    />
   );
 }

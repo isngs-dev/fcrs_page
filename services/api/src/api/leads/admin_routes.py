@@ -40,6 +40,8 @@ from api.leads.pipeline import (
     validate_transition,
 )
 from api.leads.repository import (
+    LEAD_SORT_DEFAULT_DIRECTIONS,
+    LEAD_SORT_KEYS,
     Lead,
     LeadActivity,
     add_activity,
@@ -51,6 +53,7 @@ from api.leads.repository import (
     mark_lead_converted,
     update_lead_stage,
 )
+from api.notifications.emit import emit_event_safe
 
 _log = get_logger(__name__)
 
@@ -221,6 +224,9 @@ async def _list_leads(
     assigned_agent_id: str | None,
     created_from: datetime | None,
     created_to: datetime | None,
+    q: str | None,
+    sort: str | None,
+    direction: str | None,
     include_converted: bool = False,
 ) -> LeadListResponse:
     """List/filter the caller's tenant leads, newest first, paginated (S12.4).
@@ -233,9 +239,11 @@ async def _list_leads(
     ``from >= to``). ``limit`` is clamped to ``[1, 200]``, ``offset`` to
     ``>= 0`` -- identical clamp to ``list_audit``.
 
-    ``include_converted`` (SR-9.2 D1): defaults to ``False`` -- a lead
-    tombstoned by conversion is excluded from the working list unless the
-    caller explicitly asks to see conversion history.
+    SR-25 validates a closed ``sort``/``dir`` allowlist and a combined,
+    literal Name/Email ``q`` search. ``include_converted`` (SR-9.2 D1)
+    defaults to ``False`` -- a lead tombstoned by conversion is excluded from
+    the working list unless the caller explicitly asks to see conversion
+    history.
     """
     db = request.app.state.db
 
@@ -252,6 +260,30 @@ async def _list_leads(
             "`from` must be earlier than `to`.", code="INVALID_LIST_WINDOW",
         )
 
+    if sort is None:
+        effective_sort = "created"
+    elif sort in LEAD_SORT_KEYS:
+        effective_sort = sort
+    else:
+        raise ValidationError(f"Unknown sort key {sort!r}.", code="INVALID_LEAD_SORT")
+
+    if direction is None:
+        effective_direction = LEAD_SORT_DEFAULT_DIRECTIONS[effective_sort]
+    elif direction in {"asc", "desc"}:
+        effective_direction = direction
+    else:
+        raise ValidationError(
+            f"Unknown sort direction {direction!r}.", code="INVALID_LEAD_SORT_DIRECTION",
+        )
+
+    normalized_q = q.strip() if q is not None else None
+    if normalized_q == "":
+        normalized_q = None
+    elif normalized_q is not None and not 2 <= len(normalized_q) <= 200:
+        raise ValidationError(
+            "Lead search must contain between 2 and 200 characters.", code="INVALID_LEAD_SEARCH",
+        )
+
     clamped_limit = max(1, min(limit, 200))
     clamped_offset = max(0, offset)
 
@@ -266,6 +298,9 @@ async def _list_leads(
         created_from=created_from,
         created_to=created_to,
         include_converted=include_converted,
+        q=normalized_q,
+        sort=effective_sort,
+        direction=effective_direction,
     )
 
     _log.info(
@@ -281,9 +316,12 @@ async def _list_leads(
                     "assigned_agent_id": assigned_agent_id,
                     "from": created_from,
                     "to": created_to,
+                    "q": normalized_q,
                 }.items()
                 if v is not None
             ),
+            "sort": effective_sort,
+            "direction": effective_direction,
             "result_count": len(leads),
         },
     )
@@ -306,6 +344,9 @@ async def list_leads_route(
     assigned_agent_id: str | None = Query(default=None),
     created_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
     created_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    q: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+    direction: str | None = Query(default=None, alias="dir"),
     include_converted: bool = Query(default=False),
     claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
 ) -> LeadListResponse:
@@ -314,6 +355,7 @@ async def list_leads_route(
         limit=limit, offset=offset, stage=stage, status_=status_,
         assigned_agent_id=assigned_agent_id,
         created_from=created_from, created_to=created_to,
+        q=q, sort=sort, direction=direction,
         include_converted=include_converted,
     )
 
@@ -328,6 +370,9 @@ async def list_leads_route_for_tenant(
     assigned_agent_id: str | None = Query(default=None),
     created_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
     created_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    q: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
+    direction: str | None = Query(default=None, alias="dir"),
     include_converted: bool = Query(default=False),
     claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
 ) -> LeadListResponse:
@@ -337,6 +382,7 @@ async def list_leads_route_for_tenant(
         limit=limit, offset=offset, stage=stage, status_=status_,
         assigned_agent_id=assigned_agent_id,
         created_from=created_from, created_to=created_to,
+        q=q, sort=sort, direction=direction,
         include_converted=include_converted,
     )
 
@@ -524,6 +570,19 @@ async def _patch_lead_stage(
         },
     )
 
+    # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable stage write
+    # and audit row above. payload is ids/stage labels only -- never PII.
+    await emit_event_safe(
+        db,
+        claims,
+        kind="lead_stage_transitioned",
+        category="leads",
+        target_type="lead",
+        target_id=lead_id,
+        payload={"lead_id": lead_id, "from_stage": lead.stage, "to_stage": body.stage},
+        actor_id=claims.subject,
+    )
+
     return _to_response(updated)
 
 
@@ -686,6 +745,19 @@ async def _post_lead_assignment(
             "tenant_id": claims.tenant_id,
             "type": "assignment",
         },
+    )
+
+    # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable assignment
+    # write and audit row above. payload is ids only -- never PII.
+    await emit_event_safe(
+        db,
+        claims,
+        kind="lead_assigned",
+        category="leads",
+        target_type="lead",
+        target_id=lead_id,
+        payload={"lead_id": lead_id, "agent_id": body.agent_id},
+        actor_id=claims.subject,
     )
 
     return _to_response(updated)
@@ -897,6 +969,19 @@ async def _convert_lead(
             "contact_id": contact_id,
             "tenant_id": claims.tenant_id,
         },
+    )
+
+    # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable tombstone
+    # write and audit row above. payload is ids only -- never PII.
+    await emit_event_safe(
+        db,
+        claims,
+        kind="lead_converted",
+        category="leads",
+        target_type="lead",
+        target_id=lead_id,
+        payload={"lead_id": lead_id, "contact_id": contact_id},
+        actor_id=claims.subject,
     )
 
     return LeadConvertResponse(contact_id=contact_id, lead_id=lead_id)

@@ -9,18 +9,23 @@ import {
 } from "@/app/(protected)/conversations/presentation";
 
 describe("statusBadgeStyle", () => {
-  it("maps the real 'active' status to an honest ACTIVE badge (never LIVE)", () => {
-    expect(statusBadgeStyle("active")).toEqual({ label: "ACTIVE", bg: "#dcefdc", fg: "#1f6a2f" });
+  it("maps the real 'active' status to an honest ACTIVE badge (never LIVE) using the reference success pair + 6x6px dot color (SR-27 slice 2)", () => {
+    expect(statusBadgeStyle("active")).toEqual({
+      label: "ACTIVE",
+      bg: "#eaf3ec",
+      fg: "#3f7d57",
+      dot: "#4a9c6d",
+    });
   });
 
-  it("maps the real 'ended' status to an ENDED badge", () => {
-    expect(statusBadgeStyle("ended")).toEqual({ label: "ENDED", bg: "#ecece5", fg: "#5a5b54" });
+  it("maps the real 'ended' status to an ENDED badge with no dot (SR-15 monochrome restyle)", () => {
+    expect(statusBadgeStyle("ended")).toEqual({ label: "ENDED", bg: "#efeee6", fg: "var(--ink-2)" });
   });
 
   it("falls back to a neutral style for an unrecognized status rather than throwing", () => {
     const style = statusBadgeStyle("bogus");
     expect(style.label).toBe("BOGUS");
-    expect(style.bg).toBe("#ecece5");
+    expect(style.bg).toBe("#efeee6");
   });
 });
 

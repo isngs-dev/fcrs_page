@@ -14,12 +14,16 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 const STAGE_ORDER = ["captured", "qualified", "contacted", "converted", "disqualified"] as const;
-const STAGE_COLORS = ["#191a17", "#45463f", "#70716a", "#e4f222", "#c2452d"] as const;
+// SR-15 D1: the "converted" stage's citron fill is deleted and re-decided
+// to the design's success-fg green (--success-fg #3f7d57) -- converted is
+// this report's one meaningfully "good" outcome, matching M3's only other
+// semantic-success use in the new system.
+const STAGE_COLORS = ["var(--foreground)", "var(--ink-2)", "var(--muted-foreground)", "#3f7d57", "#a24b4b"] as const;
 
 export function StageBars({ data }: { data: LeadsByStageReport }) {
   if (data.total === 0) {
     return (
-      <p role="status" className="text-sm text-[#70716a]">
+      <p role="status" className="text-sm text-[var(--muted-foreground)]">
         No data in this window.
       </p>
     );
@@ -41,17 +45,17 @@ export function StageBars({ data }: { data: LeadsByStageReport }) {
           const pct = Math.max((count / max) * 100, count > 0 ? 4 : 1);
           return (
             <div key={stage} className="flex items-center gap-3">
-              <span className="w-24 shrink-0 text-xs font-semibold text-[#70716a]">
+              <span className="w-24 shrink-0 text-xs font-semibold text-[var(--muted-foreground)]">
                 {STAGE_LABELS[stage]}
               </span>
-              <div className="h-6 flex-1 overflow-hidden rounded-[6px] bg-[#f7f7f3]">
+              <div className="h-6 flex-1 overflow-hidden rounded-[6px] bg-[var(--secondary)]">
                 <div
                   title={`${STAGE_LABELS[stage]}: ${count}`}
                   className="h-full rounded-[6px]"
                   style={{ width: `${pct}%`, backgroundColor: STAGE_COLORS[i] }}
                 />
               </div>
-              <span className="w-10 shrink-0 text-right text-sm font-bold tabular-nums text-[#191a17]">
+              <span className="w-10 shrink-0 text-right text-sm font-bold tabular-nums text-[var(--foreground)]">
                 {count}
               </span>
             </div>

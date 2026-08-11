@@ -17,10 +17,16 @@
  * recipe (header meta line, dashed dropzone, source-row status card,
  * Coverage check + Test the bot side cards) rather than fabricating a
  * multi-row table the backend can't back.
+ *
+ * SR-27 slice 3: geometry-only restyle to `Console.dc.html:458-499` -- fixed
+ * 360px right column (was a fractional `2.2fr_1fr` track), 22px/24px card
+ * padding, 28px/600 title. Both honest gap states (Coverage check, Test the
+ * bot) preserved verbatim -- only their card geometry changed.
  */
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { UploadForm, CoverageCheckCard, TestBotCard } from "@/app/(protected)/knowledge/upload-form";
+import { SoftCard } from "@/components/admin/soft-card";
 
 export default async function KnowledgePage() {
   await requireRole("CLIENT_ADMIN");
@@ -31,28 +37,30 @@ export default async function KnowledgePage() {
         <div>
           <Link
             href="/"
-            className="mb-1.5 inline-block text-[12.5px] text-[#70716a] hover:text-[#191a17] hover:underline"
+            className="mb-1.5 inline-block text-[12.5px] text-muted-foreground hover:text-foreground hover:underline"
           >
             ← Back to console
           </Link>
-          <h1 className="text-[20px] font-bold text-[#191a17]">Knowledge base</h1>
-          <p className="mt-0.5 text-[12.5px] text-[#70716a]">
+          <h1 className="text-[28px] font-semibold text-foreground">Knowledge base</h1>
+          <p className="mt-0.5 text-[12.5px] text-muted-foreground">
             What your bot knows. Upload a document below to add to it.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4.5 lg:grid-cols-[2.2fr_1fr] lg:items-start">
-        <div className="rounded-[14px] border border-[#e7e7e2] bg-white p-4.5 sm:p-5">
-          <h2 className="mb-3.5 text-[14px] font-bold text-[#191a17]">Upload knowledge</h2>
-          <p className="mb-4 text-[12.5px] text-[#70716a]">
+      <div className="flex flex-col gap-[18px] lg:flex-row lg:items-start">
+        <SoftCard className="flex-1 px-6 pb-2 pt-1">
+          <h2 className="pt-4 pb-0.5 text-[16px] font-semibold text-foreground">Upload knowledge</h2>
+          <p className="mb-[18px] mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
             .txt or .docx, up to 10 MiB. It is parsed, chunked, and embedded asynchronously -- the
             status card below tracks the run&apos;s progress in real time.
           </p>
-          <UploadForm />
-        </div>
+          <div className="pb-2">
+            <UploadForm />
+          </div>
+        </SoftCard>
 
-        <div className="flex flex-col gap-3.5">
+        <div className="flex w-full flex-none flex-col gap-[18px] lg:w-[360px]">
           <CoverageCheckCard />
           <TestBotCard />
         </div>

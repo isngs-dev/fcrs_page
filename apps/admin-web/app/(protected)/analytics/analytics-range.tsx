@@ -1,6 +1,6 @@
 /**
- * Range + bucket control (S13.5.md decision 5), restyled to Ink & Citron's
- * 5b segmented pill toggle (7d / 30d / 90d / Custom). Still a plain GET
+ * Range + bucket control (S13.5.md decision 5), styled to the reference's
+ * segmented pill toggle (7d / 30d / 90d / Custom). Still a plain GET
  * `<form>` -- no client JS, no `select` primitive dependency (decision 7),
  * mirroring `leads/leads-filter.tsx`. Submitting navigates to
  * `/analytics?range=...&bucket=...[&from=...&to=...]`, which re-runs the
@@ -59,12 +59,12 @@ export function AnalyticsRange({
       aria-label="Analytics date range and bucket"
     >
       <fieldset className="flex flex-col gap-1">
-        <legend className="text-xs font-medium text-[#70716a]">Date range</legend>
-        <div className="flex overflow-hidden rounded-[9px] border border-[#e7e7e2] text-xs font-semibold">
+        <legend className="text-xs font-medium text-muted-foreground">Date range</legend>
+        <div className="flex overflow-hidden rounded-[9px] border border-border text-xs font-semibold">
           {ANALYTICS_RANGES.map((range) => (
             <label
               key={range.key}
-              className="cursor-pointer px-3.5 py-[7px] text-[#5a5b54] transition-colors has-checked:bg-[#191a17] has-checked:text-white hover:has-[:not(:checked)]:bg-[#f7f7f3] focus-within:outline-2 focus-within:outline-offset-[-2px] focus-within:outline-[#191a17]"
+              className="cursor-pointer px-3.5 py-[7px] text-[var(--ink-2)] transition-colors has-checked:bg-foreground has-checked:text-white hover:has-[:not(:checked)]:bg-secondary focus-within:outline-2 focus-within:outline-offset-[-2px] focus-within:outline-foreground"
             >
               <input
                 type="radio"
@@ -76,7 +76,7 @@ export function AnalyticsRange({
               {range.label.replace("Last ", "")}
             </label>
           ))}
-          <label className="cursor-pointer border-l border-[#e7e7e2] px-3.5 py-[7px] text-[#5a5b54] transition-colors has-checked:bg-[#191a17] has-checked:text-white hover:has-[:not(:checked)]:bg-[#f7f7f3] focus-within:outline-2 focus-within:outline-offset-[-2px] focus-within:outline-[#191a17]">
+          <label className="cursor-pointer border-l border-border px-3.5 py-[7px] text-[var(--ink-2)] transition-colors has-checked:bg-foreground has-checked:text-white hover:has-[:not(:checked)]:bg-secondary focus-within:outline-2 focus-within:outline-offset-[-2px] focus-within:outline-foreground">
             <input
               type="radio"
               name="range"
@@ -90,7 +90,7 @@ export function AnalyticsRange({
       </fieldset>
 
       <div className="flex flex-col gap-1">
-        <label htmlFor="from" className="text-xs font-medium text-[#70716a]">
+        <label htmlFor="from" className="text-xs font-medium text-muted-foreground">
           Custom from
         </label>
         <input
@@ -98,11 +98,11 @@ export function AnalyticsRange({
           id="from"
           name="from"
           defaultValue={currentFrom}
-          className="h-8 rounded-[9px] border border-[#e7e7e2] bg-white px-2.5 py-1 text-sm text-[#191a17] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+          className="h-8 rounded-[9px] border border-border bg-white px-2.5 py-1 text-sm text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="to" className="text-xs font-medium text-[#70716a]">
+        <label htmlFor="to" className="text-xs font-medium text-muted-foreground">
           Custom to
         </label>
         <input
@@ -110,19 +110,19 @@ export function AnalyticsRange({
           id="to"
           name="to"
           defaultValue={currentTo}
-          className="h-8 rounded-[9px] border border-[#e7e7e2] bg-white px-2.5 py-1 text-sm text-[#191a17] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+          className="h-8 rounded-[9px] border border-border bg-white px-2.5 py-1 text-sm text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
         />
       </div>
 
       <div className="flex flex-col gap-1">
-        <label htmlFor="bucket" className="text-xs font-medium text-[#70716a]">
+        <label htmlFor="bucket" className="text-xs font-medium text-muted-foreground">
           Bucket
         </label>
         <select
           id="bucket"
           name="bucket"
           defaultValue={currentBucket}
-          className="h-8 rounded-[9px] border border-[#e7e7e2] bg-white px-2.5 py-1 text-sm text-[#191a17] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+          className="h-8 rounded-[9px] border border-border bg-white px-2.5 py-1 text-sm text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
         >
           {ANALYTICS_BUCKETS.map((bucket) => (
             <option key={bucket} value={bucket}>
@@ -131,9 +131,12 @@ export function AnalyticsRange({
           ))}
         </select>
       </div>
+      {/* SR-15 D1: the ink-filled Apply button's citron text is deleted and
+          re-decided to white -- matches the shell's identical re-decision
+          for dark-filled buttons/pills. */}
       <button
         type="submit"
-        className="h-8 rounded-[9px] bg-[#191a17] px-3.5 text-sm font-semibold text-[#e4f222] transition-colors hover:bg-[#30312d] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+        className="h-8 rounded-[9px] bg-foreground px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
       >
         Apply
       </button>

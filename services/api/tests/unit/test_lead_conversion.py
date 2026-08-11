@@ -942,3 +942,51 @@ async def test_list_leads_include_converted_true_and_false() -> None:
         assert "lead-converted" in included_ids
         assert "lead-live" in included_ids
         assert included_total == 2
+
+
+# ---------------------------------------------------------------------------
+# SR-21: lead_converted feed emit (D2/D3)
+# ---------------------------------------------------------------------------
+
+
+async def test_convert_emits_lead_converted(app: Any, db: _StubDatabase) -> None:
+    from unittest.mock import patch
+
+    db.seed_lead(tenant_id=_TENANT_ID, lead_id="lead-emit-1", stage="captured")
+
+    with patch("api.leads.admin_routes.emit_event_safe") as mock_emit:
+        mock_emit.return_value = "event-1"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _token(Role.CLIENT_ADMIN)
+            response = await client.post(
+                "/admin/leads/lead-emit-1/convert", json={}, cookies={"access_token": token},
+            )
+
+    assert response.status_code == 201
+    contact_id = response.json()["contact_id"]
+    mock_emit.assert_awaited_once()
+    _, kwargs = mock_emit.call_args
+    assert kwargs["kind"] == "lead_converted"
+    assert kwargs["category"] == "leads"
+    assert kwargs["target_id"] == "lead-emit-1"
+    assert kwargs["payload"] == {"lead_id": "lead-emit-1", "contact_id": contact_id}
+
+
+async def test_convert_still_201_when_feed_emit_raises(app: Any, db: _StubDatabase) -> None:
+    """MANDATORY (D2): a feed-insert failure must not fail the conversion."""
+    from unittest.mock import AsyncMock, patch
+
+    db.seed_lead(tenant_id=_TENANT_ID, lead_id="lead-emit-2", stage="captured")
+
+    with patch(
+        "api.notifications.emit.emit_event",
+        new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _token(Role.CLIENT_ADMIN)
+            response = await client.post(
+                "/admin/leads/lead-emit-2/convert", json={}, cookies={"access_token": token},
+            )
+
+    assert response.status_code == 201
+    assert response.json()["lead_id"] == "lead-emit-2"

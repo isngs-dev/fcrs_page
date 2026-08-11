@@ -60,8 +60,17 @@ export type MembersResult =
 
 /** List the caller's tenant's users (CLIENT_ADMIN + CLIENT_AGENT rows). */
 export async function listMembers(): Promise<MembersResult> {
+  return listMembersAtPath("/admin/users");
+}
+
+/** List a managed tenant's users for the PLATFORM_ADMIN per-client console. */
+export async function listMembersForTenant(tenantId: string): Promise<MembersResult> {
+  return listMembersAtPath(`/admin/tenants/${encodeURIComponent(tenantId)}/users`);
+}
+
+async function listMembersAtPath(path: string): Promise<MembersResult> {
   try {
-    const response = await adminApiFetch("/admin/users");
+    const response = await adminApiFetch(path);
     const body = (await response.json()) as AdminUserResponseBody[];
     return { status: "ok", items: body.map(toMemberSummary) };
   } catch (error) {

@@ -82,6 +82,11 @@ export function buildPipelineDashboard(results: LeadsResult[]): DashboardPipelin
   };
 }
 
+// SR-16 D1: as of the dashboard rebuild, no call site in the app invokes
+// this function -- the landing page no longer renders a lead-pipeline
+// kanban. Left in place deliberately (not deleted) because SR-18's real
+// Leads board is its intended future consumer; treat this as orphaned but
+// expected to be re-wired, not dead code to remove.
 export async function getDashboardPipeline(): Promise<DashboardPipelineResult> {
   const results = await Promise.all(
     DASHBOARD_STAGES.map((stage) => listLeads({ page: 1, stage: stage.key }))

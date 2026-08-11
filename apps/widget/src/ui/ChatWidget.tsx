@@ -56,6 +56,8 @@ import { ConnectionStatus, type ConnectionState } from "./ConnectionStatus";
 
 const LOG_PREFIX = "[chatbot-widget]";
 const PANEL_HEADER_ID = "cw-panel-header";
+const SUPPORT_HANDOFF_REPLY = "I'm sorry to hear that — let's get it sorted. I can connect you with one of our reps.";
+const SUPPORT_STAY_REPLY = "No problem, I'm right here. Can you tell me a bit more about what stopped working?";
 
 /** Max attempts for the bounded auto-retry of a transient turn failure (decision 1/2). */
 const TURN_RETRY_MAX_ATTEMPTS = 4;
@@ -65,13 +67,19 @@ const TURN_RETRY_MAX_ATTEMPTS = 4;
 const REMINT_MAX_ATTEMPTS = 2;
 
 /** Small inline SVGs keep the embed self-contained without adding an icon package. */
-function ChatGlyph({ name }: { name: "chat" | "close" | "sound" | "muted" | "send" }) {
+function ChatGlyph({ name }: { name: "chat" | "close" | "sound" | "muted" | "send" | "reset" | "mic" }) {
   const common = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.9 };
   if (name === "close") {
     return <svg aria-hidden="true" {...common}><path d="m6 6 12 12M18 6 6 18" /></svg>;
   }
   if (name === "send") {
-    return <svg aria-hidden="true" {...common}><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>;
+    return <svg aria-hidden="true" {...common}><path d="M5 12h14M13 6l6 6-6 6" /></svg>;
+  }
+  if (name === "reset") {
+    return <svg aria-hidden="true" {...common}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>;
+  }
+  if (name === "mic") {
+    return <svg aria-hidden="true" {...common}><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4" /></svg>;
   }
   if (name === "sound" || name === "muted") {
     return (
@@ -118,7 +126,42 @@ function getFocusableElements(panel: HTMLElement): HTMLElement[] {
   );
 }
 
-const DEFAULT_LAUNCHER_LABEL = "Chat with us";
+const DEFAULT_LAUNCHER_LABEL = "Ask Rebecca";
+
+interface VoiceRecognitionResultEvent {
+  results: ArrayLike<{ 0: { transcript: string } }>;
+}
+
+interface VoiceRecognition {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  onresult: ((event: VoiceRecognitionResultEvent) => void) | null;
+}
+
+type VoiceRecognitionConstructor = new () => VoiceRecognition;
+
+function getVoiceRecognitionConstructor(): VoiceRecognitionConstructor | null {
+  const browserWindow = window as typeof window & {
+    SpeechRecognition?: VoiceRecognitionConstructor;
+    webkitSpeechRecognition?: VoiceRecognitionConstructor;
+  };
+  return browserWindow.SpeechRecognition ?? browserWindow.webkitSpeechRecognition ?? null;
+}
+
+function connectionPresence(state: ConnectionState): string {
+  if (state.kind === "online") return "Online";
+  if (state.kind === "offline") return "Offline";
+  if (state.kind === "session-expired") return "Session expired";
+  if (state.kind === "rate-limited") return "Paused";
+  return "Reconnecting";
+}
 
 export function ChatWidget({
   config,
@@ -160,10 +203,14 @@ export function ChatWidget({
   // further visitor action. Cleared once consumed so a capture can never
   // re-send twice.
   const pendingIdentityQuestionRef = useRef<{ message: string; conversationId: string | null } | null>(null);
+  const voiceRecognitionRef = useRef<VoiceRecognition | null>(null);
+  const [listening, setListening] = useState(false);
+  const voiceSupported = getVoiceRecognitionConstructor() !== null;
 
   useEffect(() => {
     return () => {
       unmountedRef.current = true;
+      voiceRecognitionRef.current?.abort();
     };
   }, []);
 
@@ -191,6 +238,8 @@ export function ChatWidget({
         // Closing (whether via toggle or Escape) stops any in-flight
         // greeting speech so it doesn't keep talking into a closed panel.
         tts.cancel();
+        voiceRecognitionRef.current?.stop();
+        setListening(false);
       }
       return next;
     });
@@ -205,6 +254,29 @@ export function ChatWidget({
       return next;
     });
   }, []);
+
+  const toggleVoiceInput = useCallback(() => {
+    if (listening) {
+      voiceRecognitionRef.current?.stop();
+      return;
+    }
+
+    const Recognition = getVoiceRecognitionConstructor();
+    if (!Recognition) return;
+    const recognition = new Recognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = document.documentElement.lang || "en-US";
+    recognition.onstart = () => setListening(true);
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => setListening(false);
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript?.trim();
+      if (transcript) setInputValue(transcript);
+    };
+    voiceRecognitionRef.current = recognition;
+    recognition.start();
+  }, [listening]);
 
   // Focus-in on open (decision 1): move focus to the message input, the
   // first sensible target, once the panel mounts.
@@ -411,13 +483,15 @@ export function ChatWidget({
       } else {
         pendingIdentityQuestionRef.current = null;
       }
+      const offersHumanHandoff = result.turn.decision === "escalate"
+        && (result.turn.action === "schedule_cta" || result.turn.action === "lead_form");
       setMessages((prev) => [
         ...prev,
         {
           id: nextLocalId(),
           role: "bot",
-          text: result.turn.reply,
-          action: result.turn.action,
+          text: offersHumanHandoff ? SUPPORT_HANDOFF_REPLY : result.turn.reply,
+          action: offersHumanHandoff ? "handoff_choice" : result.turn.action,
         },
       ]);
     },
@@ -439,6 +513,8 @@ export function ChatWidget({
 
   const handleSend = useCallback(async () => {
     const message = inputValue;
+    voiceRecognitionRef.current?.stop();
+    setListening(false);
     setInputValue("");
     await sendMessage(message);
   }, [inputValue, sendMessage]);
@@ -459,11 +535,11 @@ export function ChatWidget({
    * orchestrator-driven escalate, so the flow stays part of the scrollable
    * thread rather than a separate panel element (spec decision 5 / DoD).
    */
-  const startScheduling = useCallback(async () => {
+  const startScheduling = useCallback(async (userText = "Connect with a sales rep") => {
     if (pending || schedulePending) return;
     setScheduleError(false);
     setSchedulePending(true);
-    setMessages((prev) => [...prev, { id: nextLocalId(), role: "user", text: "Connect with a sales rep" }]);
+    setMessages((prev) => [...prev, { id: nextLocalId(), role: "user", text: userText }]);
 
     let result = await fetchAvailabilitySummary(config);
     if (unmountedRef.current) return;
@@ -506,6 +582,15 @@ export function ChatWidget({
     ]);
   }, [config, pending, schedulePending, attemptSessionReconnect]);
 
+  const stayWithRebecca = useCallback(() => {
+    if (pending || schedulePending) return;
+    setMessages((prev) => [
+      ...prev,
+      { id: nextLocalId(), role: "user", text: "Stay with Rebecca" },
+      { id: nextLocalId(), role: "bot", text: SUPPORT_STAY_REPLY },
+    ]);
+  }, [pending, schedulePending]);
+
   /** Manual Retry (decision 4/6): replay the last failed send without a new optimistic bubble. */
   const handleManualRetry = useCallback(async () => {
     const last = lastFailedSendRef.current;
@@ -543,6 +628,22 @@ export function ChatWidget({
     [handleSend],
   );
 
+  const resetChat = useCallback(() => {
+    voiceRecognitionRef.current?.abort();
+    setListening(false);
+    setMessages([]);
+    setInputValue("");
+    setPending(false);
+    setSchedulePending(false);
+    setScheduleError(false);
+    conversationIdRef.current = null;
+    resumedConversationInPlayRef.current = false;
+    lastFailedSendRef.current = null;
+    pendingIdentityQuestionRef.current = null;
+    if (isResumeEnabled()) clearResumeRecord();
+    inputRef.current?.focus();
+  }, []);
+
   const resolvedLauncherLabel = launcherLabel?.trim()
     ? launcherLabel
     : DEFAULT_LAUNCHER_LABEL;
@@ -561,23 +662,33 @@ export function ChatWidget({
           <div className="cw-panel-header">
             <span className="cw-assistant-mark" aria-hidden="true" />
             <span className="cw-panel-title">
-              <span id={PANEL_HEADER_ID}>Assistant</span>
-              <span className="cw-panel-presence">Usually replies instantly</span>
+              <span id={PANEL_HEADER_ID}>Rebecca <span className="cw-panel-role">&middot; AI assistant</span></span>
+              <span className={`cw-panel-presence cw-panel-presence-${connectionState.kind}`}>
+                <span className="cw-presence-dot" aria-hidden="true" />
+                {connectionPresence(connectionState)}
+              </span>
             </span>
             <span className="cw-header-actions">
               <button
                 type="button"
-                className="cw-mute-toggle"
+                className="cw-header-button cw-reset-button"
+                onClick={resetChat}
+                disabled={pending || schedulePending}
+                aria-label="Start a new chat"
+                title="New chat"
+              >
+                <ChatGlyph name="reset" />
+              </button>
+              <button
+                type="button"
+                className="cw-header-button cw-mute-toggle"
                 onClick={toggleMuted}
                 aria-pressed={muted}
                 aria-label={muted ? "Turn greeting sound on" : "Turn greeting sound off"}
               >
                 <ChatGlyph name={muted ? "muted" : "sound"} />
-                <span className="cw-mute-toggle-label" aria-hidden="true">
-                  {muted ? "Off" : "On"}
-                </span>
               </button>
-              <button type="button" className="cw-close-button" onClick={toggleOpen} aria-label="Close chat">
+              <button type="button" className="cw-header-button cw-close-button" onClick={toggleOpen} aria-label="Close chat">
                 <ChatGlyph name="close" />
               </button>
             </span>
@@ -589,6 +700,8 @@ export function ChatWidget({
             config={config}
             onSuggestion={(message) => void handleSuggestion(message)}
             onIdentityCaptured={handleIdentityCaptured}
+            onHandoffTalk={() => void startScheduling("Talk to a rep")}
+            onHandoffStay={stayWithRebecca}
           />
           {scheduleError && (
             <div className="cw-sched-error" role="alert">
@@ -604,17 +717,30 @@ export function ChatWidget({
             {schedulePending ? "Connecting…" : "Connect with a sales rep"}
           </button>
           <div className="cw-input-row">
-            <input
+            <div className="cw-composer">
+              <input
               ref={inputRef}
               type="text"
               className="cw-input"
-              placeholder="Type a message…"
+                placeholder={listening ? "Listening…" : "Message Rebecca…"}
               value={inputValue}
               disabled={pending}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              aria-label="Message"
-            />
+                aria-label="Message"
+              />
+              {voiceSupported && (
+                <button
+                  type="button"
+                  className={`cw-voice-button${listening ? " cw-voice-button-active" : ""}`}
+                  onClick={toggleVoiceInput}
+                  aria-pressed={listening}
+                  aria-label={listening ? "Stop voice input" : "Start voice input"}
+                  title="Voice input"
+                >
+                  <ChatGlyph name="mic" />
+                </button>
+              )}
             <button
               type="button"
               className="cw-send-button"
@@ -624,6 +750,11 @@ export function ChatWidget({
             >
               <ChatGlyph name="send" />
             </button>
+            </div>
+            <p className="cw-disclaimer">
+              Rebecca is AI and can make mistakes <span aria-hidden="true">&middot;</span>{" "}
+              <a className="cw-privacy-link" href="/privacy">Privacy policy</a>
+            </p>
           </div>
         </div>
       )}
@@ -643,12 +774,6 @@ export function ChatWidget({
         )}
         <span className="cw-launcher-label">{resolvedLauncherLabel}</span>
       </button>
-      {!open && (
-        <div className="cw-teaser" role="status">
-          <span>Questions? I can help.</span>
-          <span className="cw-teaser-tail" aria-hidden="true" />
-        </div>
-      )}
     </>
   );
 }

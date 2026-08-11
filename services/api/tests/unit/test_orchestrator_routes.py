@@ -706,3 +706,84 @@ async def test_post_chat_message_stream_classify_llm_error_502_not_sse_error_fra
     assert resp.status_code == 502
     assert resp.json()["error_code"] == "LLM_ERROR"
     assert not resp.headers.get("content-type", "").startswith("text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# SR-21: conversation_escalated feed emit (D2/D3)
+# ---------------------------------------------------------------------------
+
+
+async def test_post_chat_message_escalate_emits_conversation_escalated() -> None:
+    app = _build_app()
+    mock_answer_turn = AsyncMock(
+        return_value=_turn_result(
+            decision="escalate", confidence=None, sources=[], action="lead_form",
+        ),
+    )
+
+    with (
+        patch("api.orchestrator.routes.answer_turn", new=mock_answer_turn),
+        patch("api.orchestrator.routes.emit_event_safe") as mock_emit,
+    ):
+        mock_emit.return_value = "event-1"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/public/chat/message",
+                json={"message": "what is the capital of France?"},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert resp.status_code == 200
+    mock_emit.assert_awaited_once()
+    _, kwargs = mock_emit.call_args
+    assert kwargs["kind"] == "conversation_escalated"
+    assert kwargs["category"] == "system"
+    assert kwargs["target_id"] == "conv-1"
+    assert kwargs["payload"] == {"conversation_id": "conv-1"}
+
+
+async def test_post_chat_message_answer_decision_does_not_emit() -> None:
+    """A clean 'answer' decision (not escalate) never emits a feed event."""
+    app = _build_app()
+    mock_answer_turn = AsyncMock(return_value=_turn_result(decision="answer"))
+
+    with (
+        patch("api.orchestrator.routes.answer_turn", new=mock_answer_turn),
+        patch("api.orchestrator.routes.emit_event_safe") as mock_emit,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/public/chat/message",
+                json={"message": "hello"},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert resp.status_code == 200
+    mock_emit.assert_not_awaited()
+
+
+async def test_post_chat_message_still_200_when_feed_emit_raises() -> None:
+    """MANDATORY (D2): a feed-insert failure must not fail the chat turn."""
+    app = _build_app()
+    mock_answer_turn = AsyncMock(
+        return_value=_turn_result(
+            decision="escalate", confidence=None, sources=[], action="lead_form",
+        ),
+    )
+
+    with (
+        patch("api.orchestrator.routes.answer_turn", new=mock_answer_turn),
+        patch(
+            "api.notifications.emit.emit_event",
+            new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
+        ),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/public/chat/message",
+                json={"message": "what is the capital of France?"},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json()["decision"] == "escalate"

@@ -72,16 +72,72 @@ class _StubDatabase:
 
         return "OK"
 
+    def _filtered_accounts(
+        self, query: str, args: tuple[Any, ...],
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Apply WHERE/ORDER BY/LIMIT the way the real repository emits them.
+
+        Hard-fails (``AssertionError``) on any ORDER BY or WHERE fragment it
+        does not recognize, rather than silently ignoring it -- SR-29 F3/8a:
+        a stub that guesses converts a loud failure into a quiet wrong answer.
+        """
+        q = query.strip().upper()
+        tenant_id = args[0]
+        rows = [r for r in self._accounts.values() if r["tenant_id"] == tenant_id]
+        idx = 1
+
+        if "NAME ILIKE $" in q and "DOMAIN ILIKE $" in q:
+            pattern = str(args[idx])
+            idx += 2
+            needle = (
+                pattern.removeprefix("%").removesuffix("%")
+                .replace("\\\\", "\\").replace("\\%", "%").replace("\\_", "_")
+                .lower()
+            )
+            rows = [
+                row for row in rows
+                if needle in (row["name"] or "").lower()
+                or needle in (row["domain"] or "").lower()
+            ]
+
+        if "ORDER BY " not in q:
+            return rows, len(rows)
+
+        if "ORDER BY NAME " in q:
+            value_for = lambda row: row["name"]  # noqa: E731
+        elif "ORDER BY DOMAIN " in q:
+            value_for = lambda row: row["domain"]  # noqa: E731
+        elif "ORDER BY CREATED_AT " in q:
+            value_for = lambda row: row["created_at"]  # noqa: E731
+        else:
+            raise AssertionError(f"stub cannot honor ORDER BY: {query}")
+
+        descending = " DESC NULLS LAST" in q
+        non_null_rows = [row for row in rows if value_for(row) is not None]
+        null_rows = [row for row in rows if value_for(row) is None]
+        non_null_rows.sort(key=lambda row: row["account_id"], reverse=True)
+        non_null_rows.sort(key=value_for, reverse=descending)
+        null_rows.sort(key=lambda row: row["account_id"], reverse=True)
+        rows = [*non_null_rows, *null_rows]
+        total = len(rows)
+
+        if "LIMIT $" in q:
+            limit = args[idx]
+            idx += 1
+            offset = args[idx] if idx < len(args) else 0
+            rows = rows[offset : offset + limit]
+
+        return rows, total
+
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         self.fetchrow_calls.append((query, args))
         q = query.strip().upper()
 
         if "COUNT(*)" in q and "FROM ACCOUNTS" in q:
-            tenant_id = args[0]
-            rows = [r for r in self._accounts.values() if r["tenant_id"] == tenant_id]
-            return {"count": len(rows)}
+            rows, total = self._filtered_accounts(query, args)
+            return {"count": total}
 
-        if "FROM ACCOUNTS" in q and "WHERE TENANT_ID" in q:
+        if "FROM ACCOUNTS" in q and "WHERE TENANT_ID" in q and "ACCOUNT_ID = $" in q:
             # get_account -- WHERE tenant_id = $1 AND account_id = $2
             tenant_id, account_id = args[0], args[1]
             return self._accounts.get((tenant_id, account_id))
@@ -93,13 +149,7 @@ class _StubDatabase:
         q = query.strip().upper()
 
         if "FROM ACCOUNTS" in q:
-            tenant_id = args[0]
-            rows = [r for r in self._accounts.values() if r["tenant_id"] == tenant_id]
-            rows.sort(key=lambda r: (r["created_at"], r["account_id"]), reverse=True)
-            if "LIMIT $" in q:
-                limit = args[1]
-                offset = args[2] if len(args) > 2 else 0
-                rows = rows[offset : offset + limit]
+            rows, _ = self._filtered_accounts(query, args)
             return rows
 
         return []
@@ -359,3 +409,194 @@ async def test_list_accounts_rejects_global_caller() -> None:
         assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
         assert db.fetch_calls == []
         assert db.fetchrow_calls == []
+
+
+# ---------------------------------------------------------------------------
+# SR-29: list_accounts sort/search contract (repository defense in depth)
+# ---------------------------------------------------------------------------
+
+
+_SORT_INJECTION_PAYLOADS = [
+    "created_at; DROP TABLE accounts--",
+    "created_at) --",
+    "name, tenant_id",
+    "(SELECT tenant_id)",
+    "created_at DESC; SELECT * FROM users",
+    "tenant_id",
+    "1",
+    "name/**/",
+    "",
+    "NAME",
+]
+
+
+@pytest.mark.parametrize("sort", _SORT_INJECTION_PAYLOADS)
+async def test_list_accounts_rejects_unknown_sort_key_at_repository_layer(sort: str) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.accounts.repository import list_accounts
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_accounts(db, _claims(), sort=sort)
+
+        assert exc_info.value.code == "INVALID_ACCOUNT_SORT"
+        assert not db.fetch_calls
+        assert not db.fetchrow_calls
+
+
+async def test_list_accounts_rejects_unknown_direction_at_repository_layer() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.accounts.repository import list_accounts
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_accounts(db, _claims(), direction="sideways")
+
+        assert exc_info.value.code == "INVALID_ACCOUNT_SORT_DIRECTION"
+        assert not db.fetch_calls
+        assert not db.fetchrow_calls
+
+
+async def test_list_accounts_default_sort_emits_created_at_desc_pk_desc() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.accounts.repository import create_account, list_accounts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await create_account(db, claims, name="Acme")
+
+        await list_accounts(db, claims)
+
+        query, args = db.fetch_calls[-1]
+        assert "ORDER BY created_at DESC NULLS LAST, account_id DESC" in query
+        assert args[0] == "tenant-abc"
+
+
+@pytest.mark.parametrize("sort", ["name", "domain", "created"])
+async def test_list_accounts_every_sort_key_emits_nulls_last_and_pk_tiebreak(sort: str) -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.accounts.repository import create_account, list_accounts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await create_account(db, claims, name="Acme")
+
+        await list_accounts(db, claims, sort=sort, direction="asc")
+
+        query, _ = db.fetch_calls[-1]
+        assert "NULLS LAST, account_id DESC" in query
+
+
+async def test_list_accounts_order_by_binds_no_extra_parameters() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.accounts.repository import create_account, list_accounts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await create_account(db, claims, name="Acme")
+
+        await list_accounts(db, claims, sort="created", direction="desc")
+        no_sort_args_len = len(db.fetch_calls[-1][1])
+
+        await list_accounts(db, claims, sort="name", direction="asc")
+        with_sort_args_len = len(db.fetch_calls[-1][1])
+
+        assert no_sort_args_len == with_sort_args_len
+
+
+@pytest.mark.parametrize("payload", _SORT_INJECTION_PAYLOADS)
+async def test_list_accounts_sort_sql_never_contains_caller_string(payload: str) -> None:
+    """Flagship injection-invariant test: for each rejected sort payload,
+    prove the caller's raw string never reaches SQL. Validation is fully
+    synchronous and raises before any query is built, so the stub must not
+    have captured a single query."""
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.accounts.repository import list_accounts
+
+        db = _StubDatabase()
+        with pytest.raises(ValidationError) as exc_info:
+            await list_accounts(db, _claims(), sort=payload)
+
+        assert exc_info.value.code == "INVALID_ACCOUNT_SORT"
+        assert db.fetch_calls == []
+        assert db.fetchrow_calls == []
+
+        for query, _args in [*db.fetch_calls, *db.fetchrow_calls]:
+            assert payload not in query
+
+
+async def test_list_accounts_count_query_and_page_query_share_identical_where() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.accounts.repository import create_account, list_accounts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await create_account(db, claims, name="Acme Holdings", domain="acme.example")
+        await create_account(db, claims, name="Widget Co", domain="widget.example")
+
+        rows, total = await list_accounts(db, claims, q="acme")
+
+        assert total == 1
+        assert len(rows) == 1
+
+
+async def test_list_accounts_q_binds_escaped_pattern_never_interpolates() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.accounts.repository import create_account, list_accounts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await create_account(db, claims, name="100% Match Co")
+
+        rows, _ = await list_accounts(db, claims, q="100%")
+
+        assert [r.name for r in rows] == ["100% Match Co"]
+        query, args = db.fetch_calls[-1]
+        assert "ILIKE $2 ESCAPE '\\' OR domain ILIKE $3 ESCAPE '\\'" in query
+        assert args[1:3] == ("%100\\%%", "%100\\%%")
+
+
+async def test_list_accounts_q_where_clause_is_parenthesized() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.accounts.repository import create_account, list_accounts
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+        await create_account(db, claims, name="Acme")
+
+        await list_accounts(db, claims, q="ac")
+
+        query, _ = db.fetch_calls[-1]
+        assert "AND (name ILIKE" in query
+        assert "OR domain ILIKE" in query and "')" in query
+
+
+async def test_list_accounts_reject_global_runs_before_sort_validation() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.accounts.repository import list_accounts
+
+        db = _StubDatabase()
+        global_claims = AuthClaims(subject="admin-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with pytest.raises(ValidationError) as exc_info:
+            await list_accounts(db, global_claims, sort="bogus-sort-key")
+
+        assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"

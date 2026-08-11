@@ -35,6 +35,32 @@ class Account:
     updated_at: datetime
 
 
+# SR-29: ORDER BY identifiers cannot be bound parameters in Postgres. The
+# VALUES in this dict are the only SQL fragments ever accepted for list
+# ordering; the caller's string is used exclusively as a dictionary KEY and
+# is never interpolated into SQL. This dict-membership check is the ONLY
+# thing preventing SQL injection on this path.
+_SORT_COLUMNS: dict[str, str] = {
+    "name": "name",
+    "domain": "domain",
+    "created": "created_at",
+}
+ACCOUNT_SORT_KEYS = frozenset(_SORT_COLUMNS)
+
+_DEFAULT_SORT = "created"
+_DEFAULT_DIRECTION = "desc"
+ACCOUNT_SORT_DEFAULT_DIRECTIONS: dict[str, str] = {
+    "name": "asc",
+    "domain": "asc",
+    "created": "desc",
+}
+
+
+def _escape_ilike_pattern(value: str) -> str:
+    """Escape user wildcard characters before binding a literal substring."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _reject_global(claims: AuthClaims) -> None:
     """Raise ``ValidationError`` for global callers (PLATFORM_ADMIN).
 
@@ -94,31 +120,72 @@ async def list_accounts(
     *,
     limit: int = 50,
     offset: int = 0,
+    q: str | None = None,
+    sort: str = _DEFAULT_SORT,
+    direction: str = _DEFAULT_DIRECTION,
 ) -> tuple[list[Account], int]:
-    """Fetch a paginated page of the caller's tenant accounts, newest first.
+    """Fetch a paginated, sorted, optionally-searched page of the caller's
+    tenant accounts.
 
-    Returns ``(rows, total)`` -- ``total`` is a ``count(*)`` over the
-    tenant-scoped WHERE (minus LIMIT/OFFSET).
+    ``sort``/``direction`` are validated here (defense-in-depth; the route
+    layer validates first) because ORDER BY structure cannot be bound as a
+    parameter. ``q`` is a literal, case-insensitive Name-or-Domain substring
+    match -- wildcard characters are escaped before binding so a search for
+    a literal ``%`` or ``_`` does not silently become a match-all/match-any
+    pattern.
+
+    Returns ``(rows, total)`` -- ``total`` is a ``count(*)`` over the same
+    filtered WHERE (minus LIMIT/OFFSET), so it stays consistent with
+    ``items`` under search. Ordered by the SR-29 closed allowlist with
+    ``account_id DESC`` as the mandatory total-order tie-break (required for
+    pagination correctness, not cosmetic).
     """
     _reject_global(claims)
 
+    if sort not in _SORT_COLUMNS:
+        raise ValidationError(f"Unknown sort key {sort!r}.", code="INVALID_ACCOUNT_SORT")
+    if direction not in {"asc", "desc"}:
+        raise ValidationError(
+            f"Unknown sort direction {direction!r}.", code="INVALID_ACCOUNT_SORT_DIRECTION",
+        )
+
+    where = "WHERE tenant_id = $1"
+    params: list[Any] = [claims.tenant_id]
+
+    if q:
+        escaped_q = _escape_ilike_pattern(q)
+        params.extend([f"%{escaped_q}%", f"%{escaped_q}%"])
+        name_idx = len(params) - 1
+        domain_idx = len(params)
+        where += (
+            f" AND (name ILIKE ${name_idx} ESCAPE '\\' "
+            f"OR domain ILIKE ${domain_idx} ESCAPE '\\')"
+        )
+
+    sort_expr = _SORT_COLUMNS[sort]  # constant; never caller input
+    direction_sql = "ASC" if direction == "asc" else "DESC"
+    # D-NULLS: NULLS LAST in BOTH directions -- an absent value is not a low value.
+    # D-TIEBREAK: `account_id DESC` is MANDATORY; without a total order, pagination
+    # can silently duplicate or skip rows across pages.
+    order_by = f"ORDER BY {sort_expr} {direction_sql} NULLS LAST, account_id DESC"
+
+    # Parameterized SQL; `where` is built above from bound params only and
+    # `order_by` is constrained to the developer-authored allowlist above.
+    # ruff: noqa: S608
     count_row = await db.fetchrow(
-        "SELECT count(*) AS count FROM accounts WHERE tenant_id = $1",
-        claims.tenant_id,
+        "SELECT count(*) AS count FROM accounts " + where, *params,
     )
     total = int(count_row["count"]) if count_row is not None else 0
 
     clamped_limit = max(1, min(limit, 200))
-    clamped_offset = max(0, offset)
+    page_params = [*params, clamped_limit, max(0, offset)]
+    limit_idx = len(page_params) - 1
+    offset_idx = len(page_params)
     rows = await db.fetch(
         "SELECT account_id, name, domain, created_at, updated_at "
-        "FROM accounts "
-        "WHERE tenant_id = $1 "
-        "ORDER BY created_at DESC, account_id DESC "
-        "LIMIT $2 OFFSET $3",
-        claims.tenant_id,
-        clamped_limit,
-        clamped_offset,
+        "FROM accounts " + where + " "
+        f"{order_by} LIMIT ${limit_idx} OFFSET ${offset_idx}",
+        *page_params,
     )
     return [_row_to_account(row) for row in rows], total
 

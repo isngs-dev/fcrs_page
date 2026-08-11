@@ -42,7 +42,7 @@ function StatusBadge({ enabled }: { enabled: boolean }) {
     <span
       className={
         "shrink-0 rounded-full px-2 py-[3px] text-[10px] font-bold tracking-wide " +
-        (enabled ? "bg-[#dcefdc] text-[#1f6a2f]" : "bg-[#f6e3df] text-[#c2452d]")
+        (enabled ? "bg-[#dcefdc] text-[var(--success-fg)]" : "bg-[#f6e3df] text-[var(--danger-fg)]")
       }
     >
       {enabled ? "ACTIVE" : "DISABLED"}
@@ -52,14 +52,14 @@ function StatusBadge({ enabled }: { enabled: boolean }) {
 
 function ClientCard({ client }: { client: ClientSummary }) {
   return (
-    <li className="flex flex-col gap-3 rounded-[14px] border border-[#e7e7e2] bg-white p-[18px]">
+    <li className="flex flex-col gap-3 rounded-[14px] border border-[var(--border)] bg-white p-[18px]">
       <div className="flex items-center gap-2.5">
-        <div className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[#ecece5] text-[13px] font-bold text-[#191a17]">
+        <div className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[#ecece5] text-[13px] font-bold text-[var(--foreground)]">
           {initials(client.name)}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-[#191a17]">{client.name}</p>
-          <p className="truncate text-[11px] text-[#96978e]">{client.slug}</p>
+          <p className="truncate text-sm font-bold text-[var(--foreground)]">{client.name}</p>
+          <p className="truncate text-[11px] text-[var(--muted-foreground)]">{client.slug}</p>
         </div>
         <StatusBadge enabled={client.enabled} />
       </div>
@@ -67,10 +67,10 @@ function ClientCard({ client }: { client: ClientSummary }) {
       {/* Usage row intentionally omitted -- no backend usage/plan/billing
           signal exists for tenants yet (see file header note). */}
 
-      <div className="flex gap-2 border-t border-[#f0f0ea] pt-3">
+      <div className="flex gap-2 border-t border-[var(--secondary)] pt-3">
         <Link
           href={`/clients/${client.tenantId}/settings`}
-          className="flex min-h-11 flex-1 items-center justify-center rounded-lg border border-[#e7e7e2] px-3 text-[11.5px] font-semibold text-[#45463f] transition-colors hover:bg-[#f7f7f3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+          className="flex min-h-11 flex-1 items-center justify-center rounded-lg border border-[var(--border)] px-3 text-[11.5px] font-semibold text-[var(--ink-2)] transition-colors hover:bg-[var(--secondary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
         >
           Open console →
         </Link>
@@ -84,9 +84,9 @@ function AddClientTile() {
     <li>
       <Link
         href="#add-client"
-        className="flex min-h-[150px] w-full flex-col items-center justify-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-[#d5d5cb] text-[#96978e] transition-colors hover:border-[#a8a99f] hover:text-[#70716a] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+        className="flex min-h-[150px] w-full flex-col items-center justify-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-[#d5d5cb] text-[var(--muted-foreground)] transition-colors hover:border-[#a8a99f] hover:text-[var(--muted-foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
       >
-        <span className="grid size-[34px] place-items-center rounded-full bg-[#f7f7f3] text-base">
+        <span className="grid size-[34px] place-items-center rounded-full bg-[var(--secondary)] text-base">
           +
         </span>
         <span className="text-xs font-semibold">Add a client</span>
@@ -107,13 +107,16 @@ export default async function ClientsPage() {
       <div className="flex items-center gap-3.5">
         <div>
           <div className="flex items-center gap-2.5">
-            <h1 className="text-xl font-bold text-[#191a17]">Clients</h1>
-            <span className="rounded-full bg-[#191a17] px-2.5 py-[3px] text-[10.5px] font-bold text-[#e4f222]">
+            <h1 className="text-xl font-bold text-[var(--foreground)]">Clients</h1>
+            {/* SR-15 D1: the PLATFORM ADMIN pill's citron text is deleted and
+                re-decided to white, matching the shell's identical
+                re-decision for dark-filled pills/buttons. */}
+            <span className="rounded-full bg-[var(--foreground)] px-2.5 py-[3px] text-[10.5px] font-bold text-white">
               PLATFORM ADMIN
             </span>
           </div>
           {result.status === "ok" ? (
-            <p className="mt-0.5 text-[12.5px] text-[#70716a]">
+            <p className="mt-0.5 text-[12.5px] text-[var(--muted-foreground)]">
               {result.items.length} tenant{result.items.length === 1 ? "" : "s"}
               {activeCount !== null ? ` · ${activeCount} active` : ""}
             </p>
@@ -121,7 +124,7 @@ export default async function ClientsPage() {
         </div>
         <a
           href="#add-client"
-          className="ml-auto flex min-h-11 items-center whitespace-nowrap rounded-lg bg-[#191a17] px-4 text-[12.5px] font-bold text-[#e4f222] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+          className="ml-auto flex min-h-11 items-center whitespace-nowrap rounded-lg bg-[var(--foreground)] px-4 text-[12.5px] font-bold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
         >
           + New client
         </a>
@@ -130,7 +133,7 @@ export default async function ClientsPage() {
       {result.status === "error" ? (
         <p
           role="alert"
-          className="rounded-[14px] border border-[#c2452d]/40 bg-[#f6e3df] p-4 text-sm text-[#c2452d]"
+          className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[#f6e3df] p-4 text-sm text-[var(--danger-fg)]"
         >
           {result.message}
           {result.correlationId ? (
@@ -138,7 +141,7 @@ export default async function ClientsPage() {
           ) : null}
         </p>
       ) : result.items.length === 0 ? (
-        <p role="status" className="rounded-[14px] border border-[#e7e7e2] bg-[#f7f7f3] p-4 text-sm text-[#45463f]">
+        <p role="status" className="rounded-[14px] border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm text-[var(--ink-2)]">
           No clients yet — use &quot;Add a client&quot; below to onboard the first one.
         </p>
       ) : (
@@ -150,9 +153,9 @@ export default async function ClientsPage() {
         </ul>
       )}
 
-      <div id="add-client" className="scroll-mt-6 rounded-[14px] border border-[#e7e7e2] bg-white p-5">
-        <h2 className="text-sm font-bold text-[#191a17]">Add client</h2>
-        <p className="mt-1 text-[12.5px] text-[#70716a]">
+      <div id="add-client" className="scroll-mt-6 rounded-[14px] border border-[var(--border)] bg-white p-5">
+        <h2 className="text-sm font-bold text-[var(--foreground)]">Add client</h2>
+        <p className="mt-1 text-[12.5px] text-[var(--muted-foreground)]">
           Creates a new tenant and its first CLIENT_ADMIN user. The client key (and generated admin
           password, if any) are shown exactly once — they cannot be recovered later.
         </p>

@@ -466,6 +466,293 @@ async def get_win_loss(
     )
 
 
+
+# ---------------------------------------------------------------------------
+# SR-19: lead sources, score distribution, agent performance, recent
+# conversions -- four new read-only aggregates over `leads` ONLY (D1/D2).
+# Each takes AuthClaims first, calls _reject_global before any SQL, filters
+# WHERE tenant_id = $1, and is single-table -- no cross-entity JOIN.
+# ---------------------------------------------------------------------------
+
+_SCORE_BAND_LABELS: tuple[str, ...] = ("0-19", "20-39", "40-59", "60-79", "80-100")
+
+
+@dataclass(frozen=True)
+class LeadSource:
+    """One real source and its share of the window's leads."""
+
+    source: str
+    count: int
+    percentage: float
+
+
+@dataclass(frozen=True)
+class LeadSourcesReport:
+    """Lead-sources donut data (D4).
+
+    `sources` carries WHATEVER real source strings exist in the window --
+    NEVER padded with the mockup's four categories and zero counts (D4). A
+    real tenant is expected to show ONE entry ('widget') for a long time,
+    because `leads.source` defaults to `'widget'` (M4) and the widget is
+    currently the platform's only lead-creation channel. That is expected
+    behaviour, not a bug -- do NOT "fix" a single-slice result by padding
+    variety or hardcoding a taxonomy the data does not have. `single_source`
+    is the UI's flag to show an honest note instead of looking broken.
+    """
+
+    sources: list[LeadSource]
+    total: int
+    single_source: bool
+
+
+async def get_lead_sources(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    window_from: datetime,
+    window_to: datetime,
+) -> LeadSourcesReport:
+    """``GROUP BY source`` over ``leads`` in ``[window_from, window_to)``.
+
+    See ``LeadSourcesReport``'s docstring (D4) -- a single-slice result for
+    a real tenant is the expected, correct output, not a defect.
+    """
+    _reject_global(claims)
+
+    # Parameterized SQL; single-table over `leads`. ruff: noqa: S608
+    rows = await db.fetch(
+        "SELECT source, count(*) AS cnt FROM leads "
+        "WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3 "
+        "GROUP BY source",
+        claims.tenant_id, window_from, window_to,
+    )
+
+    total = sum(int(row["cnt"]) for row in rows)
+
+    def _percentage(count: int) -> float:
+        rate = _round_rate(count, total)
+        return rate * 100 if rate is not None else 0.0
+
+    sources = [
+        LeadSource(
+            source=str(row["source"]),
+            count=int(row["cnt"]),
+            percentage=_percentage(int(row["cnt"])),
+        )
+        for row in rows
+    ]
+    # Deterministic order (largest first) -- makes CSV/JSON output stable.
+    sources.sort(key=lambda s: (-s.count, s.source))
+
+    return LeadSourcesReport(sources=sources, total=total, single_source=len(sources) == 1)
+
+
+@dataclass(frozen=True)
+class ScoreDistributionReport:
+    """Fixed 20-point score bands (D8), always all five present with an
+    explicit 0 when empty, plus a separate `unscored` count.
+    `qualification_score IS NULL` is NEVER bucketed into `0-19` -- a lead
+    nobody scored is not a lead that scored badly."""
+
+    bands: dict[str, int]
+    unscored: int
+    total: int
+
+
+async def get_score_distribution(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    window_from: datetime,
+    window_to: datetime,
+) -> ScoreDistributionReport:
+    """Fixed 20-point ``qualification_score`` bands (D8) over ``leads`` in
+    ``[window_from, window_to)``. ``NULL`` scores are counted separately as
+    ``unscored``, never folded into ``0-19``.
+    """
+    _reject_global(claims)
+
+    # Parameterized SQL; single-table over `leads`. ruff: noqa: S608
+    row = await db.fetchrow(
+        "SELECT "
+        "count(*) FILTER (WHERE qualification_score BETWEEN 0 AND 19)   AS band_0_19, "
+        "count(*) FILTER (WHERE qualification_score BETWEEN 20 AND 39)  AS band_20_39, "
+        "count(*) FILTER (WHERE qualification_score BETWEEN 40 AND 59)  AS band_40_59, "
+        "count(*) FILTER (WHERE qualification_score BETWEEN 60 AND 79)  AS band_60_79, "
+        "count(*) FILTER (WHERE qualification_score BETWEEN 80 AND 100) AS band_80_100, "
+        "count(*) FILTER (WHERE qualification_score IS NULL)            AS unscored "
+        "FROM leads "
+        "WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3",
+        claims.tenant_id, window_from, window_to,
+    )
+
+    if row is None:
+        bands = dict.fromkeys(_SCORE_BAND_LABELS, 0)
+        return ScoreDistributionReport(bands=bands, unscored=0, total=0)
+
+    bands = {
+        "0-19": int(row["band_0_19"]),
+        "20-39": int(row["band_20_39"]),
+        "40-59": int(row["band_40_59"]),
+        "60-79": int(row["band_60_79"]),
+        "80-100": int(row["band_80_100"]),
+    }
+    unscored = int(row["unscored"])
+    total = sum(bands.values()) + unscored
+
+    return ScoreDistributionReport(bands=bands, unscored=unscored, total=total)
+
+
+@dataclass(frozen=True)
+class AgentPerformanceRow:
+    """Per-agent (or explicit Unassigned) counts. `win_rate` is `None` at a
+    zero `contacted` denominator -- NEVER a fabricated `0` (D7)."""
+
+    assigned_agent_id: str | None
+    assigned: int
+    contacted: int
+    won: int
+    win_rate: float | None
+
+
+@dataclass(frozen=True)
+class AgentPerformanceReport:
+    """Agent performance over `leads` only -- names are resolved by the
+    caller (admin-web), NEVER by a SQL JOIN and NEVER by one request per
+    agent (D7). `unassigned` is always present as its own explicit row so
+    the table's counts sum to the tenant's total in the window."""
+
+    agents: list[AgentPerformanceRow]
+    unassigned: AgentPerformanceRow
+
+
+async def get_agent_performance(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    window_from: datetime,
+    window_to: datetime,
+) -> AgentPerformanceReport:
+    """``GROUP BY assigned_agent_id`` over ``leads`` in
+    ``[window_from, window_to)`` (D7). ``contacted`` counts leads that
+    reached at least ``contacted`` in the funnel (``stage`` IN
+    ``('contacted', 'converted')``); ``won`` counts ``stage = 'converted'``.
+    ``win_rate = won / contacted`` via ``_round_rate`` -- ``None`` when
+    ``contacted`` is 0, never a fabricated ``0``. ``assigned_agent_id IS
+    NULL`` leads are aggregated separately and returned as ``unassigned``,
+    never dropped.
+    """
+    _reject_global(claims)
+
+    # Parameterized SQL; single-table over `leads`. ruff: noqa: S608
+    rows = await db.fetch(
+        "SELECT assigned_agent_id, "
+        "count(*) AS assigned, "
+        "count(*) FILTER (WHERE stage IN ('contacted', 'converted')) AS contacted, "
+        "count(*) FILTER (WHERE stage = 'converted') AS won "
+        "FROM leads "
+        "WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3 "
+        "GROUP BY assigned_agent_id",
+        claims.tenant_id, window_from, window_to,
+    )
+
+    agents: list[AgentPerformanceRow] = []
+    unassigned = AgentPerformanceRow(
+        assigned_agent_id=None, assigned=0, contacted=0, won=0, win_rate=None,
+    )
+
+    for row in rows:
+        assigned = int(row["assigned"])
+        contacted = int(row["contacted"])
+        won = int(row["won"])
+        win_rate = _round_rate(won, contacted)
+        agent_row = AgentPerformanceRow(
+            assigned_agent_id=row["assigned_agent_id"],
+            assigned=assigned, contacted=contacted, won=won, win_rate=win_rate,
+        )
+        if row["assigned_agent_id"] is None:
+            unassigned = agent_row
+        else:
+            agents.append(agent_row)
+
+    agents.sort(key=lambda a: a.assigned_agent_id or "")
+
+    return AgentPerformanceReport(agents=agents, unassigned=unassigned)
+
+
+@dataclass(frozen=True)
+class RecentConversion:
+    """One converted lead. Deliberately NO monetary value field (D6/M5) --
+    money lives on `opportunities.amount`, a different entity behind a
+    cross-entity JOIN this module is forbidden from making."""
+
+    lead_id: str
+    name: str
+    source: str
+    stage: str
+    converted_at: datetime
+
+
+@dataclass(frozen=True)
+class RecentConversionsReport:
+    conversions: list[RecentConversion]
+
+
+_DEFAULT_RECENT_CONVERSIONS_LIMIT = 50
+
+
+async def get_recent_conversions(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    window_from: datetime,
+    window_to: datetime,
+    limit: int = _DEFAULT_RECENT_CONVERSIONS_LIMIT,
+) -> RecentConversionsReport:
+    """Reverse-chronological leads with ``stage = 'converted'`` and
+    ``updated_at`` in ``[window_from, window_to)`` (D6).
+
+    Verified against ``leads/admin_routes.py``'s ``_convert_lead`` /
+    ``leads/repository.py``'s ``mark_lead_converted``: the SAME ``UPDATE``
+    statement sets ``stage = 'converted'`` AND ``converted_to_contact_id =
+    $1`` together, guarded by ``AND converted_to_contact_id IS NULL`` --
+    there is no path in this codebase where one is set without the other,
+    so the two candidate definitions (``stage = 'converted'`` vs
+    ``converted_to_contact_id IS NOT NULL``) are equivalent here. This
+    function uses ``stage = 'converted'`` because it matches the funnel's
+    and leads-by-stage's existing stage-based vocabulary (D6's default).
+
+    Deliberately does NOT inherit ``list_leads``'s ``include_converted=False``
+    default (``AND converted_to_contact_id IS NULL``) -- that would silently
+    return zero rows for every tenant that actually converts leads, the
+    exact trap D6/M6 exists to prevent. Windows on ``updated_at`` (the
+    conversion tombstone's timestamp), not ``created_at``.
+    """
+    _reject_global(claims)
+
+    # Parameterized SQL; single-table over `leads`. ruff: noqa: S608
+    rows = await db.fetch(
+        "SELECT lead_id, name, source, stage, updated_at AS converted_at FROM leads "
+        "WHERE tenant_id = $1 AND stage = 'converted' "
+        "AND updated_at >= $2 AND updated_at < $3 "
+        "ORDER BY updated_at DESC LIMIT $4",
+        claims.tenant_id, window_from, window_to, max(1, limit),
+    )
+
+    conversions = [
+        RecentConversion(
+            lead_id=str(row["lead_id"]),
+            name=str(row["name"]),
+            source=str(row["source"]),
+            stage=str(row["stage"]),
+            converted_at=row["converted_at"],
+        )
+        for row in rows
+    ]
+
+    return RecentConversionsReport(conversions=conversions)
+
+
 async def _is_currency_configured(db: Database, claims: AuthClaims) -> bool:
     """Whether the tenant has an explicit ``tenant_opportunity_configs`` row.
 

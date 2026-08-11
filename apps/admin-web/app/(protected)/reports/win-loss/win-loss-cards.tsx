@@ -14,10 +14,10 @@ function formatMoney(amount: string, currency: string): string {
 
 function StatCard({ label, value, caption }: { label: string; value: string; caption?: string }) {
   return (
-    <div className="flex flex-col gap-1.5 rounded-[14px] border border-[#e7e7e2] p-4">
-      <span className="text-[11.5px] font-semibold text-[#70716a] uppercase">{label}</span>
-      <span className="text-[26px] font-bold tabular-nums text-[#191a17]">{value}</span>
-      {caption ? <span className="text-[11.5px] text-[#96978e]">{caption}</span> : null}
+    <div className="flex flex-col gap-1.5 rounded-[14px] border border-[var(--border)] p-4">
+      <span className="text-[11.5px] font-semibold text-[var(--muted-foreground)] uppercase">{label}</span>
+      <span className="text-[26px] font-bold tabular-nums text-[var(--foreground)]">{value}</span>
+      {caption ? <span className="text-[11.5px] text-[var(--muted-foreground)]">{caption}</span> : null}
     </div>
   );
 }
@@ -63,46 +63,46 @@ export function WinLossCards({ data }: { data: WinLossReport }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span className="rounded-[8px] bg-[#f7f7f3] px-2.5 py-1 font-semibold text-[#45463f]">
+        <span className="rounded-[8px] bg-[var(--secondary)] px-2.5 py-1 font-semibold text-[var(--ink-2)]">
           Currency: {data.currency}
         </span>
         {!data.currencyConfigured ? (
           <span
             role="status"
-            className="rounded-[8px] border border-dashed border-[#d5d5cb] px-2.5 py-1 text-[#70716a]"
+            className="rounded-[8px] border border-dashed border-[#d5d5cb] px-2.5 py-1 text-[var(--muted-foreground)]"
           >
             Currency not configured for this tenant -- defaulted to {data.currency}.
           </span>
         ) : null}
-        <span className="ml-auto font-semibold text-[#191a17]">
+        <span className="ml-auto font-semibold text-[var(--foreground)]">
           Win rate: {formatRate(data.winRate)}
         </span>
       </div>
 
       {noData ? (
-        <p role="status" className="text-sm text-[#70716a]">
+        <p role="status" className="text-sm text-[var(--muted-foreground)]">
           No data in this window.
         </p>
       ) : (
         <>
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-bold text-[#191a17]">Won</span>
+            <span className="text-sm font-bold text-[var(--foreground)]">Won</span>
             <OutcomeSection title="Won" outcome={data.won} currency={data.currency} />
           </div>
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-bold text-[#191a17]">Lost</span>
+            <span className="text-sm font-bold text-[var(--foreground)]">Lost</span>
             <OutcomeSection title="Lost" outcome={data.lost} currency={data.currency} />
           </div>
         </>
       )}
 
-      <div className="flex flex-col gap-2 border-t border-[#f0f0ea] pt-4">
-        <span className="text-sm font-bold text-[#191a17]">Loss reasons</span>
-        <p className="text-[11.5px] text-[#96978e]">
+      <div className="flex flex-col gap-2 border-t border-[var(--secondary)] pt-4">
+        <span className="text-sm font-bold text-[var(--foreground)]">Loss reasons</span>
+        <p className="text-[11.5px] text-[var(--muted-foreground)]">
           Raw, ungrouped, reverse-chronological -- not a taxonomy.
         </p>
         {data.lossReasons.length === 0 ? (
-          <p role="status" className="text-sm text-[#70716a]">
+          <p role="status" className="text-sm text-[var(--muted-foreground)]">
             No losses in this window.
           </p>
         ) : (
@@ -110,10 +110,10 @@ export function WinLossCards({ data }: { data: WinLossReport }) {
             {data.lossReasons.map((reason, i) => (
               <li
                 key={`${reason.closedAt}-${i}`}
-                className="flex flex-col gap-0.5 rounded-[10px] border border-[#f0f0ea] px-3.5 py-2.5 text-sm"
+                className="flex flex-col gap-0.5 rounded-[10px] border border-[var(--secondary)] px-3.5 py-2.5 text-sm"
               >
-                <span className="text-[11px] text-[#96978e]">{formatDate(reason.closedAt)}</span>
-                <span className="text-[#45463f]">{reason.closeReason ?? "(no reason given)"}</span>
+                <span className="text-[11px] text-[var(--muted-foreground)]">{formatDate(reason.closedAt)}</span>
+                <span className="text-[var(--ink-2)]">{reason.closeReason ?? "(no reason given)"}</span>
               </li>
             ))}
           </ul>

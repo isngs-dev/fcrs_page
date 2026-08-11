@@ -49,6 +49,24 @@ _STATUS_BY_STAGE: dict[str, str] = {
     "disqualified": "lost",
 }
 
+# SR-25 D2: lead-list ordering is derived from the state-machine constants,
+# never copied into SQL by hand. ``converted`` is already in STAGE_ORDER, so
+# only the terminal off-ramp is appended.
+_STAGES_IN_SORT_ORDER = [
+    *STAGE_ORDER,
+    *sorted(stage for stage in TERMINAL_STAGES if stage not in STAGE_ORDER),
+]
+STAGE_SORT_POSITION: dict[str, int] = {
+    stage: position for position, stage in enumerate(_STAGES_IN_SORT_ORDER, start=1)
+}
+"""Canonical pipeline position used by lead-list stage sorting (SR-25 D2)."""
+
+STATUS_SORT_POSITION: dict[str, int] = {
+    status: position
+    for position, status in enumerate(dict.fromkeys(_STATUS_BY_STAGE.values()), start=1)
+}
+"""Canonical lifecycle position used by lead-list status sorting (SR-25 D2)."""
+
 # -- Qualification score weights (module constants; documented, tunable
 #    later; not per-tenant this sprint) ---------------------------------
 _SCORE_EMAIL_PRESENT = 30

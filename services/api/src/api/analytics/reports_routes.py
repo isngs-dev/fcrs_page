@@ -44,14 +44,23 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.analytics.reports_repository import (
+    AgentPerformanceReport,
+    AgentPerformanceRow,
     BookingsSeries,
     ConversionFunnel,
     LeadsByStage,
+    LeadSourcesReport,
+    RecentConversionsReport,
+    ScoreDistributionReport,
     WinLossOutcome,
     WinLossReport,
+    get_agent_performance,
     get_bookings_series,
     get_conversion_funnel,
+    get_lead_sources,
     get_leads_by_stage,
+    get_recent_conversions,
+    get_score_distribution,
     get_win_loss,
 )
 from api.audit.repository import record_audit
@@ -856,4 +865,623 @@ async def export_win_loss_csv_for_tenant(
 ) -> StreamingResponse:
     return await _win_loss_csv_impl(
         request, claims, date_from=date_from, date_to=date_to, owner_agent_id=owner_agent_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# SR-19: four new read-only aggregates over `leads` -- lead sources, score
+# distribution, agent performance, recent conversions. Same shape as the
+# four reports above: paired routers, one shared `_impl`, `_resolve_window`,
+# `escape_csv_cell`, `report_exported` audit, PII-safe logging (D1/D3).
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Report 5: lead sources (D4)
+# ---------------------------------------------------------------------------
+
+
+class LeadSourceResponse(BaseModel):
+    source: str
+    count: int
+    percentage: float
+
+
+class LeadSourcesResponse(BaseModel):
+    window: dict[str, datetime]
+    sources: list[LeadSourceResponse]
+    total: int
+    single_source: bool
+
+
+async def _lead_sources_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> tuple[LeadSourcesResponse, LeadSourcesReport, datetime, datetime]:
+    db = request.app.state.db
+    window_from, window_to = _resolve_window(date_from, date_to)
+
+    result = await get_lead_sources(db, claims, window_from=window_from, window_to=window_to)
+
+    _log.info(
+        "lead sources report",
+        extra={
+            "event": "report_lead_sources",
+            "tenant_id": claims.tenant_id,
+            "window_from": window_from.isoformat(),
+            "window_to": window_to.isoformat(),
+            "report": "lead-sources",
+            "result_count": result.total,
+        },
+    )
+
+    response = LeadSourcesResponse(
+        window=_window_payload(window_from, window_to),
+        sources=[
+            LeadSourceResponse(source=s.source, count=s.count, percentage=s.percentage)
+            for s in result.sources
+        ],
+        total=result.total,
+        single_source=result.single_source,
+    )
+    return response, result, window_from, window_to
+
+
+@router.get("/lead-sources")
+async def get_lead_sources_route(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> LeadSourcesResponse:
+    response, _, _, _ = await _lead_sources_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+    return response
+
+
+@tenant_scoped_router.get("/lead-sources")
+async def get_lead_sources_route_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> LeadSourcesResponse:
+    response, _, _, _ = await _lead_sources_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+    return response
+
+
+_LEAD_SOURCES_CSV_HEADERS = ("source", "count", "percentage")
+
+
+async def _lead_sources_csv_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> StreamingResponse:
+    _, result, _, _ = await _lead_sources_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+
+    def _generate() -> Iterator[str]:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([escape_csv_cell(h) for h in _LEAD_SOURCES_CSV_HEADERS])
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        for s in result.sources:
+            writer.writerow([
+                escape_csv_cell(s.source), escape_csv_cell(s.count), escape_csv_cell(s.percentage),
+            ])
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    await record_audit(
+        request.app.state.db,
+        claims,
+        action="report_exported",
+        target_type="report",
+        target_id="lead-sources",
+        metadata={"report": "lead-sources", "row_count": len(result.sources)},
+        actor_context=get_platform_admin_actor(request),
+    )
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=lead-sources.csv"},
+    )
+
+
+@router.get("/lead-sources.csv")
+async def export_lead_sources_csv(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _lead_sources_csv_impl(request, claims, date_from=date_from, date_to=date_to)
+
+
+@tenant_scoped_router.get("/lead-sources.csv")
+async def export_lead_sources_csv_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _lead_sources_csv_impl(request, claims, date_from=date_from, date_to=date_to)
+
+
+# ---------------------------------------------------------------------------
+# Report 6: score distribution (D8)
+# ---------------------------------------------------------------------------
+
+
+class ScoreDistributionResponse(BaseModel):
+    window: dict[str, datetime]
+    bands: dict[str, int]
+    unscored: int
+    total: int
+
+
+async def _score_distribution_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> tuple[ScoreDistributionResponse, ScoreDistributionReport, datetime, datetime]:
+    db = request.app.state.db
+    window_from, window_to = _resolve_window(date_from, date_to)
+
+    result = await get_score_distribution(db, claims, window_from=window_from, window_to=window_to)
+
+    _log.info(
+        "score distribution report",
+        extra={
+            "event": "report_score_distribution",
+            "tenant_id": claims.tenant_id,
+            "window_from": window_from.isoformat(),
+            "window_to": window_to.isoformat(),
+            "report": "score-distribution",
+            "result_count": result.total,
+        },
+    )
+
+    response = ScoreDistributionResponse(
+        window=_window_payload(window_from, window_to),
+        bands=result.bands,
+        unscored=result.unscored,
+        total=result.total,
+    )
+    return response, result, window_from, window_to
+
+
+@router.get("/score-distribution")
+async def get_score_distribution_route(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> ScoreDistributionResponse:
+    response, _, _, _ = await _score_distribution_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+    return response
+
+
+@tenant_scoped_router.get("/score-distribution")
+async def get_score_distribution_route_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> ScoreDistributionResponse:
+    response, _, _, _ = await _score_distribution_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+    return response
+
+
+_SCORE_DISTRIBUTION_CSV_HEADERS = ("band", "count")
+
+
+async def _score_distribution_csv_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> StreamingResponse:
+    _, result, _, _ = await _score_distribution_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+
+    rows = [*result.bands.items(), ("unscored", result.unscored)]
+
+    def _generate() -> Iterator[str]:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([escape_csv_cell(h) for h in _SCORE_DISTRIBUTION_CSV_HEADERS])
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        for band, count in rows:
+            writer.writerow([escape_csv_cell(band), escape_csv_cell(count)])
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    await record_audit(
+        request.app.state.db,
+        claims,
+        action="report_exported",
+        target_type="report",
+        target_id="score-distribution",
+        metadata={"report": "score-distribution", "row_count": len(rows)},
+        actor_context=get_platform_admin_actor(request),
+    )
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=score-distribution.csv"},
+    )
+
+
+@router.get("/score-distribution.csv")
+async def export_score_distribution_csv(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _score_distribution_csv_impl(request, claims, date_from=date_from, date_to=date_to)
+
+
+@tenant_scoped_router.get("/score-distribution.csv")
+async def export_score_distribution_csv_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _score_distribution_csv_impl(request, claims, date_from=date_from, date_to=date_to)
+
+
+# ---------------------------------------------------------------------------
+# Report 7: agent performance (D7)
+# ---------------------------------------------------------------------------
+
+
+class AgentPerformanceRowResponse(BaseModel):
+    assigned_agent_id: str | None
+    assigned: int
+    contacted: int
+    won: int
+    win_rate: float | None
+
+
+class AgentPerformanceResponse(BaseModel):
+    window: dict[str, datetime]
+    agents: list[AgentPerformanceRowResponse]
+    unassigned: AgentPerformanceRowResponse
+
+
+def _agent_row_response(row: AgentPerformanceRow) -> AgentPerformanceRowResponse:
+    return AgentPerformanceRowResponse(
+        assigned_agent_id=row.assigned_agent_id,
+        assigned=row.assigned, contacted=row.contacted, won=row.won, win_rate=row.win_rate,
+    )
+
+
+async def _agent_performance_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> tuple[AgentPerformanceResponse, AgentPerformanceReport, datetime, datetime]:
+    db = request.app.state.db
+    window_from, window_to = _resolve_window(date_from, date_to)
+
+    result = await get_agent_performance(db, claims, window_from=window_from, window_to=window_to)
+
+    # PII-safe: NEVER log assigned_agent_id (D3) -- row counts only.
+    _log.info(
+        "agent performance report",
+        extra={
+            "event": "report_agent_performance",
+            "tenant_id": claims.tenant_id,
+            "window_from": window_from.isoformat(),
+            "window_to": window_to.isoformat(),
+            "report": "agent-performance",
+            "result_count": len(result.agents) + 1,
+        },
+    )
+
+    response = AgentPerformanceResponse(
+        window=_window_payload(window_from, window_to),
+        agents=[_agent_row_response(a) for a in result.agents],
+        unassigned=_agent_row_response(result.unassigned),
+    )
+    return response, result, window_from, window_to
+
+
+@router.get("/agent-performance")
+async def get_agent_performance_route(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> AgentPerformanceResponse:
+    response, _, _, _ = await _agent_performance_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+    return response
+
+
+@tenant_scoped_router.get("/agent-performance")
+async def get_agent_performance_route_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> AgentPerformanceResponse:
+    response, _, _, _ = await _agent_performance_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+    return response
+
+
+_AGENT_PERFORMANCE_CSV_HEADERS = ("assigned_agent_id", "assigned", "contacted", "won", "win_rate")
+
+
+async def _agent_performance_csv_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> StreamingResponse:
+    _, result, _, _ = await _agent_performance_impl(
+        request, claims, date_from=date_from, date_to=date_to,
+    )
+
+    rows = [*result.agents, result.unassigned]
+
+    def _generate() -> Iterator[str]:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([escape_csv_cell(h) for h in _AGENT_PERFORMANCE_CSV_HEADERS])
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        for a in rows:
+            agent_label = a.assigned_agent_id if a.assigned_agent_id is not None else "Unassigned"
+            writer.writerow([
+                escape_csv_cell(agent_label),
+                escape_csv_cell(a.assigned),
+                escape_csv_cell(a.contacted),
+                escape_csv_cell(a.won),
+                escape_csv_cell(a.win_rate),
+            ])
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    # PII-safe audit target: report name + row count only -- NEVER an
+    # assigned_agent_id (D3).
+    await record_audit(
+        request.app.state.db,
+        claims,
+        action="report_exported",
+        target_type="report",
+        target_id="agent-performance",
+        metadata={"report": "agent-performance", "row_count": len(rows)},
+        actor_context=get_platform_admin_actor(request),
+    )
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=agent-performance.csv"},
+    )
+
+
+@router.get("/agent-performance.csv")
+async def export_agent_performance_csv(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _agent_performance_csv_impl(request, claims, date_from=date_from, date_to=date_to)
+
+
+@tenant_scoped_router.get("/agent-performance.csv")
+async def export_agent_performance_csv_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _agent_performance_csv_impl(request, claims, date_from=date_from, date_to=date_to)
+
+
+# ---------------------------------------------------------------------------
+# Report 8: recent conversions (D6)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_RECENT_CONVERSIONS_LIMIT = 50
+
+
+class RecentConversionResponse(BaseModel):
+    lead_id: str
+    name: str
+    source: str
+    stage: str
+    converted_at: datetime
+
+
+class RecentConversionsResponse(BaseModel):
+    window: dict[str, datetime]
+    conversions: list[RecentConversionResponse]
+
+
+async def _recent_conversions_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+    limit: int,
+) -> tuple[RecentConversionsResponse, RecentConversionsReport, datetime, datetime]:
+    db = request.app.state.db
+    window_from, window_to = _resolve_window(date_from, date_to)
+
+    result = await get_recent_conversions(
+        db, claims, window_from=window_from, window_to=window_to, limit=limit,
+    )
+
+    # PII-safe: NEVER log a lead name/email/phone (D3) -- row count only.
+    _log.info(
+        "recent conversions report",
+        extra={
+            "event": "report_recent_conversions",
+            "tenant_id": claims.tenant_id,
+            "window_from": window_from.isoformat(),
+            "window_to": window_to.isoformat(),
+            "report": "recent-conversions",
+            "result_count": len(result.conversions),
+        },
+    )
+
+    response = RecentConversionsResponse(
+        window=_window_payload(window_from, window_to),
+        conversions=[
+            RecentConversionResponse(
+                lead_id=c.lead_id, name=c.name, source=c.source,
+                stage=c.stage, converted_at=c.converted_at,
+            )
+            for c in result.conversions
+        ],
+    )
+    return response, result, window_from, window_to
+
+
+@router.get("/recent-conversions")
+async def get_recent_conversions_route(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    limit: int = Query(default=_DEFAULT_RECENT_CONVERSIONS_LIMIT),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> RecentConversionsResponse:
+    response, _, _, _ = await _recent_conversions_impl(
+        request, claims, date_from=date_from, date_to=date_to, limit=limit,
+    )
+    return response
+
+
+@tenant_scoped_router.get("/recent-conversions")
+async def get_recent_conversions_route_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    limit: int = Query(default=_DEFAULT_RECENT_CONVERSIONS_LIMIT),  # noqa: B008
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> RecentConversionsResponse:
+    response, _, _, _ = await _recent_conversions_impl(
+        request, claims, date_from=date_from, date_to=date_to, limit=limit,
+    )
+    return response
+
+
+_RECENT_CONVERSIONS_CSV_HEADERS = ("lead_id", "name", "source", "stage", "converted_at")
+
+
+async def _recent_conversions_csv_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+    limit: int,
+) -> StreamingResponse:
+    _, result, _, _ = await _recent_conversions_impl(
+        request, claims, date_from=date_from, date_to=date_to, limit=limit,
+    )
+
+    def _generate() -> Iterator[str]:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([escape_csv_cell(h) for h in _RECENT_CONVERSIONS_CSV_HEADERS])
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        for c in result.conversions:
+            writer.writerow([
+                escape_csv_cell(c.lead_id),
+                escape_csv_cell(c.name),
+                escape_csv_cell(c.source),
+                escape_csv_cell(c.stage),
+                escape_csv_cell(c.converted_at.isoformat()),
+            ])
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    # PII-safe audit target: report name + row count only -- NEVER a lead
+    # name/email/phone (D3).
+    await record_audit(
+        request.app.state.db,
+        claims,
+        action="report_exported",
+        target_type="report",
+        target_id="recent-conversions",
+        metadata={"report": "recent-conversions", "row_count": len(result.conversions)},
+        actor_context=get_platform_admin_actor(request),
+    )
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=recent-conversions.csv"},
+    )
+
+
+@router.get("/recent-conversions.csv")
+async def export_recent_conversions_csv(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    limit: int = Query(default=_DEFAULT_RECENT_CONVERSIONS_LIMIT),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _recent_conversions_csv_impl(
+        request, claims, date_from=date_from, date_to=date_to, limit=limit,
+    )
+
+
+@tenant_scoped_router.get("/recent-conversions.csv")
+async def export_recent_conversions_csv_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    limit: int = Query(default=_DEFAULT_RECENT_CONVERSIONS_LIMIT),  # noqa: B008
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _recent_conversions_csv_impl(
+        request, claims, date_from=date_from, date_to=date_to, limit=limit,
     )

@@ -240,6 +240,36 @@ class ApiSettings(Settings):
     opportunity_default_prob_proposal: int = 50
     opportunity_default_prob_negotiation: int = 75
 
+    # Round-robin lead assignment (SR-20 D1). Used by
+    # api.leads.assignment_config_repository.get_assignment_config when a
+    # tenant has no explicit tenant_assignment_configs row -- an unconfigured
+    # tenant is deterministic and OFF, so an un-opted tenant's create_lead
+    # behavior is byte-identical to pre-SR-20 (assigned_agent_id stays NULL).
+    assignment_round_robin_default: bool = False
+
+    # Workspace settings (SR-20 D5). Used by
+    # api.admin.workspace_repository.get_workspace when a tenant has no
+    # explicit timezone/language stored -- an unconfigured tenant resolves to
+    # these platform defaults, never a guessed/fabricated value written back
+    # as if configured (no backfill, no silent fallback).
+    workspace_default_timezone: str = "UTC"
+    workspace_default_language: str = "en"
+
+    # Notifications feed retention (SR-21 D7). notification_events is the
+    # first append-only, write-on-every-lead, never-read-again table in the
+    # product; this bounds it. Consumed by the "prune-notification-events"
+    # Celery Beat task (api.notifications.events_tasks.prune_notification_events),
+    # which deletes rows older than this window once per
+    # notification_events_prune_interval_seconds.
+    notification_events_retention_days: int = 90
+
+    # notification_events_prune_interval_seconds: the Celery Beat
+    # "prune-notification-events" periodic task's fixed poll interval
+    # (default: once per day -- retention is measured in days, so a daily
+    # sweep is more than frequent enough; mirrors reminder_poll_interval_seconds's
+    # pattern for the outbound reminder dispatcher).
+    notification_events_prune_interval_seconds: int = 86400
+
 
 @lru_cache(maxsize=1)
 def get_api_settings() -> ApiSettings:

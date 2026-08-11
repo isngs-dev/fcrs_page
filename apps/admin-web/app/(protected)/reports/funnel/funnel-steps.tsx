@@ -2,6 +2,14 @@
  * Conversion funnel steps (SR-9.5 D6/D10) -- mirrors
  * `analytics/funnel-bars.tsx`'s pill shape. `disqualified` is rendered as a
  * clearly separate off-ramp card, never as a fifth step.
+ *
+ * SR-30 D30-11: the inline per-step label now shows the CONVERSION rate
+ * (1 - dropOffRate) rather than the drop-off rate, matching the reference
+ * screenshot. The two are real complements of the same already-fetched
+ * `dropOffRate` field (`reports_routes.py:521-524`) -- no new data. Guarded:
+ * a null `dropOffRate` (the first step, or a zero-denominator step) renders
+ * nothing inline, never a fabricated "100%". The raw drop-off rate is kept,
+ * unchanged, in the sr-only table below so no information is lost.
  */
 import { formatRate } from "@/lib/analytics";
 import type { FunnelReport } from "@/lib/reports";
@@ -13,13 +21,16 @@ const STAGE_LABELS: Record<string, string> = {
   converted: "Converted",
 };
 
-const STAGE_COLORS = ["#191a17", "#5a5b54", "#8a8b82", "#e4f222"] as const;
+// SR-15 D1: the final "converted" step's citron fill is deleted and
+// re-decided to the design's success-fg green, mirroring
+// `reports/leads-by-stage/stage-bars.tsx`'s identical re-decision.
+const STAGE_COLORS = ["var(--foreground)", "var(--ink-2)", "#8a8b82", "#3f7d57"] as const;
 
 export function FunnelSteps({ data }: { data: FunnelReport }) {
   const allZero = data.steps.every((s) => s.count === 0) && data.disqualifiedCount === 0;
   if (allZero) {
     return (
-      <p role="status" className="text-sm text-[#70716a]">
+      <p role="status" className="text-sm text-[var(--muted-foreground)]">
         No data in this window.
       </p>
     );
@@ -52,29 +63,29 @@ export function FunnelSteps({ data }: { data: FunnelReport }) {
                 style={{ width: `${Math.max(widthPx, 12)}px`, backgroundColor: STAGE_COLORS[i] }}
               />
               <span className="flex-1">
-                <span className="font-bold text-[#191a17] tabular-nums">
+                <span className="font-bold text-[var(--foreground)] tabular-nums">
                   {step.count.toLocaleString()}
                 </span>{" "}
-                <span className="text-[#45463f]">{STAGE_LABELS[step.stage] ?? step.stage}</span>
+                <span className="text-[var(--ink-2)]">{STAGE_LABELS[step.stage] ?? step.stage}</span>
               </span>
-              <span className="text-xs text-[#70716a]">
-                {step.dropOffRate === null ? "" : `${formatRate(step.dropOffRate)} drop-off`}
+              <span className="text-xs text-[var(--muted-foreground)]">
+                {step.dropOffRate === null ? "" : `→ ${formatRate(1 - step.dropOffRate)} conversion`}
               </span>
             </div>
           );
         })}
       </div>
 
-      <div className="flex items-center justify-between rounded-[10px] border border-dashed border-[#d5d5cb] bg-[#f7f7f3] px-4 py-2.5 text-sm">
-        <span className="text-[#70716a]">Disqualified (off-ramp, not a funnel step)</span>
-        <span className="font-bold text-[#191a17] tabular-nums">
+      <div className="flex items-center justify-between rounded-[10px] border border-dashed border-[#d5d5cb] bg-[var(--secondary)] px-4 py-2.5 text-sm">
+        <span className="text-[var(--muted-foreground)]">Disqualified (off-ramp, not a funnel step)</span>
+        <span className="font-bold text-[var(--foreground)] tabular-nums">
           {data.disqualifiedCount.toLocaleString()}
         </span>
       </div>
 
       <div className="flex items-center justify-between text-sm">
-        <span className="text-[#70716a]">Overall conversion rate (captured → converted)</span>
-        <span className="font-bold text-[#191a17]">{formatRate(data.overallConversionRate)}</span>
+        <span className="text-[var(--muted-foreground)]">Overall conversion rate (captured → converted)</span>
+        <span className="font-bold text-[var(--foreground)]">{formatRate(data.overallConversionRate)}</span>
       </div>
 
       <table className="sr-only">

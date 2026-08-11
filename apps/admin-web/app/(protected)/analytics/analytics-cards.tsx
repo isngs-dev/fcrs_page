@@ -1,26 +1,28 @@
 /**
- * Stat-tile row for the analytics dashboard, restyled to match design spec
- * screen 5b (Ink & Citron, HANDOFF-SPEC.md §3): 4 stat cards, the last one
- * on an ink surface with a citron headline number.
+ * Stat-tile row for the analytics dashboard: 4 stat cards, the last one on
+ * a near-black surface with a white headline number (SR-22: migrated off
+ * the superseded legacy palette onto the SR-15 design tokens).
  *
  * Every number here is a REAL metric already computed by
  * `services/api/src/api/analytics/repository.py` (S13.5 decision 4/6) --
- * no invented figures. Where 5b's mock text names a metric this backend
+ * no invented figures. Where the mock's text names a metric this backend
  * does not compute ("Leads captured"), that card is intentionally NOT
  * built here (see the honest-gap accounting in the restyle report) rather
  * than faked with borrowed data from another module.
  *
  * Card mapping (5b mock -> real field):
  *   1. CONVERSATIONS      -> totals.conversations
- *   2. ANSWERED W/O ESCALATION (deflection) -> deflectionRate * totals.conversations
- *   3. GROUNDED RATE       -> groundedRate (share of answers grounded in retrieved knowledge)
+ *   2. ANSWERED W/O ESCALATION (deflection) -> deflectionRate, now a RING GAUGE
+ *   3. GROUNDED RATE       -> groundedRate, now a RING GAUGE
  *   4. CALLS BOOKED (ink/citron) -> schedule.conversions
  *
- * Each rate-based card renders `formatRate`'s "No data" state visibly
- * (never a fabricated 0%) -- the load-bearing no-silent-fallback property
- * (CLAUDE.md §3, Decision 6a).
+ * SR-27 slice 9: the two rate-based cards (deflection/grounded) are swapped
+ * for `RingGauge`s (r=52, stroke-width 13, round cap, per SR-23's spec) --
+ * both keep an explicit "No data" state for a `null` rate, never a
+ * fabricated 0%-filled ring (CLAUDE.md §3, Decision 6a).
  */
 import { formatRate, type AnalyticsOverview } from "@/lib/analytics";
+import { RingGauge } from "@/app/(protected)/analytics/ring-gauge";
 
 function StatCard({
   label,
@@ -36,35 +38,38 @@ function StatCard({
   ink?: boolean;
 }) {
   const captionColor = ink
-    ? "text-[#9b9c93]"
+    ? "text-white/60"
     : captionTone === "positive"
-      ? "text-[#1f6a2f]"
+      ? "text-[var(--success-fg)]"
       : captionTone === "negative"
-        ? "text-[#c2452d]"
-        : "text-[#70716a]";
+        ? "text-[var(--danger-fg)]"
+        : "text-muted-foreground";
 
   return (
     <div
       className={
         ink
-          ? "flex flex-col gap-1.5 rounded-[14px] bg-[#191a17] p-4"
-          : "flex flex-col gap-1.5 rounded-[14px] border border-[#e7e7e2] p-4"
+          ? "flex flex-col gap-1.5 rounded-[14px] bg-foreground p-4"
+          : "flex flex-col gap-1.5 rounded-[14px] border border-border bg-card p-4 shadow-[0_1px_2px_rgba(28,27,25,.03)]"
       }
     >
       <span
         className={
           ink
-            ? "text-[11.5px] font-semibold text-[#9b9c93]"
-            : "text-[11.5px] font-semibold text-[#70716a]"
+            ? "text-[11.5px] font-semibold text-white/60"
+            : "text-[11.5px] font-semibold text-muted-foreground"
         }
       >
         {label.toUpperCase()}
       </span>
       <span
         className={
+          // SR-15 D1: the ink-background variant's citron value text is
+          // deleted and re-decided to white -- it already reads as the
+          // emphasized number on a dark card fill.
           ink
-            ? "text-[30px] font-bold tabular-nums text-[#e4f222]"
-            : "text-[30px] font-bold tabular-nums text-[#191a17]"
+            ? "text-[30px] font-bold tabular-nums text-white"
+            : "text-[30px] font-bold tabular-nums text-foreground"
         }
       >
         {value}
@@ -82,11 +87,11 @@ function StatCard({
  */
 function MiniTotal({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex flex-col gap-0.5 rounded-[10px] border border-[#f0f0ea] bg-[#f7f7f3] px-3 py-2">
-      <span className="text-[10.5px] font-semibold tracking-wide text-[#96978e] uppercase">
+    <div className="flex flex-col gap-0.5 rounded-[10px] border border-border bg-secondary px-3 py-2">
+      <span className="text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase">
         {label}
       </span>
-      <span className="text-[15px] font-bold tabular-nums text-[#191a17]">{value}</span>
+      <span className="text-[15px] font-bold tabular-nums text-foreground">{value}</span>
     </div>
   );
 }
@@ -109,25 +114,28 @@ export function AnalyticsCards({ data }: { data: AnalyticsOverview }) {
           value={data.totals.conversations.toLocaleString()}
           caption={`${data.totals.userTurns.toLocaleString()} visitor turns in this window`}
         />
-        <StatCard
+        {/* SR-27 slice 9: the two rate cards become ring gauges
+            (SR-23 spec, r=52/stroke-13/round-cap). Both real fields
+            (`deflection_rate`/`grounded_rate`, `analytics/routes.py:88-89`);
+            a `null` rate renders the gauge's own "No data" state, never a
+            0%-filled ring. */}
+        <RingGauge
           label="Answered without escalation"
-          value={formatRate(data.deflectionRate)}
+          rate={data.deflectionRate}
           caption={
             data.deflectionRate === null
               ? "No conversations in this window."
-              : `${deflectedCount?.toLocaleString()} of ${data.totals.conversations.toLocaleString()} conversations deflected`
+              : `${deflectedCount?.toLocaleString()} of ${data.totals.conversations.toLocaleString()} deflected`
           }
-          captionTone={data.deflectionRate === null ? "muted" : "positive"}
         />
-        <StatCard
+        <RingGauge
           label="Grounded rate"
-          value={formatRate(data.groundedRate)}
+          rate={data.groundedRate}
           caption={
             data.groundedRate === null
               ? "No answered turns in this window."
               : "Share of answers grounded in retrieved knowledge"
           }
-          captionTone={data.groundedRate === null ? "muted" : "positive"}
         />
         <StatCard
           label="Calls booked"

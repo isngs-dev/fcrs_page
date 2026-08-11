@@ -41,6 +41,10 @@ class _StubDatabase:
 
     def __init__(self) -> None:
         self._users: dict[str, dict[str, Any]] = {}
+        self._tenants = {
+            _TENANT_ID: {"id": _TENANT_ID, "enabled": True},
+            _OTHER_TENANT_ID: {"id": _OTHER_TENANT_ID, "enabled": True},
+        }
         self._emails_lower: set[str] = set()
         self._seq = 0
 
@@ -77,6 +81,8 @@ class _StubDatabase:
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         q = query.strip().upper()
+        if q.startswith("SELECT") and "FROM TENANTS" in q and "WHERE ID = $1" in q:
+            return self._tenants.get(str(args[0]))
         if q.startswith("SELECT") and "FROM USERS" in q and "WHERE ID = $1 AND TENANT_ID" in q:
             user_id, tenant_id = args
             row = self._users.get(user_id)
@@ -200,6 +206,25 @@ async def test_get_users_returns_tenant_users(app: Any, db: _StubDatabase) -> No
     body = response.json()
     assert len(body) == 1
     assert body[0]["id"] == "agent-1"
+    assert "password_hash" not in body[0]
+
+
+async def test_platform_admin_can_list_users_for_the_target_tenant(
+    app: Any, db: _StubDatabase
+) -> None:
+    """The tenant-explicit read path supplies SR-25's platform Leads filter."""
+    db.seed_user(user_id="agent-1", tenant_id=_TENANT_ID, email="a@acme.test")
+    db.seed_user(user_id="agent-2", tenant_id=_OTHER_TENANT_ID, email="b@other.test")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.PLATFORM_ADMIN, tenant_id=None, subject="platform-1")
+        response = await client.get(
+            f"/admin/tenants/{_TENANT_ID}/users", cookies={"access_token": token}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [row["id"] for row in body] == ["agent-1"]
     assert "password_hash" not in body[0]
 
 

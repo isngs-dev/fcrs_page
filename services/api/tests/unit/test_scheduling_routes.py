@@ -1556,3 +1556,88 @@ async def test_post_handoff_intent_invalid_email_returns_422() -> None:
 
     assert response.status_code == 422
     assert db._handoff_intents == []
+
+
+# ---------------------------------------------------------------------------
+# SR-21: lead_captured feed emit (D2/D3) -- 3rd of 3 mandatory call sites
+# ---------------------------------------------------------------------------
+
+
+async def test_post_book_no_prior_lead_emits_lead_captured() -> None:
+    """The new-lead branch of the booking autolink emits exactly one
+    lead_captured event."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    body = _book_body()
+    body.update({"email": "qa+emit@example.com", "name": "QA Emit"})
+
+    with patch("api.scheduling.routes.emit_event_safe") as mock_emit:
+        mock_emit.return_value = "event-1"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token(visitor_id="visitor-emit-1")
+            response = await client.post(
+                "/public/schedule/book", json=body, headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 201
+    mock_emit.assert_awaited_once()
+    _, kwargs = mock_emit.call_args
+    assert kwargs["kind"] == "lead_captured"
+    assert kwargs["category"] == "leads"
+    lead = next(iter(db._leads.values()))
+    assert kwargs["target_id"] == lead["lead_id"]
+    assert kwargs["payload"] == {"lead_id": lead["lead_id"]}
+
+
+async def test_post_book_existing_lead_link_does_not_emit_lead_captured() -> None:
+    """Linking onto an existing lead (no new lead row) does not emit."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    # First booking creates the lead (real create_lead call against the stub).
+    body1 = _book_body()
+    body1.update({"email": "qa+existing@example.com", "name": "QA Existing"})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _visitor_token(visitor_id="visitor-existing-1")
+        first = await client.post(
+            "/public/schedule/book", json=body1, headers={"Authorization": f"Bearer {token}"}
+        )
+    assert first.status_code == 201
+
+    # Second booking by the SAME visitor links onto the existing lead --
+    # no create_lead, so no lead_captured should be emitted for it.
+    body2 = _book_body(starts_at=f"{_MONDAY}T10:00:00+00:00")
+    with patch("api.scheduling.routes.emit_event_safe") as mock_emit:
+        mock_emit.return_value = "event-2"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token(visitor_id="visitor-existing-1")
+            second = await client.post(
+                "/public/schedule/book", json=body2, headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert second.status_code == 201
+    mock_emit.assert_not_awaited()
+
+
+async def test_post_book_still_201_when_feed_emit_raises() -> None:
+    """MANDATORY (D2): a feed-insert failure must not fail the booking."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    body = _book_body()
+    body.update({"email": "qa+failopen@example.com", "name": "QA FailOpen"})
+
+    with patch(
+        "api.notifications.emit.emit_event",
+        new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token(visitor_id="visitor-emit-failopen")
+            response = await client.post(
+                "/public/schedule/book", json=body, headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 201
+    assert len(db._leads) == 1

@@ -25,7 +25,9 @@ from pydantic import BaseModel, field_validator
 
 from api.config import ApiSettings, get_api_settings
 from api.gateway.dependencies import get_visitor_claims
+from api.leads.assignment import assign_lead_fail_open
 from api.leads.repository import add_activity, create_lead, get_lead_id_by_visitor_id
+from api.notifications.emit import emit_event_safe
 from api.notifications.recipients import resolve_event_recipient
 from api.notifications.repository import enqueue_notification
 from api.notifications.tasks import send_notification
@@ -486,6 +488,29 @@ async def book_slot(
                 phone=None,
                 consent=consent_with_timestamp,
                 source="booking",
+            )
+            # -- Round-robin auto-assignment (SR-20 D1/D2/D3, M3's third
+            # call site -- the one a partial fix is most likely to miss).
+            # Fail-open, AFTER the durable lead write, and only for the
+            # genuinely-new-lead branch of this create-or-link. This whole
+            # block is already best-effort (the booking survives regardless,
+            # per the surrounding try/except), but assign_lead_fail_open
+            # never raises anyway (D3).
+            await assign_lead_fail_open(db, claims, lead_id=lead_id)
+            # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable lead
+            # write. Only for the genuinely-new-lead branch of this
+            # create-or-link -- this whole block is already best-effort
+            # (booking survives regardless, per the surrounding try/except),
+            # but emit_event_safe never raises anyway.
+            await emit_event_safe(
+                db,
+                claims,
+                kind="lead_captured",
+                category="leads",
+                target_type="lead",
+                target_id=lead_id,
+                payload={"lead_id": lead_id},
+                actor_id=None,
             )
         await set_event_lead_id(db, claims, event.event_id, lead_id)
         await add_activity(

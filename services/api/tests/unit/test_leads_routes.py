@@ -662,3 +662,81 @@ async def test_post_leads_enqueue_failure_logs_crm_enqueue_failed(caplog: Any) -
                 )
 
     assert "crm_enqueue_failed" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# SR-21: lead_captured feed emit (D2/D3) -- one of the 3 mandatory call sites
+# ---------------------------------------------------------------------------
+
+
+async def test_post_leads_emits_lead_captured() -> None:
+    """After a successful capture, the feed emits exactly one lead_captured
+    event with the trusted lead_id (never PII in the payload)."""
+    db = _StubDatabase()
+    app = _build_app(db)
+
+    mock_create_lead = AsyncMock(return_value="lead-emit-1")
+
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch("api.leads.routes.emit_event_safe") as mock_emit,
+    ):
+        mock_emit.return_value = "event-1"
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            visitor_token = _create_visitor_token()
+            body = {
+                "name": "Jane",
+                "email": "jane@example.com",
+                "consent": {"granted": True, "purpose": "contact", "text": "OK"},
+            }
+            response = await client.post(
+                "/public/leads", json=body, headers={"Authorization": f"Bearer {visitor_token}"},
+            )
+
+    assert response.status_code == 201
+    mock_emit.assert_awaited_once()
+    _, kwargs = mock_emit.call_args
+    assert kwargs["kind"] == "lead_captured"
+    assert kwargs["category"] == "leads"
+    assert kwargs["target_id"] == "lead-emit-1"
+    assert kwargs["payload"] == {"lead_id": "lead-emit-1"}
+    assert "jane@example.com" not in str(kwargs["payload"])
+
+
+async def test_post_leads_still_201_when_feed_emit_raises() -> None:
+    """MANDATORY (D2 -- the most important test in this sprint): if the feed
+    insert fails for any reason, the lead capture must still succeed with a
+    normal 201 and the lead exists. emit_event_safe itself never raises (it
+    is the fail-open boundary), so forcing the underlying events_repository
+    call to raise proves the ordering holds all the way through the real
+    (non-mocked) emit_event_safe wrapper."""
+    db = _StubDatabase()
+    app = _build_app(db)
+
+    mock_create_lead = AsyncMock(return_value="lead-emit-2")
+
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch(
+            "api.notifications.emit.emit_event",
+            new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            visitor_token = _create_visitor_token()
+            body = {
+                "name": "Jane",
+                "email": "jane@example.com",
+                "consent": {"granted": True, "purpose": "contact", "text": "OK"},
+            }
+            response = await client.post(
+                "/public/leads", json=body, headers={"Authorization": f"Bearer {visitor_token}"},
+            )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["lead_id"] == "lead-emit-2"

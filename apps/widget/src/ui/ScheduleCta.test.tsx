@@ -522,6 +522,14 @@ describe("ScheduleCta", () => {
       return input;
     }
 
+    function continueFromTimeSelection(): void {
+      const button = container.querySelector<HTMLButtonElement>(".cw-sched-continue-button");
+      if (!button) throw new Error("continue button not found");
+      act(() => {
+        button.click();
+      });
+    }
+
     it("renders a real month calendar (role=grid > role=row > role=gridcell) with only server-marked days enabled", async () => {
       act(() => {
         root.render(<ScheduleCta config={baseConfig} summary={SUMMARY} />);
@@ -536,15 +544,20 @@ describe("ScheduleCta", () => {
 
       const dayButtons = getCalendarDayButtons();
       expect(dayButtons.length).toBe(3);
-      const disabledDay = dayButtons.find((b) => b.textContent === "20");
-      const enabledDay = dayButtons.find((b) => b.textContent === "21");
+      const disabledDay = dayButtons.find((b) => b.querySelector(".cw-sched-day-number")?.textContent === "20");
+      const enabledDay = dayButtons.find((b) => b.querySelector(".cw-sched-day-number")?.textContent === "21");
       expect(disabledDay?.disabled).toBe(true);
       expect(enabledDay?.disabled).toBe(false);
     });
 
     it("renders a timezone selector defaulting to the server's tenant timezone", async () => {
+      fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
       act(() => {
         root.render(<ScheduleCta config={baseConfig} summary={SUMMARY} />);
+      });
+      await flush();
+      act(() => {
+        getEnabledCalendarDayButton().click();
       });
       await flush();
 
@@ -553,6 +566,44 @@ describe("ScheduleCta", () => {
       const options = Array.from(select.querySelectorAll("option")).map((o) => o.value);
       expect(options).toContain("America/New_York");
       expect(options.length).toBeGreaterThan(1);
+    });
+
+    it("renders the meeting-card header and dismisses the scheduling card from its close control", async () => {
+      act(() => {
+        root.render(<ScheduleCta config={baseConfig} summary={SUMMARY} />);
+      });
+      await flush();
+
+      expect(container.querySelector(".cw-sched-card-header")?.textContent).toMatch(/Schedule a meeting/i);
+      expect(container.querySelector(".cw-sched-rep")?.textContent).toMatch(/Sales team/i);
+      const close = container.querySelector<HTMLButtonElement>('.cw-sched-close[aria-label="Close scheduling"]');
+      act(() => {
+        close?.click();
+      });
+      expect(container.querySelector(".cw-sched-card")).toBeNull();
+    });
+
+    it("keeps the invite step behind an explicit time selection and Continue action", async () => {
+      fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A, SLOT_B] });
+      act(() => {
+        root.render(<ScheduleCta config={baseConfig} summary={SUMMARY} />);
+      });
+      await flush();
+      act(() => {
+        getEnabledCalendarDayButton().click();
+      });
+      await flush();
+
+      const continueButton = container.querySelector<HTMLButtonElement>(".cw-sched-continue-button");
+      expect(continueButton?.disabled).toBe(true);
+      expect(container.querySelector("#cw-sched-email")).toBeNull();
+
+      act(() => {
+        getSlotButton(0).click();
+      });
+      expect(continueButton?.disabled).toBe(false);
+      continueFromTimeSelection();
+      expect(container.querySelector("#cw-sched-email")).not.toBeNull();
     });
 
     it("picking an enabled day fetches and renders the 3-column time grid for that day, and the booking carries the chosen timezone", async () => {
@@ -578,13 +629,15 @@ describe("ScheduleCta", () => {
       expect(input.dateTo).toBe("2026-07-21");
       expect(getSlotButtons()).toHaveLength(1);
 
-      // Override the timezone before confirming — the booking must carry the selector's value, not the resolved default.
+      // Select a time, then continue to the invite step. The booking must
+      // carry the timezone chosen in the preceding time-selection step.
       act(() => {
         getSlotButton(0).click();
       });
+      continueFromTimeSelection();
       const select = container.querySelector<HTMLSelectElement>("#cw-sched-timezone");
-      // The timezone selector only exists on the calendar step; the confirm
-      // step carries the value already chosen there via component state.
+      // The timezone selector only exists on the time step; the invite step
+      // carries the value via component state.
       expect(select).toBeNull();
 
       act(() => {
@@ -602,6 +655,8 @@ describe("ScheduleCta", () => {
       const [, bookInput] = bookSlotMock.mock.calls[0] as [WidgetConfig, { timezone: string; email?: string }];
       expect(bookInput.timezone).toBe("America/New_York");
       expect(bookInput.email).toBe("invite@example.com");
+      expect(container.querySelector(".cw-sched-booked-message")?.textContent).toContain("invite@example.com");
+      expect(container.querySelector(".cw-sched-success-card")?.textContent).toMatch(/Sales team/i);
     });
 
     it("the email step gates Confirm behind both consent AND a non-empty email", async () => {
@@ -618,6 +673,7 @@ describe("ScheduleCta", () => {
       act(() => {
         getSlotButton(0).click();
       });
+      continueFromTimeSelection();
 
       // Consent alone, no email -> still disabled.
       act(() => {
@@ -645,10 +701,12 @@ describe("ScheduleCta", () => {
       act(() => {
         getSlotButton(0).click();
       });
+      continueFromTimeSelection();
 
       const recap = container.querySelector(".cw-sched-recap");
       expect(recap).not.toBeNull();
-      expect(recap?.textContent).toContain("America/New_York");
+      expect(recap?.textContent).toMatch(/Time/i);
+      expect(recap?.textContent).toMatch(/Date/i);
     });
 
     it("existingBooking non-null shows the 'keep it / book another' ask BEFORE the calendar; 'keep it' dismisses without booking; 'book another' proceeds", async () => {
@@ -751,6 +809,7 @@ describe("ScheduleCta", () => {
       act(() => {
         getSlotButton(0).click();
       });
+      continueFromTimeSelection();
       act(() => {
         setNativeInputValue(getEmailInput(), "invite@example.com");
       });

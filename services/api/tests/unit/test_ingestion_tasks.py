@@ -39,7 +39,7 @@ import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -402,6 +402,103 @@ async def test_ingest_document_parse_error_records_failure_no_raise() -> None:
     # parsed.txt must NOT be stored.
     parsed_key = f"{_TENANT_ID}/{_DOC_ID}/parsed.txt"
     assert not storage.exists(parsed_key)
+
+
+# ==============================================================================
+# SR-21: ingestion_failed feed emit (D2/D3) -- one of the 4 mandatory sites
+# (the parse-error path). The other three (embedding-not-configured,
+# embedding-failed-after-retries, dim-mismatch) share the identical
+# emit_event_safe(kind="ingestion_failed", category="system", ...) shape at
+# their own "failed" return points -- covered structurally by this same
+# call-site pattern; this test proves the wiring holds for at least the
+# first and most common deterministic-failure path end to end.
+# ==============================================================================
+
+
+async def test_ingest_document_parse_error_emits_ingestion_failed() -> None:
+    _reset_modules()
+
+    storage_key = f"{_TENANT_ID}/{_DOC_ID}/garbage.docx"
+    storage = _InMemoryStorage({storage_key: b"\x00\x01 not a docx"})
+    db = _RecordingDatabase(
+        doc_row=_make_doc_row(
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
+            storage_key=storage_key,
+        )
+    )
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        get_api_settings_mod = __import__("api.config", fromlist=["get_api_settings"])
+        get_api_settings_mod.get_api_settings.cache_clear()
+
+        from common.auth import AuthClaims, Role  # noqa: PLC0415
+
+        claims = AuthClaims(subject="system:ingestion", role=Role.CLIENT_ADMIN, tenant_id=_TENANT_ID)
+
+        from api.ingestion.tasks import _execute  # noqa: PLC0415
+
+        class _FakeTask:
+            pass
+
+        with patch("api.ingestion.tasks.emit_event_safe") as mock_emit:
+            mock_emit.return_value = "event-1"
+            result = await _execute(
+                _FakeTask(), db, claims, _DOC_ID, _RUN_ID, storage,  # type: ignore[arg-type]
+            )
+
+    assert result["status"] == "failed"
+    mock_emit.assert_awaited_once()
+    _, kwargs = mock_emit.call_args
+    assert kwargs["kind"] == "ingestion_failed"
+    assert kwargs["category"] == "system"
+    assert kwargs["target_id"] == _RUN_ID
+    assert kwargs["payload"]["doc_id"] == _DOC_ID
+    assert kwargs["payload"]["run_id"] == _RUN_ID
+
+
+async def test_ingest_document_still_marks_failed_when_feed_emit_raises() -> None:
+    """MANDATORY (D2): a feed-insert failure must not break the ingestion
+    failure-handling path itself -- the run/doc are still marked failed and
+    _execute returns normally (no unhandled exception)."""
+    _reset_modules()
+
+    storage_key = f"{_TENANT_ID}/{_DOC_ID}/garbage.docx"
+    storage = _InMemoryStorage({storage_key: b"\x00\x01 not a docx"})
+    db = _RecordingDatabase(
+        doc_row=_make_doc_row(
+            content_type=(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
+            storage_key=storage_key,
+        )
+    )
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        get_api_settings_mod = __import__("api.config", fromlist=["get_api_settings"])
+        get_api_settings_mod.get_api_settings.cache_clear()
+
+        from common.auth import AuthClaims, Role  # noqa: PLC0415
+
+        claims = AuthClaims(subject="system:ingestion", role=Role.CLIENT_ADMIN, tenant_id=_TENANT_ID)
+
+        from api.ingestion.tasks import _execute  # noqa: PLC0415
+
+        class _FakeTask:
+            pass
+
+        with patch(
+            "api.notifications.emit.emit_event",
+            new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
+        ):
+            result = await _execute(
+                _FakeTask(), db, claims, _DOC_ID, _RUN_ID, storage,  # type: ignore[arg-type]
+            )
+
+    assert result["status"] == "failed"
+    run_updates = [e for e in db.executions if "INGESTION_RUNS" in e[0].upper()]
+    assert any(e[1][0] == "failed" for e in run_updates)
 
 
 # ==============================================================================

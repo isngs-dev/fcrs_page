@@ -70,32 +70,32 @@ export function MessageSources({ messageId, sourceCount, replyContent, fetchSour
         type="button"
         onClick={handleToggle}
         aria-expanded={expanded}
-        className="w-fit text-[10.5px] font-semibold text-[#70716a] underline underline-offset-2"
+        className="w-fit text-[10.5px] font-semibold text-[var(--muted-foreground)] underline underline-offset-2"
       >
         {sourcesToggleLabel(sourceCount)}
       </button>
 
       {expanded ? (
-        <div className="max-w-[520px] rounded-[10px] border border-[#e7e7e2] bg-[#fbfbf8] p-3 text-[12px]">
+        <div className="max-w-[520px] rounded-[10px] border border-[var(--border)] bg-[#fbfbf8] p-3 text-[12px]">
           {state.status === "loading" ? (
-            <p role="status" className="text-[#96978e]">
+            <p role="status" className="text-[var(--muted-foreground)]">
               Loading sources…
             </p>
           ) : state.status === "loaded" && state.result.status === "error" ? (
-            <p role="alert" className="text-[#c2452d]">
+            <p role="alert" className="text-[var(--danger-fg)]">
               {state.result.message}
             </p>
           ) : state.status === "loaded" && state.result.status === "ok" ? (
             <div className="flex flex-col gap-3">
               <div>
-                <p className="mb-1 text-[10.5px] font-bold text-[#45463f]">Reply</p>
-                <p className="text-[#191a17]">{replyContent}</p>
+                <p className="mb-1 text-[10.5px] font-bold text-[var(--ink-2)]">Reply</p>
+                <p className="text-[var(--foreground)]">{replyContent}</p>
               </div>
               <div className="flex flex-col gap-2">
                 {state.result.detail.sources.map((source) => (
-                  <div key={source.chunkId} className="border-t border-[#e7e7e2] pt-2">
-                    <p className="text-[10.5px] text-[#96978e]">{sourceMetaLabel(source)}</p>
-                    <p className={source.resolved ? "text-[#191a17]" : "italic text-[#96978e]"}>
+                  <div key={source.chunkId} className="border-t border-[var(--border)] pt-2">
+                    <p className="text-[10.5px] text-[var(--muted-foreground)]">{sourceMetaLabel(source)}</p>
+                    <p className={source.resolved ? "text-[var(--foreground)]" : "italic text-[var(--muted-foreground)]"}>
                       {sourceBodyText(source)}
                     </p>
                   </div>

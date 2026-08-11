@@ -32,7 +32,7 @@ import asyncpg
 from common.auth import AuthClaims, Role
 from common.crypto import hash_password
 from common.db import Database
-from common.errors import ValidationError
+from common.errors import AuthorizationError, ValidationError
 from common.tenancy import require_role
 
 _CLIENT_KEY_PREFIX = "pk_"  # noqa: S105
@@ -163,18 +163,16 @@ async def create_tenant_with_admin(
     }
 
 
-async def rotate_client_key(
-    db: Database, claims: AuthClaims, tenant_id: str
-) -> str | None:
-    """Mint + hash a fresh client key for ``tenant_id``; the old key stops working
-    immediately (no grace-period dual-validity -- decision 8).
+async def _rotate_client_key_impl(db: Database, tenant_id: str) -> str | None:
+    """The shared crypto/SQL logic behind BOTH ``rotate_client_key``
+    (PLATFORM_ADMIN, any tenant) and ``rotate_own_client_key`` (SR-20 D6:
+    CLIENT_ADMIN, own tenant only). No RBAC check -- callers gate first.
 
-    Requires ``Role.PLATFORM_ADMIN``. Returns the new RAW key on success, or
-    ``None`` if ``tenant_id`` does not exist (route maps this to 404
-    ``TENANT_NOT_FOUND``).
+    Mints + hashes a fresh client key for ``tenant_id``; the old key stops
+    working immediately (no grace-period dual-validity -- decision 8).
+    Returns the new RAW key on success, or ``None`` if ``tenant_id`` does
+    not exist.
     """
-    require_role(claims, Role.PLATFORM_ADMIN)
-
     raw_client_key = _generate_client_key()
     client_key_hash = _hash_client_key(raw_client_key)
     row = await db.fetchrow(
@@ -185,3 +183,46 @@ async def rotate_client_key(
     if row is None:
         return None
     return raw_client_key
+
+
+async def rotate_client_key(
+    db: Database, claims: AuthClaims, tenant_id: str
+) -> str | None:
+    """Mint + hash a fresh client key for ``tenant_id``; the old key stops working
+    immediately (no grace-period dual-validity -- decision 8).
+
+    Requires ``Role.PLATFORM_ADMIN`` -- UNCHANGED since S12.1/M7. This is the
+    tenant-explicit route's function; ``CLIENT_ADMIN`` self-service rotation
+    is a SEPARATE function, ``rotate_own_client_key`` (SR-20 D6), so this
+    route's existing RBAC and tests are untouched. Returns the new RAW key
+    on success, or ``None`` if ``tenant_id`` does not exist (route maps this
+    to 404 ``TENANT_NOT_FOUND``).
+    """
+    require_role(claims, Role.PLATFORM_ADMIN)
+    return await _rotate_client_key_impl(db, tenant_id)
+
+
+async def rotate_own_client_key(db: Database, claims: AuthClaims) -> str | None:
+    """Mint + hash a fresh client key for the CALLER'S OWN tenant (SR-20 D6).
+
+    Requires ``Role.CLIENT_ADMIN`` with a tenant_id (never a global caller).
+    Unlike ``rotate_client_key``, the target tenant is ALWAYS
+    ``claims.tenant_id`` -- never a caller-supplied id -- so a CLIENT_ADMIN
+    can only ever rotate their own tenant's key (CLAUDE.md §3: tenant_id
+    never from input). Reuses the exact same crypto/SQL as the existing
+    PLATFORM_ADMIN path (``_rotate_client_key_impl``) -- one rotation
+    mechanism, two RBAC-gated entry points, per M6/D6 ("extend, never
+    reinvent").
+
+    Returns the new RAW key on success. Raises ``AuthorizationError`` for
+    any other role. ``tenant_id`` always exists for a CLIENT_ADMIN (the
+    tenant row IS what makes the caller a CLIENT_ADMIN), so this never
+    returns ``None`` -- unlike the PLATFORM_ADMIN path, there is no
+    "unknown tenant" case to handle here.
+    """
+    if claims.role != Role.CLIENT_ADMIN or claims.tenant_id is None:
+        raise AuthorizationError(
+            "Only a CLIENT_ADMIN may rotate their own tenant's client key.",
+            code="ROLE_NOT_PERMITTED",
+        )
+    return await _rotate_client_key_impl(db, claims.tenant_id)

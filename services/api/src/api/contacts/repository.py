@@ -76,6 +76,45 @@ def _reject_global(claims: AuthClaims) -> None:
         )
 
 
+# SR-29: ORDER BY identifiers cannot be bound parameters in Postgres. The
+# VALUES in this dict are the only SQL fragments ever accepted for list
+# ordering; the caller's string is used exclusively as a dictionary KEY and
+# is never interpolated into SQL. This dict-membership check is the ONLY
+# thing preventing SQL injection on this path.
+#
+# D-COMPANY-SORT: "account" orders by the opaque account_id -- it GROUPS
+# contacts by company (clustering same-account rows adjacently, and is
+# index-assisted by idx_contacts_tenant_account), it does NOT alpha-sort by
+# company name. A `LEFT JOIN accounts ORDER BY a.name` alternative was
+# considered and deliberately not built this sprint (it would widen the
+# tenant-isolation surface to a second table and complicate the count query)
+# -- flagged as a future option, not built. The frontend must label this
+# control "Group by company", never "Sort by company".
+_SORT_COLUMNS: dict[str, str] = {
+    "name": "name",
+    "email": "email",
+    "account": "account_id",
+    "owner": "owner_agent_id",
+    "created": "created_at",
+}
+CONTACT_SORT_KEYS = frozenset(_SORT_COLUMNS)
+
+_DEFAULT_SORT = "created"
+_DEFAULT_DIRECTION = "desc"
+CONTACT_SORT_DEFAULT_DIRECTIONS: dict[str, str] = {
+    "name": "asc",
+    "email": "asc",
+    "account": "asc",
+    "owner": "asc",
+    "created": "desc",
+}
+
+
+def _escape_ilike_pattern(value: str) -> str:
+    """Escape user wildcard characters before binding a literal substring."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def create_contact(
     db: Database,
     claims: AuthClaims,
@@ -176,32 +215,82 @@ async def list_contacts(
     *,
     limit: int = 50,
     offset: int = 0,
+    q: str | None = None,
+    account_id: str | None = None,
+    sort: str = _DEFAULT_SORT,
+    direction: str = _DEFAULT_DIRECTION,
 ) -> tuple[list[Contact], int]:
-    """Fetch a paginated page of the caller's tenant contacts, newest first.
+    """Fetch a paginated, sorted, optionally-filtered/searched page of the
+    caller's tenant contacts.
 
-    Returns ``(rows, total)`` -- ``total`` is a ``count(*)`` over the
-    tenant-scoped WHERE (minus LIMIT/OFFSET).
+    ``sort``/``direction`` are validated here (defense-in-depth; the route
+    layer validates first) because ORDER BY structure cannot be bound as a
+    parameter. ``q`` is a literal, case-insensitive Name-or-Email substring
+    match -- wildcard characters are escaped before binding so a search for
+    a literal ``%`` or ``_`` does not silently become a match-all/match-any
+    pattern. ``account_id`` is a real, indexed exact-match filter and is
+    DELIBERATELY NOT existence-validated here (unlike the write path's
+    ``_validate_account_id``) -- an unknown or cross-tenant id simply yields
+    zero rows via the tenant-scoped WHERE, which is an honest empty result,
+    not a caller error (D-FILTER).
+
+    Returns ``(rows, total)`` -- ``total`` is a ``count(*)`` over the same
+    filtered WHERE (minus LIMIT/OFFSET), so it stays consistent with
+    ``items`` under search/filter. Ordered by the SR-29 closed allowlist
+    with ``contact_id DESC`` as the mandatory total-order tie-break
+    (required for pagination correctness, not cosmetic).
     """
     _reject_global(claims)
 
+    if sort not in _SORT_COLUMNS:
+        raise ValidationError(f"Unknown sort key {sort!r}.", code="INVALID_CONTACT_SORT")
+    if direction not in {"asc", "desc"}:
+        raise ValidationError(
+            f"Unknown sort direction {direction!r}.", code="INVALID_CONTACT_SORT_DIRECTION",
+        )
+
+    where = "WHERE tenant_id = $1"
+    params: list[Any] = [claims.tenant_id]
+
+    if account_id is not None:
+        params.append(account_id)
+        where += f" AND account_id = ${len(params)}"
+
+    if q:
+        escaped_q = _escape_ilike_pattern(q)
+        params.extend([f"%{escaped_q}%", f"%{escaped_q}%"])
+        name_idx = len(params) - 1
+        email_idx = len(params)
+        where += (
+            f" AND (name ILIKE ${name_idx} ESCAPE '\\' "
+            f"OR email ILIKE ${email_idx} ESCAPE '\\')"
+        )
+
+    sort_expr = _SORT_COLUMNS[sort]  # constant; never caller input
+    direction_sql = "ASC" if direction == "asc" else "DESC"
+    # D-NULLS: NULLS LAST in BOTH directions -- an absent value is not a low value.
+    # D-TIEBREAK: `contact_id DESC` is MANDATORY; without a total order, pagination
+    # can silently duplicate or skip rows across pages.
+    order_by = f"ORDER BY {sort_expr} {direction_sql} NULLS LAST, contact_id DESC"
+
+    # Parameterized SQL; `where` is built above from bound params only and
+    # `order_by` is constrained to the developer-authored allowlist above.
+    # ruff: noqa: S608
     count_row = await db.fetchrow(
-        "SELECT count(*) AS count FROM contacts WHERE tenant_id = $1",
-        claims.tenant_id,
+        "SELECT count(*) AS count FROM contacts " + where, *params,
     )
     total = int(count_row["count"]) if count_row is not None else 0
 
     clamped_limit = max(1, min(limit, 200))
-    clamped_offset = max(0, offset)
+    page_params = [*params, clamped_limit, max(0, offset)]
+    limit_idx = len(page_params) - 1
+    offset_idx = len(page_params)
     rows = await db.fetch(
         "SELECT contact_id, account_id, lead_id, name, email, phone, consent, "
         "owner_agent_id, created_at, updated_at "
-        "FROM contacts "
-        "WHERE tenant_id = $1 "
-        "ORDER BY created_at DESC, contact_id DESC "
-        "LIMIT $2 OFFSET $3",
-        claims.tenant_id,
-        clamped_limit,
-        clamped_offset,
+        "FROM contacts " + where + " "
+        f"{order_by} LIMIT ${limit_idx} OFFSET ${offset_idx}",
+        *page_params,
     )
     return [_row_to_contact(row) for row in rows], total
 

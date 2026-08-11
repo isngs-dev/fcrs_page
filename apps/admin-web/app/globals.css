@@ -49,26 +49,34 @@
 }
 
 :root {
-  --font-app-sans: Arial, Helvetica, sans-serif;
+  /* SR-15 D2: Archivo, wired via next/font/google in app/layout.tsx and
+     assigned to --font-app-sans there (CSS variable indirection preserved --
+     this file only declares the fallback stack). */
+  --font-app-sans: system-ui, sans-serif;
   --font-app-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  --background: #fbfbf8;
-  --foreground: #191a17;
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: #191a17;
-  --primary-foreground: #ffffff;
-  --secondary: #f7f7f3;
-  --secondary-foreground: #191a17;
-  --muted: #f7f7f3;
-  --muted-foreground: #70716a;
-  --accent: #ecece5;
-  --accent-foreground: #191a17;
-  --destructive: #c2452d;
-  --border: #e7e7e2;
-  --input: #e7e7e2;
-  --ring: #191a17;
+
+  /* SR-15 D1: monochrome ramp read verbatim from Console.dc.html's `.cv`
+     block (M2), mapped onto the existing shadcn token names so no component
+     changes its class strings. Ink & Citron is fully replaced -- see D1's
+     mapping table in dev_plan/sprints/SR-15-design-system-shell-restyle.md. */
+  --background: #f8f9fa; /* --paper */
+  --foreground: #333333; /* --ink */
+  --card: #ffffff;
+  --card-foreground: #333333;
+  --popover: #ffffff;
+  --popover-foreground: #333333;
+  --primary: #333333; /* --near-black */
+  --primary-foreground: #fbfaf7;
+  --secondary: #efeee6; /* --cream */
+  --secondary-foreground: #333333;
+  --muted: #efeee6;
+  --muted-foreground: #878787;
+  --accent: #efeee6;
+  --accent-foreground: #333333;
+  --destructive: #a24b4b;
+  --border: #cdcdcd; /* --line */
+  --input: #cdcdcd;
+  --ring: #333333;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -83,8 +91,43 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* SR-15 D1: three structural properties with no shadcn equivalent, added
+     by name. --row-line is deliberately LIGHTER than --border -- the design
+     distinguishes a table card's outer border from its interior row
+     dividers (M11); collapsing them would flatten every restyled table. */
+  --ink-2: #404040; /* secondary text, between --ink and --muted-foreground */
+  --line-2: #cdcdcd; /* vertical rules */
+  --row-line: #ececec; /* table row dividers */
+
+  /* SR-24: reference-sourced callout background (Console.dc.html:907/974),
+     distinct from --secondary (cream) -- a deliberate new token, not a
+     legacy-hex migration. */
+  --callout-bg: #eef0f2;
+
+  /* SR-15 D1/M3: the system's only two chromatic values. Never used as the
+     sole signal of meaning -- see D4 and the Chip component. */
+  --success-bg: #eaf3ec;
+  --success-fg: #3f7d57;
+  --success-dot: #4a9c6d;
+  --danger-fg: #a24b4b;
+  --danger-border: #e2b8b8;
 }
 
+/*
+ * SR-15 scope item 1 / Open questions: no theme toggle exists anywhere in
+ * apps/admin-web (grepped for "theme", "dark mode", "ThemeProvider",
+ * "next-themes" -- zero hits), and `.dark` is only ever applied via the
+ * `@custom-variant dark (&:is(.dark *))` selector above, which nothing in
+ * this codebase ever adds to an element. Per CLAUDE.md's no-silent-fallback
+ * principle applied to code, not just data, this sprint reports (does not
+ * silently decide) that dark mode is unreachable in this console today --
+ * see the sprint's Open Questions and the final report. The block below is
+ * therefore left as dead, unreachable CSS from the Ink & Citron era rather
+ * than being invented as a new monochrome dark variant (out of scope per
+ * D-sprint-split: "building a full dark variant... would be its own design
+ * decision with the user").
+ */
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);

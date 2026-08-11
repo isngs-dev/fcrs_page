@@ -55,6 +55,7 @@ import {
   badgeToneClassName,
 } from "@/lib/knowledge-constants";
 import { cn } from "@/lib/utils";
+import { TableCard, TableHeadCell, TableCell } from "@/components/admin/table-card";
 
 const initialState: UploadState = { status: "idle" };
 
@@ -64,10 +65,11 @@ const MAX_POLLS = 120; // ~5 minutes at 2.5s/poll (decision 4).
 function SubmitButton() {
   const { pending } = useFormStatus();
   return (
+    // K4: full-width, 44px tall (Console.dc.html:478), 16px top margin.
     <Button
       type="submit"
       disabled={pending}
-      className="h-11 w-full rounded-[9px] bg-[#191a17] font-bold text-[#e4f222] hover:bg-[#191a17]/90 disabled:opacity-60"
+      className="mt-4 h-11 w-full justify-center rounded-[10px] bg-primary font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
     >
       {pending ? "Uploading…" : "Upload document"}
     </Button>
@@ -151,66 +153,65 @@ function StatusPanel({
   return (
     <div className="flex flex-col gap-4">
       {/* Source row styled per HANDOFF-SPEC.md §3 "5a" sources table (header
-          #f7f7f3 uppercase muted, row w/ SOURCE/STATUS columns). Rendered as
+          var(--secondary) uppercase muted, row w/ SOURCE/STATUS columns). Rendered as
           a single-row card, not a fabricated multi-row table -- the backend
           has no list endpoint (GET /admin/ingestion/docs/{doc_id} only,
           services/api/src/api/ingestion/routes.py:223-239) so there is no
           real data source for additional rows. */}
-      <div className="overflow-hidden rounded-[14px] border border-[#e7e7e2]">
-        <div className="grid grid-cols-[2fr_1fr_auto] bg-[#f7f7f3] px-3.5 py-2.5 text-[11.5px] font-semibold tracking-[0.02em] text-[#70716a] uppercase">
-          <span>Source</span>
-          <span>Status</span>
-          <span className="text-right">Action</span>
-        </div>
-        <div
-          className={cn(
-            "grid grid-cols-[2fr_1fr_auto] items-center gap-2 px-3.5 py-3.5",
-            badge.tone === "failed" && "bg-[#fdfdec]"
-          )}
-        >
-          <span className="min-w-0 truncate text-[13px] font-bold text-[#191a17]">
-            Uploaded document
-          </span>
-          <span>
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10.5px] font-bold whitespace-nowrap",
-                badgeToneClassName(badge.tone)
-              )}
-            >
-              {badge.tone === "success" ? "●" : badge.tone === "failed" ? "✕" : "◌"} {badge.label.toUpperCase()}
-            </span>
-          </span>
-          <span className="text-right">
-            {badge.tone === "failed" ? (
-              <button
-                type="button"
-                onClick={() =>
-                  window.location.assign(tenantId ? `/clients/${tenantId}/knowledge` : "/knowledge")
-                }
-                className="min-h-11 rounded-[9px] px-2 text-[11.5px] font-semibold text-[#191a17] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+      <TableCard>
+        <thead>
+          <tr>
+            <TableHeadCell>Source</TableHeadCell>
+            <TableHeadCell>Status</TableHeadCell>
+            <TableHeadCell className="text-right">Action</TableHeadCell>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className={cn(badge.tone === "failed" && "bg-[#fdfdec]")}>
+            <TableCell className="min-w-0 truncate font-bold text-foreground">
+              Uploaded document
+            </TableCell>
+            <TableCell>
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10.5px] font-bold whitespace-nowrap",
+                  badgeToneClassName(badge.tone)
+                )}
               >
-                Retry ↻
-              </button>
-            ) : null}
-          </span>
-        </div>
-      </div>
+                {badge.tone === "success" ? "●" : badge.tone === "failed" ? "✕" : "◌"} {badge.label.toUpperCase()}
+              </span>
+            </TableCell>
+            <TableCell className="text-right">
+              {badge.tone === "failed" ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.location.assign(tenantId ? `/clients/${tenantId}/knowledge` : "/knowledge")
+                  }
+                  className="min-h-11 rounded-[9px] px-2 text-[11.5px] font-semibold text-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  Retry ↻
+                </button>
+              ) : null}
+            </TableCell>
+          </tr>
+        </tbody>
+      </TableCard>
 
       {idempotent ? (
         <p
           role="status"
-          className="rounded-[9px] border border-[#e7e7e2] bg-[#fbfbf8] p-3 text-[12.5px] text-[#45463f]"
+          className="rounded-[9px] border border-border bg-background p-3 text-[12.5px] text-[var(--ink-2)]"
         >
           This exact file is already ingested (identical content) -- no new run was started.
-          Current status: <span className="font-semibold text-[#191a17]">{docStatus}</span>.
+          Current status: <span className="font-semibold text-foreground">{docStatus}</span>.
         </p>
       ) : null}
 
       {hasError ? (
         <p
           role="alert"
-          className="rounded-[9px] border border-[#c2452d]/30 bg-[#f6e3df] p-3 text-[12.5px] font-medium text-[#c2452d]"
+          className="rounded-[9px] border border-[var(--danger-border)] bg-[#f6e3df] p-3 text-[12.5px] font-medium text-[var(--danger-fg)]"
         >
           {result.status === "error" ? result.message : "Unable to load status."}
         </p>
@@ -241,21 +242,24 @@ function StatusPanel({
           <button
             type="button"
             onClick={manualRefresh}
-            className="min-h-11 rounded-[9px] border border-[#e7e7e2] bg-white px-3.5 text-[12.5px] font-semibold text-[#45463f] hover:bg-[#f7f7f3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+            className="min-h-11 rounded-[9px] border border-border bg-card px-3.5 text-[12.5px] font-semibold text-[var(--ink-2)] hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             Refresh status
           </button>
         ) : null}
+        {/* SR-15 D1: the terminal-state button's citron text is deleted and
+            re-decided to white, matching every other dark-filled control's
+            re-decision in this sprint. */}
         <button
           type="button"
           onClick={() =>
             window.location.assign(tenantId ? `/clients/${tenantId}/knowledge` : "/knowledge")
           }
           className={cn(
-            "min-h-11 rounded-[9px] px-3.5 text-[12.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]",
+            "min-h-11 rounded-[9px] px-3.5 text-[12.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
             terminal
-              ? "bg-[#191a17] text-[#e4f222] hover:bg-[#191a17]/90"
-              : "text-[#70716a] hover:bg-[#f7f7f3]"
+              ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              : "text-muted-foreground hover:bg-secondary"
           )}
         >
           Upload another
@@ -281,7 +285,7 @@ function RunStatusBody({
 }) {
   if (status === "queued") {
     return (
-      <p role="status" className="animate-pulse text-[13px] text-[#45463f]">
+      <p role="status" className="animate-pulse text-[13px] text-[var(--ink-2)]">
         Queued for ingestion…
       </p>
     );
@@ -289,7 +293,7 @@ function RunStatusBody({
 
   if (status === "running") {
     return (
-      <p role="status" className="animate-pulse text-[13px] text-[#45463f]">
+      <p role="status" className="animate-pulse text-[13px] text-[var(--ink-2)]">
         Processing -- parsing, chunking, and embedding… Larger documents can take a few minutes.
       </p>
     );
@@ -298,16 +302,19 @@ function RunStatusBody({
   if (status === "succeeded") {
     return (
       <div className="flex flex-col gap-2">
-        <p role="status" className="text-[13px] font-semibold text-[#1f6a2f]">
+        {/* D4: success is never color-only -- the text "Ingested
+            successfully." already carries the meaning; the success color is
+            reinforcement. */}
+        <p role="status" className="text-[13px] font-semibold text-[var(--success-fg)]">
           Ingested successfully.
         </p>
         {charsOut !== null ? (
-          <p className="text-[12.5px] text-[#70716a]">{charsOut.toLocaleString()} characters extracted.</p>
+          <p className="text-[12.5px] text-muted-foreground">{charsOut.toLocaleString()} characters extracted.</p>
         ) : null}
         {parsedPreview ? (
           <div className="flex flex-col gap-1">
-            <Label className="text-[12px] font-semibold text-[#45463f]">Content preview</Label>
-            <p className="max-h-40 overflow-y-auto rounded-[9px] border border-[#e7e7e2] bg-[#fbfbf8] p-2.5 text-[12.5px] whitespace-pre-wrap text-[#191a17]">
+            <Label className="text-[12px] font-semibold text-[var(--ink-2)]">Content preview</Label>
+            <p className="max-h-40 overflow-y-auto rounded-[9px] border border-border bg-background p-2.5 text-[12.5px] whitespace-pre-wrap text-foreground">
               {parsedPreview}
             </p>
           </div>
@@ -321,15 +328,15 @@ function RunStatusBody({
       <div className="flex flex-col gap-2">
         <p
           role="alert"
-          className="rounded-[9px] border border-[#c2452d]/30 bg-[#f6e3df] p-3 text-[12.5px] font-semibold text-[#c2452d]"
+          className="rounded-[9px] border border-[var(--danger-border)] bg-[#f6e3df] p-3 text-[12.5px] font-semibold text-[var(--danger-fg)]"
         >
           Ingestion failed.
         </p>
-        <pre className="max-h-40 overflow-y-auto rounded-[9px] border border-[#c2452d]/30 bg-[#f6e3df] p-2.5 text-xs whitespace-pre-wrap text-[#c2452d]">
+        <pre className="max-h-40 overflow-y-auto rounded-[9px] border border-[var(--danger-border)] bg-[#f6e3df] p-2.5 text-xs whitespace-pre-wrap text-[var(--danger-fg)]">
           {formatRunErrors(errors)}
         </pre>
         {durationMs !== null ? (
-          <p className="text-xs text-[#70716a]">Run duration: {durationMs}ms</p>
+          <p className="text-xs text-muted-foreground">Run duration: {durationMs}ms</p>
         ) : null}
       </div>
     );
@@ -337,17 +344,17 @@ function RunStatusBody({
 
   // Defensive fallback for any status value we don't otherwise recognize --
   // never a blank/silent panel.
-  return <p className="text-[13px] text-[#70716a]">Status: {status}</p>;
+  return <p className="text-[13px] text-muted-foreground">Status: {status}</p>;
 }
 
 /**
- * Dashed dropzone per HANDOFF-SPEC.md §3 "5a" (`border-dashed` #d5d5cb,
- * radius 14, `paper`-tinted background). Drag-and-drop is a progressive
- * enhancement only: the zone itself is a real, keyboard-operable
- * `<button>` that opens the underlying `<input type="file">` (a11y
- * requirement -- ui-ux-pro-max §1/§2 -- dropzones must have a non-drag
- * fallback), and the input also stays independently reachable so a screen
- * reader or keyboard-only user never depends on drag gestures.
+ * Dashed dropzone -- SR-15 scope item 9: `1.5px` dashed `--border`, 14px
+ * radius, `--background`-tinted. Drag-and-drop is a progressive enhancement
+ * only: the zone itself is a real, keyboard-operable `<button>` that opens
+ * the underlying `<input type="file">` (a11y requirement -- ui-ux-pro-max
+ * §1/§2 -- dropzones must have a non-drag fallback), and the input also
+ * stays independently reachable so a screen reader or keyboard-only user
+ * never depends on drag gestures.
  */
 function Dropzone({
   fileInputId,
@@ -379,18 +386,22 @@ function Dropzone({
       onDragLeave={() => onDragStateChange(false)}
       onDrop={handleDrop}
       className={cn(
-        "flex flex-col items-center gap-3 rounded-[14px] border-[1.5px] border-dashed bg-[#fbfbf8] p-6 text-center transition-colors sm:flex-row sm:text-left",
-        isDragActive ? "border-[#191a17] bg-[#fdfdec]" : "border-[#d5d5cb]"
+        "flex flex-col items-center gap-4 rounded-xl border-[1.5px] border-dashed bg-background p-5 text-center transition-colors sm:flex-row sm:text-left",
+        isDragActive ? "border-primary bg-secondary" : "border-[var(--line)]"
       )}
     >
-      <div className="grid size-10 shrink-0 place-items-center rounded-[11px] bg-[#eef7a8] text-[17px]">
-        ↥
+      {/* K3: 44x44 rounded-11 cream icon tile with a real SVG (upload arrow
+          over a tray), matching Console.dc.html:472 exactly. */}
+      <div className="grid size-11 shrink-0 place-items-center rounded-[11px] bg-secondary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#404040" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 16V4M7 9l5-5 5 5M4 20h16" />
+        </svg>
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] font-bold text-[#191a17]">
+        <p className="text-[13.5px] font-bold text-foreground">
           {selectedFileName ? selectedFileName : "Drop a .txt or .docx here"}
         </p>
-        <p className="text-[12px] text-[#70716a]">
+        <p className="text-[12px] text-muted-foreground">
           Up to {formatBytes(MAX_UPLOAD_BYTES)} · {ALLOWED_EXTENSIONS.join(", ").toUpperCase()}
         </p>
       </div>
@@ -406,7 +417,7 @@ function Dropzone({
       />
       <label
         htmlFor={fileInputId}
-        className="min-h-11 shrink-0 cursor-pointer rounded-[9px] border border-[#e7e7e2] bg-white px-3.5 py-2.5 text-[12px] font-semibold whitespace-nowrap text-[#45463f] hover:bg-[#f7f7f3] focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[#191a17]"
+        className="min-h-11 shrink-0 cursor-pointer rounded-[9px] border border-[var(--line)] bg-card px-3.5 py-2.5 text-[12px] font-semibold whitespace-nowrap text-[var(--ink-2)] hover:bg-secondary focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring"
       >
         Browse…
       </label>
@@ -488,13 +499,13 @@ export function UploadForm({ tenantId }: { tenantId?: string } = {}) {
       />
 
       {clientError ? (
-        <p role="alert" className="text-[12.5px] font-medium text-[#c2452d]">
+        <p role="alert" className="text-[12.5px] font-medium text-[var(--danger-fg)]">
           {clientError}
         </p>
       ) : null}
 
       {state.status === "error" ? (
-        <p role="alert" className="text-[12.5px] font-medium text-[#c2452d]">
+        <p role="alert" className="text-[12.5px] font-medium text-[var(--danger-fg)]">
           {state.message}
         </p>
       ) : null}
@@ -506,7 +517,9 @@ export function UploadForm({ tenantId }: { tenantId?: string } = {}) {
 
 /**
  * "Coverage check" card per HANDOFF-SPEC.md §3 "5a" (ink background,
- * unanswered questions ×count list, citron "Answer these →" CTA).
+ * unanswered questions ×count list, "Answer these →" CTA -- SR-15 D1: the
+ * CTA's citron accent, unbuilt today anyway since there is no backend for
+ * it, is not being introduced; see the honest empty state below).
  *
  * NO BACKEND EXISTS for this today: grepped
  * services/api/src/api/{ingestion,rag,orchestrator,conversation_store}/**
@@ -522,14 +535,14 @@ export function UploadForm({ tenantId }: { tenantId?: string } = {}) {
  */
 function CoverageCheckCard() {
   return (
-    <div className="flex flex-col gap-2.5 rounded-[14px] bg-[#191a17] p-4.5">
-      <p className="text-[13px] font-bold text-white">Coverage check</p>
-      <p className="text-[11.5px] leading-relaxed text-[#9b9c93]">
+    <div className="flex flex-col gap-2 rounded-[14px] bg-primary px-[22px] py-5">
+      <p className="text-[15px] font-semibold text-primary-foreground">Coverage check</p>
+      <p className="text-[12.5px] leading-relaxed text-[#c9c9c9]">
         Questions your bot couldn&apos;t answer this week -- add content to fix.
       </p>
       <div
         role="status"
-        className="mt-0.5 rounded-[9px] border border-dashed border-[#3d3e38] bg-[#26271f] px-3 py-3 text-[12px] text-[#c6c7bd]"
+        className="mt-1 rounded-[10px] bg-white/[.08] px-3.5 py-3.5 text-[12px] text-primary-foreground/80"
       >
         Not available yet. This needs a backend endpoint that surfaces low-confidence /
         fallback-triggering questions from conversation history -- it doesn&apos;t exist yet.
@@ -557,8 +570,8 @@ function CoverageCheckCard() {
 function TestBotCard() {
   const inputId = useId();
   return (
-    <div className="flex flex-col gap-2 rounded-[14px] border border-[#e7e7e2] p-4">
-      <p className="text-[12.5px] font-bold text-[#191a17]">Test the bot</p>
+    <div className="flex flex-col gap-2 rounded-[14px] border border-[var(--line)] px-[22px] py-5">
+      <p className="text-[15px] font-semibold text-foreground">Test the bot</p>
       <Label htmlFor={inputId} className="sr-only">
         Test question
       </Label>
@@ -568,16 +581,16 @@ function TestBotCard() {
         disabled
         placeholder="Ask a question to preview the answer…"
         aria-describedby={`${inputId}-hint`}
-        className="min-h-11 rounded-[9px] border border-[#e7e7e2] px-3 text-[12px] text-[#96978e] disabled:cursor-not-allowed disabled:bg-[#fbfbf8]"
+        className="h-[42px] rounded-[10px] border border-[var(--line)] px-3 text-[12px] text-muted-foreground disabled:cursor-not-allowed disabled:bg-background"
       />
       <button
         type="button"
         disabled
-        className="min-h-11 w-fit self-start rounded-full border border-[#e7e7e2] px-3 text-[11.5px] font-semibold text-[#a8a99f] disabled:cursor-not-allowed"
+        className="mt-3 min-h-11 w-fit self-start rounded-full border border-[var(--line)] px-3 text-[11.5px] font-semibold text-muted-foreground disabled:cursor-not-allowed"
       >
         Run test
       </button>
-      <p id={`${inputId}-hint`} className="text-[11px] text-[#96978e]">
+      <p id={`${inputId}-hint`} className="text-[11px] text-muted-foreground">
         Coming soon -- needs an admin-authenticated query-preview endpoint (not built yet; the
         only live query path today is the visitor widget&apos;s session-gated chat endpoint).
       </p>

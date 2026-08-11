@@ -14,35 +14,36 @@
  *    `assigned_agent_id` but there is no per-agent aggregation/count
  *    endpoint. Fabricating a number here would violate "no silent
  *    fallbacks" (CLAUDE.md §3).
- *  - Auto-assignment toggle: STUBBED, visibly disabled. The card is kept
- *    (7b's visual rhythm) but the toggle renders in a permanently-off,
- *    non-interactive state with a "Not available yet" label -- never a
- *    toggle that silently no-ops when clicked.
+ *  - Auto-assignment toggle: SR-20 D1/D2 replaces the stub with the real
+ *    round-robin toggle, bound to `GET`/`PUT /admin/assignment-config`.
+ *    CLIENT_ADMIN-only (this page already gates on CLIENT_ADMIN, so a
+ *    CLIENT_AGENT never reaches this component at all).
  */
 import { requireRole } from "@/lib/auth";
 import { listMembers } from "@/lib/members";
+import { getAssignmentConfig } from "@/lib/assignment";
 import { MembersTable } from "@/app/(protected)/members/members-table";
 import { CreateMemberDialog } from "@/app/(protected)/members/create-member-dialog";
+import { AssignmentToggle } from "@/app/(protected)/members/assignment-toggle";
 
 export default async function MembersPage() {
   await requireRole("CLIENT_ADMIN");
 
   const result = await listMembers();
+  const assignmentResult = await getAssignmentConfig();
 
   return (
     <div className="flex flex-1 flex-col gap-[18px] p-[22px] md:p-[28px]">
-      <div className="flex items-center gap-[14px]">
+      <div className="flex items-start justify-between gap-[14px]">
         <div>
-          <h1 className="text-[20px] font-bold text-[#191a17]">Team members</h1>
-          <p className="mt-[2px] text-[12.5px] text-[#70716a]">
+          <h1 className="text-[28px] font-semibold text-foreground">Team members</h1>
+          <p className="mt-1 text-[13px] text-muted-foreground">
             {result.status === "ok"
               ? `${result.items.length} member${result.items.length === 1 ? "" : "s"}`
               : "Team members"}
           </p>
         </div>
-        <div className="ml-auto">
-          <CreateMemberDialog />
-        </div>
+        <CreateMemberDialog />
       </div>
 
       {result.status === "error" ? (
@@ -61,26 +62,17 @@ export default async function MembersPage() {
         <MembersTable members={result.items} />
       )}
 
-      <div className="flex flex-col gap-3 rounded-[14px] border border-[#e7e7e2] p-[18px]">
-        <span className="text-[13.5px] font-bold text-[#191a17]">Auto-assignment</span>
-        <div className="flex items-center gap-3">
-          <span
-            aria-hidden="true"
-            className="relative h-5 w-9 flex-none rounded-full bg-[#d5d5cb] opacity-60"
-          >
-            <span className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white" />
-          </span>
-          <div>
-            <div className="text-[13px] font-semibold text-[#191a17]">
-              Round-robin new qualified leads
-            </div>
-            <div className="text-[11.5px] text-[#70716a]">
-              Not available yet — automatic lead distribution isn&apos;t configurable from this
-              console. Assign leads manually from the Leads console.
-            </div>
-          </div>
+      {/* SR-20 D1/D2: the real round-robin toggle. */}
+      {assignmentResult.status === "ok" ? (
+        <AssignmentToggle initialEnabled={assignmentResult.config.roundRobinEnabled} />
+      ) : (
+        <div
+          role="alert"
+          className="rounded-xl border border-[#f0e2bd] bg-[#fff9ec] px-4 py-3 text-[13px] text-[#6a4e00]"
+        >
+          {assignmentResult.message}
         </div>
-      </div>
+      )}
     </div>
   );
 }

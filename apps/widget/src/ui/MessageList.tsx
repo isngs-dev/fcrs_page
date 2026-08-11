@@ -24,12 +24,42 @@ export interface MessageListProps {
   /** SR-14 D3: threaded through to `<Bubble>`/`<IdentityForm>` so a
    * successful identity capture can trigger the deferred-question re-send. */
   onIdentityCaptured?: () => void;
+  onHandoffTalk?: () => void;
+  onHandoffStay?: () => void;
 }
 
-const SUGGESTIONS = ["What does your product do?", "How much does it cost?", "Book a call with sales"];
+const SUGGESTIONS = [
+  { message: "How does the Pro plan compare?", label: "How does the Pro plan compare?", icon: "chat" },
+  { message: "Book a call with sales", label: "Book a call with sales", icon: "calendar" },
+  { message: "I need help with a problem", label: "I need help with a problem", icon: "support" },
+] as const;
 
-export function MessageList({ messages, pending, config, onSuggestion, onIdentityCaptured }: MessageListProps) {
+function SuggestionGlyph({ name }: { name: (typeof SUGGESTIONS)[number]["icon"] }) {
+  const common = {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.9,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+
+  if (name === "calendar") {
+    return <svg aria-hidden="true" {...common}><path d="M6 2v4M18 2v4M3 9h18" /><rect x="3" y="4" width="18" height="17" rx="3" /></svg>;
+  }
+  if (name === "support") {
+    return <svg aria-hidden="true" {...common}><path d="M4.9 4.9a10 10 0 0 1 14.2 0M4.9 19.1a10 10 0 0 0 14.2 0M2 12h4m12 0h4" /><circle cx="12" cy="12" r="4" /></svg>;
+  }
+  return <svg aria-hidden="true" {...common}><path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.7 9.7 0 0 1-4.1-.9L3 21l1.9-4.1A8.4 8.4 0 0 1 3 11.5a8.5 8.5 0 0 1 18 0Z" /></svg>;
+}
+
+export function MessageList({ messages, pending, config, onSuggestion, onIdentityCaptured, onHandoffTalk, onHandoffStay }: MessageListProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
+  const selectedSuggestion = [...messages].reverse().find(
+    (message) => message.role === "user" && SUGGESTIONS.some((suggestion) => suggestion.message === message.text),
+  )?.text;
 
   useEffect(() => {
     // jsdom (this repo's Vitest environment) does not implement
@@ -41,26 +71,33 @@ export function MessageList({ messages, pending, config, onSuggestion, onIdentit
 
   return (
     <div className="cw-message-list" role="log" aria-live="polite" aria-relevant="additions">
-      {messages.length === 0 && !pending && (
-        <section className="cw-welcome" aria-labelledby="cw-welcome-heading">
+      <section className="cw-welcome" aria-labelledby="cw-welcome-heading">
           <span className="cw-welcome-orb" aria-hidden="true" />
-          <h2 id="cw-welcome-heading">Hi, I&rsquo;m your assistant</h2>
-          <p>Ask about the product, pricing, or arrange a call with the team.</p>
+          <h2 id="cw-welcome-heading">Hi, I&rsquo;m Rebecca</h2>
+          <p>I can help with support, sales and product questions. What would you like to do?</p>
           <div className="cw-suggestions" aria-label="Suggested questions">
             {SUGGESTIONS.map((suggestion) => (
-              <button key={suggestion} type="button" className="cw-suggestion" onClick={() => onSuggestion(suggestion)}>
-                <span>{suggestion}</span>
+              <button
+                key={suggestion.message}
+                type="button"
+                className={`cw-suggestion${selectedSuggestion === suggestion.message ? " cw-suggestion-selected" : ""}`}
+                aria-pressed={selectedSuggestion === suggestion.message}
+                onClick={() => onSuggestion(suggestion.message)}
+              >
+                <span className="cw-suggestion-icon"><SuggestionGlyph name={suggestion.icon} /></span>
+                <span>{suggestion.label}</span>
               </button>
             ))}
           </div>
-        </section>
-      )}
+      </section>
       {messages.map((message) => (
         <Bubble
           key={message.id}
           message={message}
           config={config}
           {...(onIdentityCaptured ? { onIdentityCaptured } : {})}
+          {...(onHandoffTalk ? { onHandoffTalk } : {})}
+          {...(onHandoffStay ? { onHandoffStay } : {})}
         />
       ))}
       {pending && <TypingIndicator />}

@@ -29,8 +29,46 @@ _CONTEXT_VARS: dict[str, ContextVar[str | None]] = {
 
 # Safe operational fields a caller may attach via ``extra=...``. Anything else is
 # dropped so secrets/PII can't accidentally end up in logs.
+#
+# SR-20 addition: ``lead_id``, ``assigned_agent_id`` and ``reason`` -- all
+# opaque ids/short diagnostic strings, never PII -- so
+# ``api.leads.assignment.assign_lead_fail_open``'s fail-open warning log
+# (D3: "event, tenant_id, lead_id, reason, no PII" is a MANDATORY, tested
+# log shape) actually reaches the JSON output instead of being silently
+# stripped. ``tenant_id`` itself is unaffected here -- it is already
+# auto-injected from the ``_tenant_id`` ContextVar via ``log_context``, not
+# from ``extra``.
+#
+# SR-21 addition: ``kind`` -- the closed-set notification_events vocabulary
+# value (e.g. "lead_captured"), never PII -- so
+# ``api.notifications.emit.emit_event_safe``'s fail-open warning log
+# (D2: "event, tenant_id, kind" is a MANDATORY, tested log shape) actually
+# reaches the JSON output instead of being silently stripped.
+#
+# SR-21 addition: ``deleted_count`` -- an opaque row-count integer emitted by
+# ``api.notifications.events_tasks.prune_notification_events`` (D7's periodic
+# retention sweep), never PII.
+#
+# SR-25 addition: ``sort`` and ``direction`` -- route-validated values from
+# the closed lead-list sort vocabulary. They make list-query behaviour
+# observable without logging a search term or any lead PII.
 _ALLOWED_EXTRA = frozenset(
-    {"endpoint", "method", "status_code", "duration_ms", "event", "task", "attempt"}
+    {
+        "endpoint",
+        "method",
+        "status_code",
+        "duration_ms",
+        "event",
+        "task",
+        "attempt",
+        "lead_id",
+        "assigned_agent_id",
+        "reason",
+        "kind",
+        "deleted_count",
+        "sort",
+        "direction",
+    }
 )
 
 # Standard LogRecord attributes (so we know what is an "extra").
@@ -51,6 +89,19 @@ class _SafeLogger(logging.Logger):
       a handler by name work without any extra wiring.
     - The fix is surgically close to the crash site (makeRecord), not scattered
       across every adapter wrapper.
+
+    SR-20 addition: also snapshots the current ``_CONTEXT_VARS`` values onto
+    the record itself (as ``_chatbot_context``) at **creation** time. Without
+    this, ``JsonFormatter.format`` reads the *live* ContextVar at format
+    time — correct for the normal case (a StreamHandler formats synchronously
+    during ``emit``, microseconds after ``makeRecord``), but wrong whenever a
+    record is formatted later, after the emitting scope (e.g. a
+    ``with log_context(...):`` block) has already exited and reset the
+    ContextVar. This is exactly what happens with pytest's ``caplog``: it
+    captures the record but callers often re-format it after the `with`
+    block that produced it has closed. Snapshotting at emit time (when the
+    context is still live) makes formatting correct regardless of when it's
+    later called, with no change to the normal synchronous-handler behavior.
     """
 
     def makeRecord(
@@ -74,9 +125,15 @@ class _SafeLogger(logging.Logger):
         safe_extra: dict[str, object] | None = (
             {k: v for k, v in extra.items() if k in _ALLOWED_EXTRA} if extra else None
         )
-        return super().makeRecord(
+        record = super().makeRecord(
             name, level, fn, lno, msg, args, exc_info, func, safe_extra, sinfo
         )
+        # Snapshot context now, while it's still live, for correct formatting
+        # even if this record is formatted later (e.g. by caplog).
+        record._chatbot_context = {  # type: ignore[attr-defined]
+            field_name: var.get() for field_name, var in _CONTEXT_VARS.items()
+        }
+        return record
 
 
 class JsonFormatter(logging.Formatter):
@@ -91,8 +148,16 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        # Prefer the context snapshot taken at record-creation time
+        # (``_SafeLogger.makeRecord``) over a live ContextVar read: the
+        # ContextVar may have already been reset (e.g. a ``log_context``
+        # block that has since exited) by the time this record is formatted,
+        # which happens with caplog-based tests. Records not created via
+        # ``_SafeLogger`` (e.g. built directly as ``logging.LogRecord`` in
+        # tests) fall back to the live read, preserving existing behavior.
+        snapshot = getattr(record, "_chatbot_context", None)
         for name, var in _CONTEXT_VARS.items():
-            value = var.get()
+            value = snapshot.get(name) if snapshot is not None else var.get()
             if value is not None:
                 payload[name] = value
         for key, value in record.__dict__.items():

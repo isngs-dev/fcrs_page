@@ -61,6 +61,7 @@ from api.ingestion.storage import StorageProvider, get_storage
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import LLMError
+from api.notifications.emit import emit_event_safe
 from api.tasks.celery_app import _CorrelationTask, celery_app
 
 _log = get_logger(__name__)
@@ -224,6 +225,18 @@ async def _execute(
                 "error_code": exc.code,
             },
         )
+        # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable
+        # run/doc "failed" writes above. payload is ids only.
+        await emit_event_safe(
+            db,
+            claims,
+            kind="ingestion_failed",
+            category="system",
+            target_type="ingestion_run",
+            target_id=run_id,
+            payload={"doc_id": doc_id, "run_id": run_id, "error_code": exc.code},
+            actor_id=None,
+        )
         return {"doc_id": doc_id, "run_id": run_id, "status": "failed"}
 
     # -----------------------------------------------------------------------
@@ -256,6 +269,18 @@ async def _execute(
                 "doc_id": doc_id,
                 "run_id": run_id,
             },
+        )
+        # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable
+        # run/doc "failed" writes above. payload is ids only.
+        await emit_event_safe(
+            db,
+            claims,
+            kind="ingestion_failed",
+            category="system",
+            target_type="ingestion_run",
+            target_id=run_id,
+            payload={"doc_id": doc_id, "run_id": run_id, "error_code": "EMBEDDING_NOT_CONFIGURED"},
+            actor_id=None,
         )
         return {"doc_id": doc_id, "run_id": run_id, "status": "failed"}
 
@@ -331,6 +356,18 @@ async def _execute(
                     "retries": task.request.retries,
                 },
             )
+            # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable
+            # run/doc "failed" writes above. payload is ids only.
+            await emit_event_safe(
+                db,
+                claims,
+                kind="ingestion_failed",
+                category="system",
+                target_type="ingestion_run",
+                target_id=run_id,
+                payload={"doc_id": doc_id, "run_id": run_id, "error_code": "EMBEDDING_FAILED"},
+                actor_id=None,
+            )
             return {"doc_id": doc_id, "run_id": run_id, "status": "failed"}
     finally:
         await llm_provider.aclose()
@@ -366,6 +403,22 @@ async def _execute(
                     "got": len(vec),
                     "expected": settings.embedding_dimension,
                 },
+            )
+            # -- Feed emit (SR-21 D2/D3): fail-open, AFTER the durable
+            # run/doc "failed" writes above. payload is ids only.
+            await emit_event_safe(
+                db,
+                claims,
+                kind="ingestion_failed",
+                category="system",
+                target_type="ingestion_run",
+                target_id=run_id,
+                payload={
+                    "doc_id": doc_id,
+                    "run_id": run_id,
+                    "error_code": "EMBEDDING_DIM_MISMATCH",
+                },
+                actor_id=None,
             )
             return {"doc_id": doc_id, "run_id": run_id, "status": "failed"}
 

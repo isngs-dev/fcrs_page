@@ -31,7 +31,17 @@ import { cookies } from "next/headers";
 import { env } from "@/lib/env";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth";
 
-const _VALID_REPORTS = new Set(["leads-by-stage", "bookings", "funnel", "win-loss"]);
+const _VALID_REPORTS = new Set([
+  "leads-by-stage",
+  "bookings",
+  "funnel",
+  "win-loss",
+  // SR-19
+  "lead-sources",
+  "score-distribution",
+  "agent-performance",
+  "recent-conversions",
+]);
 
 export async function GET(
   request: NextRequest,

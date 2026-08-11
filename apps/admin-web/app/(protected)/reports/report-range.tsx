@@ -33,12 +33,12 @@ export function ReportRange({
       aria-label="Report date range"
     >
       <fieldset className="flex flex-col gap-1">
-        <legend className="text-xs font-medium text-[#70716a]">Date range</legend>
-        <div className="flex overflow-hidden rounded-[9px] border border-[#e7e7e2] text-xs font-semibold">
+        <legend className="text-xs font-medium text-[var(--muted-foreground)]">Date range</legend>
+        <div className="flex overflow-hidden rounded-[9px] border border-[var(--border)] text-xs font-semibold">
           {ANALYTICS_RANGES.map((range) => (
             <label
               key={range.key}
-              className="cursor-pointer px-3.5 py-[7px] text-[#5a5b54] transition-colors has-checked:bg-[#191a17] has-checked:text-white hover:has-[:not(:checked)]:bg-[#f7f7f3] focus-within:outline-2 focus-within:outline-offset-[-2px] focus-within:outline-[#191a17]"
+              className="cursor-pointer px-3.5 py-[7px] text-[var(--ink-2)] transition-colors has-checked:bg-[var(--foreground)] has-checked:text-white hover:has-[:not(:checked)]:bg-[var(--secondary)] focus-within:outline-2 focus-within:outline-offset-[-2px] focus-within:outline-[var(--foreground)]"
             >
               <input
                 type="radio"
@@ -55,14 +55,14 @@ export function ReportRange({
 
       {showBucket ? (
         <div className="flex flex-col gap-1">
-          <label htmlFor="bucket" className="text-xs font-medium text-[#70716a]">
+          <label htmlFor="bucket" className="text-xs font-medium text-[var(--muted-foreground)]">
             Bucket
           </label>
           <select
             id="bucket"
             name="bucket"
             defaultValue={currentBucket ?? DEFAULT_REPORT_BUCKET}
-            className="h-8 rounded-[9px] border border-[#e7e7e2] bg-white px-2.5 py-1 text-sm text-[#191a17] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+            className="h-8 rounded-[9px] border border-[var(--border)] bg-white px-2.5 py-1 text-sm text-[var(--foreground)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
           >
             {REPORT_BUCKETS.map((bucket) => (
               <option key={bucket} value={bucket}>
@@ -73,9 +73,11 @@ export function ReportRange({
         </div>
       ) : null}
 
+      {/* SR-15 D1: citron button text deleted, re-decided to white -- mirrors
+          analytics-range.tsx's identical control. */}
       <button
         type="submit"
-        className="h-8 rounded-[9px] bg-[#191a17] px-3.5 text-sm font-semibold text-[#e4f222] transition-colors hover:bg-[#30312d] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#191a17]"
+        className="h-8 rounded-[9px] bg-[var(--foreground)] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
       >
         Apply
       </button>

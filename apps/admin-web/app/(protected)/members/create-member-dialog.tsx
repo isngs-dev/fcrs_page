@@ -118,13 +118,19 @@ export function CreateMemberDialog() {
 
   return (
     <>
-      <Button
+      {/* .btn-dark recipe (Console.dc.html:40-42), same exact classes as
+          `leads/page.tsx`'s "Export CSV" button: h:38px, radius:10px,
+          13.5px/600, near-black fill / cream text, +-icon leading. */}
+      <button
         type="button"
-        className="min-h-[44px] rounded-[9px] bg-[#191a17] px-4 text-[12.5px] font-bold text-[#e4f222] hover:bg-[#191a17]/90"
         onClick={() => setOpen(true)}
+        className="inline-flex h-[38px] items-center gap-2 rounded-[10px] bg-[#333333] px-4 text-[13.5px] font-semibold whitespace-nowrap text-[#fbfaf7] transition-colors hover:bg-[#404040] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
-        + Add member
-      </Button>
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        Add member
+      </button>
 
       {open ? (
         <div
@@ -133,9 +139,9 @@ export function CreateMemberDialog() {
           aria-labelledby="create-member-title"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
         >
-          <div className="flex w-full max-w-sm flex-col gap-4 rounded-2xl border border-[#e7e7e2] bg-white p-5 shadow-xl">
+          <div className="flex w-full max-w-sm flex-col gap-4 rounded-2xl border border-[var(--border)] bg-white p-5 shadow-xl">
             <div className="flex items-center justify-between">
-              <h2 id="create-member-title" className="text-[15px] font-bold text-[#191a17]">
+              <h2 id="create-member-title" className="text-[15px] font-bold text-[var(--foreground)]">
                 Add team member
               </h2>
               <Button

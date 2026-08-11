@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from common.auth import AuthClaims, Role
@@ -53,7 +54,16 @@ class _StubDatabase:
         self._leads: dict[tuple[str, str], dict[str, Any]] = {}
         self._activities: dict[tuple[str, str], dict[str, Any]] = {}
         self._users: dict[str, dict[str, Any]] = {}
+        self._tenants: dict[str, dict[str, Any]] = {}
         self._activity_seq = 0
+
+    def seed_tenant(self, tenant_id: str, *, enabled: bool = True) -> None:
+        self._tenants[tenant_id] = {
+            "id": tenant_id,
+            "name": tenant_id,
+            "slug": tenant_id,
+            "enabled": enabled,
+        }
 
     def seed_user(
         self,
@@ -114,6 +124,8 @@ class _StubDatabase:
         if "FROM USERS" in q and "WHERE ID" in q:
             user_id = args[0]
             return self._users.get(user_id)
+        if "FROM TENANTS" in q and "WHERE ID" in q:
+            return self._tenants.get(args[0])
         return None
 
     def _filtered_leads(
@@ -141,7 +153,54 @@ class _StubDatabase:
             rows = [r for r in rows if r["created_at"] < args[idx]]
             idx += 1
 
-        rows.sort(key=lambda r: (r["created_at"], r["lead_id"]), reverse=True)
+        if "NAME ILIKE $" in q:
+            pattern = str(args[idx])
+            idx += 2
+            needle = (
+                pattern.removeprefix("%").removesuffix("%")
+                .replace("\\\\", "\\").replace("\\%", "%").replace("\\_", "_")
+                .lower()
+            )
+            rows = [
+                row for row in rows
+                if needle in (row["name"] or "").lower() or needle in (row["email"] or "").lower()
+            ]
+
+        if "ORDER BY " not in q:
+            return rows, len(rows)
+
+        if "(CASE STAGE" in q:
+            value_for = lambda row: {"captured": 1, "qualified": 2, "contacted": 3, "converted": 4, "disqualified": 5}.get(row["stage"], 99)  # noqa: E731
+        elif "(CASE STATUS" in q:
+            value_for = lambda row: {"new": 1, "open": 2, "won": 3, "lost": 4}.get(row["status"], 99)  # noqa: E731
+        elif "ORDER BY NAME " in q:
+            value_for = lambda row: row["name"]  # noqa: E731
+        elif "ORDER BY EMAIL " in q:
+            value_for = lambda row: row["email"]  # noqa: E731
+        elif "ORDER BY QUALIFICATION_SCORE " in q:
+            value_for = lambda row: row["qualification_score"]  # noqa: E731
+        elif "ORDER BY ASSIGNED_AGENT_ID " in q:
+            value_for = lambda row: row["assigned_agent_id"]  # noqa: E731
+        elif "ORDER BY CREATED_AT " in q:
+            value_for = lambda row: row["created_at"]  # noqa: E731
+        else:
+            raise AssertionError(f"stub cannot honor ORDER BY: {query}")
+
+        descending = " DESC NULLS LAST" in q
+        non_null_rows = [row for row in rows if value_for(row) is not None]
+        null_rows = [row for row in rows if value_for(row) is None]
+        non_null_rows.sort(key=lambda row: row["lead_id"], reverse=True)
+        non_null_rows.sort(key=value_for, reverse=descending)
+        null_rows.sort(key=lambda row: row["lead_id"], reverse=True)
+        if "(CASE STAGE" in q or "(CASE STATUS" in q:
+            known_rows = [row for row in non_null_rows if value_for(row) != 99]
+            unknown_rows = [row for row in non_null_rows if value_for(row) == 99]
+            known_rows.sort(key=lambda row: row["lead_id"], reverse=True)
+            known_rows.sort(key=value_for, reverse=descending)
+            unknown_rows.sort(key=lambda row: row["lead_id"], reverse=True)
+            rows = [*known_rows, *unknown_rows, *null_rows]
+        else:
+            rows = [*non_null_rows, *null_rows]
         total = len(rows)
 
         if "LIMIT $" in q:
@@ -1117,3 +1176,228 @@ async def test_list_leads_cross_tenant_isolation(app: Any, db: _StubDatabase) ->
     assert response.status_code == 200
     ids = [item["lead_id"] for item in response.json()["items"]]
     assert ids == ["lead-mine"]
+
+
+# ---------------------------------------------------------------------------
+# SR-25: list sort + combined name/email search contract
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "created_at; DROP TABLE leads--",
+        "created_at) --",
+        "name, tenant_id",
+        "(SELECT tenant_id)",
+        "created_at DESC; SELECT * FROM users",
+        "tenant_id",
+        "1",
+        "name/**/",
+        "",
+        "NAME",
+    ],
+)
+async def test_list_leads_sort_rejects_unknown_or_hostile_keys(
+    app: Any, db: _StubDatabase, payload: str,
+) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/admin/leads",
+            params={"sort": payload},
+            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "INVALID_LEAD_SORT"
+
+
+async def test_list_leads_sort_rejects_unknown_direction(app: Any, db: _StubDatabase) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/admin/leads",
+            params={"sort": "score", "dir": "sideways"},
+            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "INVALID_LEAD_SORT_DIRECTION"
+
+
+@pytest.mark.parametrize("sort", ["name", "email", "stage", "status", "score", "assigned", "created"])
+async def test_list_leads_all_sort_keys_are_accepted(app: Any, db: _StubDatabase, sort: str) -> None:
+    db.seed(tenant_id=_TENANT_ID, lead_id=f"lead-sort-{sort}")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/admin/leads",
+            params={"sort": sort, "dir": "asc"},
+            cookies={"access_token": _token(Role.CLIENT_AGENT)},
+        )
+
+    assert response.status_code == 200
+
+
+async def test_list_leads_q_too_short_is_rejected(app: Any, db: _StubDatabase) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/admin/leads", params={"q": "a"}, cookies={"access_token": _token(Role.CLIENT_ADMIN)}
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "INVALID_LEAD_SEARCH"
+
+
+async def test_list_leads_q_too_long_is_rejected(app: Any, db: _StubDatabase) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/admin/leads", params={"q": "a" * 201}, cookies={"access_token": _token(Role.CLIENT_ADMIN)}
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "INVALID_LEAD_SEARCH"
+
+
+async def test_list_leads_q_matches_name_or_email_without_cross_tenant_leak(
+    app: Any, db: _StubDatabase,
+) -> None:
+    db.seed(tenant_id=_TENANT_ID, lead_id="needle-name")
+    db._leads[(_TENANT_ID, "needle-name")]["name"] = "Alice Needle"
+    db.seed(tenant_id=_OTHER_TENANT_ID, lead_id="needle-other")
+    db._leads[(_OTHER_TENANT_ID, "needle-other")]["email"] = "alice.needle@example.com"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/admin/leads",
+            params={"q": "NEEDLE", "sort": "name", "dir": "asc"},
+            cookies={"access_token": _token(Role.CLIENT_AGENT)},
+        )
+
+    assert response.status_code == 200
+    assert [item["lead_id"] for item in response.json()["items"]] == ["needle-name"]
+
+
+async def test_tenant_scoped_list_route_accepts_sort_and_search(app: Any, db: _StubDatabase) -> None:
+    db.seed_tenant(_TENANT_ID)
+    db.seed(tenant_id=_TENANT_ID, lead_id="tenant-route")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            f"/admin/tenants/{_TENANT_ID}/leads",
+            params={"sort": "score", "dir": "desc", "q": "jane"},
+            cookies={"access_token": _token(Role.PLATFORM_ADMIN, tenant_id=None)},
+        )
+
+    assert response.status_code == 200
+    assert [item["lead_id"] for item in response.json()["items"]] == ["tenant-route"]
+
+
+async def test_tenant_scoped_list_route_rejects_unknown_sort(app: Any, db: _StubDatabase) -> None:
+    db.seed_tenant(_TENANT_ID)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            f"/admin/tenants/{_TENANT_ID}/leads",
+            params={"sort": "tenant_id"},
+            cookies={"access_token": _token(Role.PLATFORM_ADMIN, tenant_id=None)},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "INVALID_LEAD_SORT"
+
+
+# ---------------------------------------------------------------------------
+# SR-21: feed emits (D2/D3) -- lead_assigned, lead_stage_transitioned
+# ---------------------------------------------------------------------------
+
+
+async def test_patch_stage_transition_emits_lead_stage_transitioned(
+    app: Any, db: _StubDatabase,
+) -> None:
+    lead_id = "lead-emit-stage"
+    db.seed(tenant_id=_TENANT_ID, lead_id=lead_id, stage="captured", status="new")
+
+    with patch("api.leads.admin_routes.emit_event_safe") as mock_emit:
+        mock_emit.return_value = "event-1"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _token(Role.CLIENT_ADMIN)
+            response = await client.patch(
+                f"/admin/leads/{lead_id}", json={"stage": "qualified"},
+                cookies={"access_token": token},
+            )
+
+    assert response.status_code == 200
+    mock_emit.assert_awaited_once()
+    _, kwargs = mock_emit.call_args
+    assert kwargs["kind"] == "lead_stage_transitioned"
+    assert kwargs["category"] == "leads"
+    assert kwargs["target_id"] == lead_id
+    assert kwargs["payload"] == {"lead_id": lead_id, "from_stage": "captured", "to_stage": "qualified"}
+
+
+async def test_patch_stage_transition_still_200_when_feed_emit_raises(
+    app: Any, db: _StubDatabase,
+) -> None:
+    """MANDATORY (D2): a feed-insert failure must not fail the transition --
+    it commits and returns 200 with only the feed item missing."""
+    lead_id = "lead-emit-stage-2"
+    db.seed(tenant_id=_TENANT_ID, lead_id=lead_id, stage="captured", status="new")
+
+    with patch(
+        "api.notifications.emit.emit_event",
+        new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _token(Role.CLIENT_ADMIN)
+            response = await client.patch(
+                f"/admin/leads/{lead_id}", json={"stage": "qualified"},
+                cookies={"access_token": token},
+            )
+
+    assert response.status_code == 200
+    assert response.json()["stage"] == "qualified"
+    assert db._leads[(_TENANT_ID, lead_id)]["stage"] == "qualified"
+
+
+async def test_post_assignment_emits_lead_assigned(app: Any, db: _StubDatabase) -> None:
+    lead_id = "lead-emit-assign"
+    db.seed(tenant_id=_TENANT_ID, lead_id=lead_id)
+    db.seed_user(user_id="agent-1", tenant_id=_TENANT_ID, role="CLIENT_AGENT", active=True)
+
+    with patch("api.leads.admin_routes.emit_event_safe") as mock_emit:
+        mock_emit.return_value = "event-1"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _token(Role.CLIENT_ADMIN)
+            response = await client.post(
+                f"/admin/leads/{lead_id}/assignment", json={"agent_id": "agent-1"},
+                cookies={"access_token": token},
+            )
+
+    assert response.status_code == 200
+    mock_emit.assert_awaited_once()
+    _, kwargs = mock_emit.call_args
+    assert kwargs["kind"] == "lead_assigned"
+    assert kwargs["category"] == "leads"
+    assert kwargs["target_id"] == lead_id
+    assert kwargs["payload"] == {"lead_id": lead_id, "agent_id": "agent-1"}
+
+
+async def test_post_assignment_still_200_when_feed_emit_raises(app: Any, db: _StubDatabase) -> None:
+    """MANDATORY (D2): a feed-insert failure must not fail the assignment."""
+    lead_id = "lead-emit-assign-2"
+    db.seed(tenant_id=_TENANT_ID, lead_id=lead_id)
+    db.seed_user(user_id="agent-1", tenant_id=_TENANT_ID, role="CLIENT_AGENT", active=True)
+
+    with patch(
+        "api.notifications.emit.emit_event",
+        new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _token(Role.CLIENT_ADMIN)
+            response = await client.post(
+                f"/admin/leads/{lead_id}/assignment", json={"agent_id": "agent-1"},
+                cookies={"access_token": token},
+            )
+
+    assert response.status_code == 200
+    assert db._leads[(_TENANT_ID, lead_id)]["assigned_agent_id"] == "agent-1"
