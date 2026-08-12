@@ -1469,6 +1469,116 @@ describe("ChatWidget", () => {
     });
   });
 
+  describe("booking chip routes directly to scheduling (bypasses the orchestrator escalate copy)", () => {
+    it("clicking the 'Book a call with sales' suggestion chip calls fetchAvailabilitySummary (NOT sendTurn) and renders the scheduling card, not a handoff/support interstitial", async () => {
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce({
+        ok: true,
+        summary: {
+          action: "schedule_cta",
+          timezone: "UTC",
+          days: [{ date: "2026-07-22", hasAvailability: true }],
+          transitionMessage: "Happy to connect you with a sales rep. Please pick a time that works best for you.",
+          existingBooking: null,
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
+        (button) => button.textContent?.includes("Book a call with sales"),
+      );
+      expect(suggestion).toBeDefined();
+
+      act(() => {
+        suggestion?.click();
+      });
+      await flush();
+
+      // Went through the same explicit-booking path as the persistent CTA
+      // button -- no /public/chat/message turn, no classify/generate/cost.
+      expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
+      expect(sendTurnMock).not.toHaveBeenCalled();
+
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Book a call with sales");
+      // Straight to the calendar card -- never the handoff-choice interstitial.
+      expect(container.querySelector(".cw-handoff-card")).toBeNull();
+      const botBubbles = container.querySelectorAll(".cw-bubble-row-bot .cw-bubble-bot");
+      expect(botBubbles.length).toBe(1);
+      expect(container.querySelector(".cw-bubble-row-bot .cw-sched-day-strip")).not.toBeNull();
+    });
+
+    it("every other suggestion chip still goes through sendMessage/the orchestrator turn unchanged", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-support",
+          messageId: "msg-support",
+          reply: "Sure, tell me more about the problem.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
+        (button) => button.textContent?.includes("I need help with a problem"),
+      );
+      act(() => {
+        suggestion?.click();
+      });
+      await flush();
+
+      expect(sendTurnMock).toHaveBeenCalledWith(
+        baseConfig,
+        expect.objectContaining({ message: "I need help with a problem", conversationId: null }),
+      );
+      expect(fetchAvailabilitySummaryMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("orchestrator escalate turns render the server's real reply text", () => {
+    it("a bot-initiated escalate (e.g. low confidence) renders the server's actual reply, not a hardcoded client-side apology string, and still shows the handoff-choice interstitial", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          reply: "I couldn't find a confident answer to that -- let's get you to someone who can help.",
+          decision: "escalate",
+          confidence: 0.1,
+          sources: [],
+          action: "lead_form",
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      typeAndSend("Some off-topic or low-confidence question");
+      await flush();
+
+      const botBubble = container.querySelector(".cw-bubble-row-bot .cw-bubble-bot");
+      expect(botBubble?.textContent).toContain(
+        "I couldn't find a confident answer to that -- let's get you to someone who can help.",
+      );
+      expect(botBubble?.textContent).not.toMatch(/sorry to hear/i);
+      // Still a genuine bot-initiated escalate -- the one-step confirm
+      // interstitial still renders, just with accurate reply text above it.
+      expect(container.querySelector(".cw-handoff-card")).not.toBeNull();
+    });
+  });
+
   describe("SR-5: persistent 'Connect with a sales rep' CTA", () => {
     function getConnectButton(): HTMLButtonElement {
       const button = container.querySelector<HTMLButtonElement>(".cw-connect-sales-button");

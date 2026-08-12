@@ -58,6 +58,24 @@ export const settingsFormSchema = z.object({
   // object or blank" isn't expressible as a single Zod string rule with a
   // useful per-case error message.
   businessHoursText: z.string(),
+  // Tier 2: the turn-count cap, editable from this same form. A blank field
+  // -> `undefined` (the server field's "leave as-is" sentinel, mirrored by
+  // `saveSettings` sending `turn_cap: null` -- `settings_routes.py` only
+  // touches `tenant_orchestrator_configs` when it is explicitly provided).
+  // Mirrors `AdminBotSettingsRequest.turn_cap`'s `ge=1` constraint
+  // (`services/api/src/api/admin/settings_routes.py`).
+  turnCap: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined))
+    .refine((value) => value === undefined || /^\d+$/.test(value), {
+      message: "Turn cap must be a whole number.",
+    })
+    .transform((value) => (value === undefined ? undefined : Number(value)))
+    .refine((value) => value === undefined || value >= 1, {
+      message: "Turn cap must be at least 1.",
+    }),
 });
 
 export type SettingsFormInput = z.input<typeof settingsFormSchema>;
@@ -126,6 +144,7 @@ export interface SettingsFieldValues {
   businessHoursText: string;
   escalationPolicy: string;
   tone: string;
+  turnCap: string;
 }
 
 /** Derives the field values a fresh/reset form should show for a given
@@ -141,6 +160,7 @@ export function fieldValuesFromSettings(settings: BotSettings): SettingsFieldVal
     businessHoursText: stringifyBusinessHours(settings.businessHours),
     escalationPolicy: settings.escalationPolicy ?? "",
     tone: settings.tone ?? "",
+    turnCap: String(settings.turnCap),
   };
 }
 

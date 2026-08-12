@@ -51,12 +51,11 @@ import { withRetry } from "../retry";
 import { fetchAvailabilitySummary } from "../schedule";
 import * as tts from "../tts";
 import type { ChatMessage } from "./Bubble";
-import { MessageList } from "./MessageList";
+import { MessageList, BOOK_CALL_SUGGESTION_MESSAGE } from "./MessageList";
 import { ConnectionStatus, type ConnectionState } from "./ConnectionStatus";
 
 const LOG_PREFIX = "[chatbot-widget]";
 const PANEL_HEADER_ID = "cw-panel-header";
-const SUPPORT_HANDOFF_REPLY = "I'm sorry to hear that — let's get it sorted. I can connect you with one of our reps.";
 const SUPPORT_STAY_REPLY = "No problem, I'm right here. Can you tell me a bit more about what stopped working?";
 
 /** Max attempts for the bounded auto-retry of a transient turn failure (decision 1/2). */
@@ -483,6 +482,18 @@ export function ChatWidget({
       } else {
         pendingIdentityQuestionRef.current = null;
       }
+      // Explicit booking requests (the "Book a call with sales" suggestion
+      // chip and the persistent "Connect with a sales rep" button) never
+      // reach this branch at all -- both go through `startScheduling`
+      // directly (bypassing `sendMessage`/the orchestrator turn entirely),
+      // straight to the calendar/lead-form card. So every `decision ===
+      // "escalate"` turn that DOES land here is bot-initiated (low
+      // confidence, off-topic, the turn-count cap, or a free-typed
+      // scheduling request the classifier caught) -- those still get the
+      // one-step `<SupportHandoff>` confirm interstitial ("Talk to a rep" /
+      // "Stay here") before the calendar/lead-form opens, but the bubble
+      // above it now always shows the server's real `reply` text -- never a
+      // hardcoded client-side apology string.
       const offersHumanHandoff = result.turn.decision === "escalate"
         && (result.turn.action === "schedule_cta" || result.turn.action === "lead_form");
       setMessages((prev) => [
@@ -490,7 +501,7 @@ export function ChatWidget({
         {
           id: nextLocalId(),
           role: "bot",
-          text: offersHumanHandoff ? SUPPORT_HANDOFF_REPLY : result.turn.reply,
+          text: result.turn.reply,
           action: offersHumanHandoff ? "handoff_choice" : result.turn.action,
         },
       ]);
@@ -518,10 +529,6 @@ export function ChatWidget({
     setInputValue("");
     await sendMessage(message);
   }, [inputValue, sendMessage]);
-
-  const handleSuggestion = useCallback(async (message: string) => {
-    await sendMessage(message);
-  }, [sendMessage]);
 
   /**
    * The persistent "Connect with a sales rep" CTA (SR-5 decisions 4/5): a
@@ -581,6 +588,22 @@ export function ChatWidget({
       },
     ]);
   }, [config, pending, schedulePending, attemptSessionReconnect]);
+
+  /**
+   * SR-* fix: the "Book a call with sales" suggestion chip is an explicit
+   * booking request exactly like the persistent CTA button -- it must go
+   * straight to the calendar/lead-form card via `startScheduling` (no
+   * `/public/chat/message` turn, no classify/generate/cost), never through
+   * `sendMessage`/the orchestrator. Every OTHER suggestion chip is a real
+   * question and keeps going through `sendMessage`/the LLM path unchanged.
+   */
+  const handleSuggestion = useCallback(async (message: string) => {
+    if (message === BOOK_CALL_SUGGESTION_MESSAGE) {
+      await startScheduling(message);
+      return;
+    }
+    await sendMessage(message);
+  }, [sendMessage, startScheduling]);
 
   const stayWithRebecca = useCallback(() => {
     if (pending || schedulePending) return;

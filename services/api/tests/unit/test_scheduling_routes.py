@@ -914,6 +914,69 @@ async def test_post_book_resolvable_recipient_enqueues_confirmation_and_delays_o
     assert delay_kwargs["job_id"] == "job-confirm-1"
 
 
+async def test_post_book_calendly_link_configured_included_in_confirmation_body() -> None:
+    """A Calendly row with `enabled=False` (native flow stays primary, no
+    calendar-sync attempt) still surfaces its scheduling_url in the
+    confirmation email as the reschedule link."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    db.seed_calendly(
+        tenant_id=_TENANT_ID, scheduling_url="https://calendly.com/acme/intro", enabled=False,
+    )
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.resolve_event_recipient",
+            new=AsyncMock(return_value="lead@example.com"),
+        ),
+        patch(
+            "api.scheduling.routes.enqueue_notification",
+            new=AsyncMock(return_value="job-confirm-link"),
+        ) as mock_enqueue,
+        patch("api.scheduling.routes.send_notification"),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token()
+            response = await client.post(
+                "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 201
+    mock_enqueue.assert_awaited_once()
+    _, kwargs = mock_enqueue.call_args
+    assert "https://calendly.com/acme/intro" in kwargs["body"]
+
+
+async def test_post_book_no_calendly_configured_confirmation_body_has_no_link() -> None:
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.resolve_event_recipient",
+            new=AsyncMock(return_value="lead@example.com"),
+        ),
+        patch(
+            "api.scheduling.routes.enqueue_notification",
+            new=AsyncMock(return_value="job-confirm-nolink"),
+        ) as mock_enqueue,
+        patch("api.scheduling.routes.send_notification"),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            token = _visitor_token()
+            response = await client.post(
+                "/public/schedule/book", json=_book_body(), headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 201
+    mock_enqueue.assert_awaited_once()
+    _, kwargs = mock_enqueue.call_args
+    assert "calendly.com" not in kwargs["body"]
+    assert "contact us" in kwargs["body"]
+
+
 async def test_post_book_confirmation_enqueue_carries_autolinked_lead_id() -> None:
     """SR-9.3 D4/Scope §3: the successful autolink's lead_id (already in
     scope from SR-9.1's create-or-link block) is passed onto the booking

@@ -50,7 +50,9 @@ from api.scheduling.slots import Slot, compute_slots
 
 _log = get_logger(__name__)
 
-_SCHEDULE_TRANSITION_MESSAGE = "I'd be happy to help you find a time with our sales team."
+_SCHEDULE_TRANSITION_MESSAGE = (
+    "Happy to connect you with a sales rep. Please pick a time that works best for you."
+)
 
 router = APIRouter(prefix="/public/schedule", tags=["scheduling"])
 
@@ -552,8 +554,22 @@ async def book_slot(
                 },
             )
         else:
+            # calendar_config was already fetched above for the calendar-sync
+            # step -- reused here regardless of `.enabled`. A Calendly row is
+            # deliberately allowed with `enabled=False`: that flag governs
+            # ONLY whether availability-summary hands the visitor off to
+            # Calendly instead of the native calendar (routes.py, see
+            # GET /public/schedule/availability-summary); it is NOT a gate on
+            # including the tenant's Calendly link in the confirmation email.
+            calendly_link = (
+                calendar_config.scheduling_url
+                if calendar_config is not None
+                and calendar_config.provider == "calendly"
+                and calendar_config.scheduling_url
+                else None
+            )
             confirm_subject, confirm_body = booking_confirmation_message(
-                starts_at=event.starts_at, timezone=event.timezone
+                starts_at=event.starts_at, timezone=event.timezone, calendly_link=calendly_link,
             )
             job_id = await enqueue_notification(
                 db,

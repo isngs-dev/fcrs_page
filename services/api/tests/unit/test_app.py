@@ -289,6 +289,10 @@ def _make_settings(**overrides: object) -> Any:
     stub = MagicMock()
     stub.storage_backend = overrides.get("storage_backend", "local")
     stub.storage_local_root = overrides.get("storage_local_root", None)
+    # Explicit default (not left to MagicMock's auto-truthy attribute
+    # fallback) so an s3-backend test that forgets to set this fails loudly
+    # instead of silently passing the fail-fast check for the wrong reason.
+    stub.storage_s3_bucket = overrides.get("storage_s3_bucket", None)
     return stub
 
 
@@ -309,11 +313,30 @@ def test_validate_runtime_config_passes_when_local_and_root_set() -> None:
     _validate_runtime_config(stub)  # must not raise
 
 
-def test_validate_runtime_config_passes_when_backend_not_local() -> None:
-    """Non-local backend without root → no exception (root is not required)."""
+def test_validate_runtime_config_s3_backend_ignores_local_root() -> None:
+    """s3 backend + no STORAGE_LOCAL_ROOT → no exception (root is local-only)."""
     from api.app import _validate_runtime_config
 
-    stub = _make_settings(storage_backend="s3", storage_local_root=None)
+    stub = _make_settings(
+        storage_backend="s3", storage_local_root=None, storage_s3_bucket="my-bucket"
+    )
+    _validate_runtime_config(stub)  # must not raise
+
+
+def test_validate_runtime_config_raises_when_s3_and_bucket_unset() -> None:
+    """s3 backend + no STORAGE_S3_BUCKET → RuntimeError naming the var."""
+    from api.app import _validate_runtime_config
+
+    stub = _make_settings(storage_backend="s3", storage_s3_bucket=None)
+    with pytest.raises(RuntimeError, match="STORAGE_S3_BUCKET"):
+        _validate_runtime_config(stub)
+
+
+def test_validate_runtime_config_passes_when_s3_and_bucket_set() -> None:
+    """s3 backend + bucket provided → no exception."""
+    from api.app import _validate_runtime_config
+
+    stub = _make_settings(storage_backend="s3", storage_s3_bucket="my-bucket")
     _validate_runtime_config(stub)  # must not raise
 
 

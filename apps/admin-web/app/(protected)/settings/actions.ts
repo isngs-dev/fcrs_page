@@ -32,6 +32,7 @@ export interface SaveFieldErrors {
   escalationPolicy?: string;
   tone?: string;
   businessHoursText?: string;
+  turnCap?: string;
 }
 
 export interface SaveIdleState {
@@ -115,6 +116,7 @@ export async function saveSettings(
     escalationPolicy: nullToUndefined(formData.get("escalationPolicy")),
     tone: nullToUndefined(formData.get("tone")),
     businessHoursText: String(formData.get("businessHoursText") ?? ""),
+    turnCap: nullToUndefined(formData.get("turnCap")),
   });
 
   if (!parsed.success) {
@@ -127,6 +129,7 @@ export async function saveSettings(
       else if (key === "dashboardTitle") fieldErrors.dashboardTitle ??= issue.message;
       else if (key === "escalationPolicy") fieldErrors.escalationPolicy ??= issue.message;
       else if (key === "tone") fieldErrors.tone ??= issue.message;
+      else if (key === "turnCap") fieldErrors.turnCap ??= issue.message;
     }
     return errorState({
       fieldErrors,
@@ -143,6 +146,7 @@ export async function saveSettings(
     escalationPolicy,
     tone,
     businessHoursText,
+    turnCap,
   } = parsed.data;
 
   // Belt-and-suspenders JSON guard (decision 5) -- reject client-side and
@@ -164,6 +168,11 @@ export async function saveSettings(
     escalation_policy: escalationPolicy ?? null,
     tone: tone ?? null,
     business_hours: businessHoursResult.value,
+    // `null` when the field was left blank -- `settings_routes.py` treats a
+    // `None` turn_cap as "not provided" and leaves
+    // `tenant_orchestrator_configs` untouched (never resets it to a
+    // default), mirroring how a blank field here means "no change".
+    turn_cap: turnCap ?? null,
   };
 
   const path = tenantId

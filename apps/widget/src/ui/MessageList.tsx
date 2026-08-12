@@ -28,9 +28,16 @@ export interface MessageListProps {
   onHandoffStay?: () => void;
 }
 
+/** The "Book a call with sales" chip's message/label (exported so
+ * `ChatWidget.tsx#handleSuggestion` can route a click on this specific chip
+ * through `startScheduling` -- the same explicit-booking path as the
+ * persistent "Connect with a sales rep" button -- instead of `sendMessage`/
+ * the orchestrator turn, without duplicating the literal string). */
+export const BOOK_CALL_SUGGESTION_MESSAGE = "Book a call with sales";
+
 const SUGGESTIONS = [
   { message: "How does the Pro plan compare?", label: "How does the Pro plan compare?", icon: "chat" },
-  { message: "Book a call with sales", label: "Book a call with sales", icon: "calendar" },
+  { message: BOOK_CALL_SUGGESTION_MESSAGE, label: BOOK_CALL_SUGGESTION_MESSAGE, icon: "calendar" },
   { message: "I need help with a problem", label: "I need help with a problem", icon: "support" },
 ] as const;
 

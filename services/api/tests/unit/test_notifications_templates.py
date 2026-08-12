@@ -77,3 +77,17 @@ def test_booking_confirmation_message_no_stray_pii_fields() -> None:
     combined = subject + body
     assert "tenant_id" not in combined
     assert "visitor_id" not in combined
+
+
+def test_booking_confirmation_message_includes_calendly_link_when_given() -> None:
+    link = "https://calendly.com/acme/intro"
+    _subject, body = booking_confirmation_message(
+        starts_at=_STARTS_AT_UTC, timezone=_TZ, calendly_link=link
+    )
+    assert link in body
+
+
+def test_booking_confirmation_message_no_calendly_link_falls_back_to_contact_us() -> None:
+    _subject, body = booking_confirmation_message(starts_at=_STARTS_AT_UTC, timezone=_TZ)
+    assert "contact us" in body
+    assert "calendly.com" not in body

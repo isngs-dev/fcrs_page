@@ -66,14 +66,30 @@ class ApiSettings(Settings):
     celery_broker_url: str | None = None
     celery_result_backend: str | None = None
 
-    # Document ingestion / object storage (S5.2).
-    # storage_backend: which driver to use. Currently only "local" is supported;
-    #   S3/GCS drivers slot in here later.
+    # Document ingestion / object storage (S5.2, S3 driver added for
+    # multi-service deploys where the API and ingestion worker run as
+    # separate processes with independent filesystems -- "local" only works
+    # when both share one disk).
+    # storage_backend: "local" (filesystem) or "s3" (any S3-wire-compatible
+    #   store -- AWS S3, Cloudflare R2, DigitalOcean Spaces, MinIO, Backblaze
+    #   B2 -- via storage_s3_endpoint_url). GCS slots in later.
     # storage_local_root: required when storage_backend="local". If unset the
     #   LocalStorageProvider raises at construction time (fail-fast, CLAUDE.md §3).
+    # storage_s3_bucket: required when storage_backend="s3" -- S3StorageProvider
+    #   raises at construction time if unset (same fail-fast contract).
+    # storage_s3_region / storage_s3_endpoint_url: endpoint_url is None for real
+    #   AWS S3; set it to point at an S3-compatible provider instead.
+    # storage_s3_access_key_id / storage_s3_secret_access_key: optional -- if
+    #   unset, boto3 falls back to its own default credential chain (env vars,
+    #   shared config file, IAM role). Never hardcode these; env only.
     # ingestion_max_upload_bytes: maximum accepted upload size (default 10 MiB).
     storage_backend: str = "local"
     storage_local_root: str | None = None
+    storage_s3_bucket: str | None = None
+    storage_s3_region: str | None = None
+    storage_s3_endpoint_url: str | None = None
+    storage_s3_access_key_id: str | None = None
+    storage_s3_secret_access_key: str | None = None
     ingestion_max_upload_bytes: int = 10_485_760
 
     # Embedding / chunking (S5.3).

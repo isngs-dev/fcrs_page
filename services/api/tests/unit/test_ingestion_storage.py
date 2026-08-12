@@ -221,7 +221,7 @@ def test_get_storage_returns_local_provider(tmp_path: object) -> None:
 def test_get_storage_raises_for_unknown_backend() -> None:
     """get_storage() with an unknown backend raises ValidationError."""
     _reset_modules()
-    env = {**_TEST_ENV, "STORAGE_BACKEND": "s3"}
+    env = {**_TEST_ENV, "STORAGE_BACKEND": "gcs"}
     with patch.dict("os.environ", env, clear=False):
         from api.config import get_api_settings
 
@@ -233,3 +233,231 @@ def test_get_storage_raises_for_unknown_backend() -> None:
         with pytest.raises(ValidationError) as exc_info:
             get_storage()
         assert exc_info.value.code == "UNSUPPORTED_STORAGE_BACKEND"
+
+
+# ==============================================================================
+# S3StorageProvider — put/get/exists/delete round-trip against an injected
+# fake client (no network, no moto: mirrors the OpenAICompatibleProvider
+# ``client: Any | None`` injection pattern already used in api.llm).
+# ==============================================================================
+
+
+def _fake_s3_client() -> object:
+    """A minimal in-memory stand-in for a boto3 S3 client.
+
+    Implements exactly the operations S3StorageProvider calls
+    (put_object/get_object/head_object/delete_object) plus the botocore
+    ``ClientError`` shape those calls raise on a missing key, so
+    S3StorageProvider's own error-translation logic is exercised for real.
+    """
+    from botocore.exceptions import ClientError
+
+    class _FakeS3Client:
+        def __init__(self) -> None:
+            self._objects: dict[str, bytes] = {}
+
+        def put_object(self, *, Bucket: str, Key: str, Body: bytes) -> None:  # noqa: N803
+            self._objects[Key] = Body
+
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:  # noqa: N803
+            if Key not in self._objects:
+                raise ClientError(
+                    {"Error": {"Code": "NoSuchKey", "Message": "Not found"}},
+                    "GetObject",
+                )
+            body = self._objects[Key]
+
+            class _Body:
+                def read(self_inner) -> bytes:  # noqa: N805
+                    return body
+
+            return {"Body": _Body()}
+
+        def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:  # noqa: N803
+            if Key not in self._objects:
+                raise ClientError(
+                    {"Error": {"Code": "404", "Message": "Not found"}},
+                    "HeadObject",
+                )
+            return {}
+
+        def delete_object(self, *, Bucket: str, Key: str) -> None:  # noqa: N803
+            self._objects.pop(Key, None)
+
+    return _FakeS3Client()
+
+
+def test_s3_put_get_round_trip() -> None:
+    """put then get returns the same bytes."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.storage import S3StorageProvider
+
+        sp = S3StorageProvider(bucket="test-bucket", client=_fake_s3_client())
+        key = "tenant-a/doc-1/sample.txt"
+        data = b"hello world"
+        sp.put(key, data)
+        assert sp.get(key) == data
+
+
+def test_s3_exists_true_after_put() -> None:
+    """exists returns True after put, False before."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.storage import S3StorageProvider
+
+        sp = S3StorageProvider(bucket="test-bucket", client=_fake_s3_client())
+        key = "tenant-a/doc-2/file.txt"
+        assert not sp.exists(key)
+        sp.put(key, b"content")
+        assert sp.exists(key)
+
+
+def test_s3_delete_removes_object() -> None:
+    """delete removes the object; exists returns False afterwards."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.storage import S3StorageProvider
+
+        sp = S3StorageProvider(bucket="test-bucket", client=_fake_s3_client())
+        key = "tenant-a/doc-3/file.txt"
+        sp.put(key, b"to delete")
+        assert sp.exists(key)
+        sp.delete(key)
+        assert not sp.exists(key)
+
+
+def test_s3_delete_missing_key_is_noop() -> None:
+    """delete of a non-existent key does not raise."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.storage import S3StorageProvider
+
+        sp = S3StorageProvider(bucket="test-bucket", client=_fake_s3_client())
+        sp.delete("tenant-a/doc-99/nope.txt")  # should not raise
+
+
+def test_s3_get_missing_raises_file_not_found() -> None:
+    """get of an absent key raises FileNotFoundError (translated from ClientError)."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.storage import S3StorageProvider
+
+        sp = S3StorageProvider(bucket="test-bucket", client=_fake_s3_client())
+        with pytest.raises(FileNotFoundError):
+            sp.get("tenant-a/doc-5/missing.txt")
+
+
+def test_s3_tenant_isolation() -> None:
+    """A key stored under tenant-a/ is not found via a tenant-b/ prefix."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.storage import S3StorageProvider
+
+        sp = S3StorageProvider(bucket="test-bucket", client=_fake_s3_client())
+        sp.put("tenant-a/doc-1/sample.txt", b"secret data")
+        assert not sp.exists("tenant-b/doc-1/sample.txt")
+        with pytest.raises(FileNotFoundError):
+            sp.get("tenant-b/doc-1/sample.txt")
+
+
+def test_s3_rejects_absolute_key() -> None:
+    """An absolute key (starting with /) raises ValidationError before any client call."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from common.errors import ValidationError
+
+        from api.ingestion.storage import S3StorageProvider
+
+        sp = S3StorageProvider(bucket="test-bucket", client=_fake_s3_client())
+        with pytest.raises(ValidationError) as exc_info:
+            sp.put("/etc/passwd", b"nope")
+        assert exc_info.value.code == "INVALID_STORAGE_KEY"
+
+
+def test_s3_rejects_dotdot_traversal() -> None:
+    """A key containing '..' raises ValidationError before any client call."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from common.errors import ValidationError
+
+        from api.ingestion.storage import S3StorageProvider
+
+        sp = S3StorageProvider(bucket="test-bucket", client=_fake_s3_client())
+        with pytest.raises(ValidationError) as exc_info:
+            sp.put("tenant-a/../tenant-b/secret.txt", b"nope")
+        assert exc_info.value.code == "INVALID_STORAGE_KEY"
+
+
+def test_s3_raises_when_bucket_is_none() -> None:
+    """S3StorageProvider raises RuntimeError when bucket is None."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.storage import S3StorageProvider
+
+        with pytest.raises(RuntimeError, match="STORAGE_S3_BUCKET"):
+            S3StorageProvider(bucket=None, client=_fake_s3_client())
+
+
+def test_s3_raises_when_bucket_is_empty_string() -> None:
+    """S3StorageProvider raises RuntimeError when bucket is an empty string."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.storage import S3StorageProvider
+
+        with pytest.raises(RuntimeError, match="STORAGE_S3_BUCKET"):
+            S3StorageProvider(bucket="", client=_fake_s3_client())
+
+
+def test_s3_other_client_errors_propagate_from_exists() -> None:
+    """A ClientError that isn't a not-found code propagates (not swallowed as False)."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from botocore.exceptions import ClientError
+
+        from api.ingestion.storage import S3StorageProvider
+
+        client = _fake_s3_client()
+
+        def _boom(**kwargs: object) -> None:
+            raise ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "nope"}}, "HeadObject"
+            )
+
+        client.head_object = _boom  # type: ignore[attr-defined]
+        sp = S3StorageProvider(bucket="test-bucket", client=client)
+        with pytest.raises(ClientError):
+            sp.exists("tenant-a/doc-1/file.txt")
+
+
+# ==============================================================================
+# get_storage() selector — s3 backend
+# ==============================================================================
+
+
+def test_get_storage_returns_s3_provider() -> None:
+    """get_storage() with backend=s3 returns an S3StorageProvider."""
+    _reset_modules()
+    env = {**_TEST_ENV, "STORAGE_BACKEND": "s3", "STORAGE_S3_BUCKET": "test-bucket"}
+    with patch.dict("os.environ", env, clear=False):
+        from api.config import get_api_settings
+
+        get_api_settings.cache_clear()
+        from api.ingestion.storage import S3StorageProvider, get_storage
+
+        provider = get_storage()
+        assert isinstance(provider, S3StorageProvider)
+
+
+def test_get_storage_s3_fails_fast_without_bucket() -> None:
+    """get_storage() with backend=s3 and no bucket set raises RuntimeError."""
+    _reset_modules()
+    env = {**_TEST_ENV, "STORAGE_BACKEND": "s3"}
+    with patch.dict("os.environ", env, clear=False):
+        from api.config import get_api_settings
+
+        get_api_settings.cache_clear()
+        from api.ingestion.storage import get_storage
+
+        with pytest.raises(RuntimeError, match="STORAGE_S3_BUCKET"):
+            get_storage()

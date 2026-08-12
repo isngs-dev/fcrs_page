@@ -33,6 +33,11 @@ def _validate_runtime_config(settings: ApiSettings) -> None:
             "STORAGE_BACKEND=local requires STORAGE_LOCAL_ROOT to be set. "
             "Set it in .env (repo root) or the environment. See deploy/.env.example."
         )
+    if settings.storage_backend.lower() == "s3" and not settings.storage_s3_bucket:
+        raise RuntimeError(
+            "STORAGE_BACKEND=s3 requires STORAGE_S3_BUCKET to be set. "
+            "Set it in .env (repo root) or the environment. See deploy/.env.example."
+        )
 
 
 @asynccontextmanager

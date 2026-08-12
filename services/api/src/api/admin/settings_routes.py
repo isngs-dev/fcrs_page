@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.admin.settings_repository import BotSettings, get_bot_settings, upsert_bot_settings
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
+from api.orchestrator.config_repository import get_orchestrator_config, upsert_orchestrator_config
 
 _log = get_logger(__name__)
 
@@ -41,6 +42,12 @@ class AdminBotSettingsRequest(BaseModel):
     launcher_label: str | None = Field(default=None, max_length=40)
     sidebar_workspace_label: str | None = Field(default=None, max_length=80)
     dashboard_title: str | None = Field(default=None, max_length=80)
+    # Tier 2: the turn-count cap is now settable from this same screen.
+    # `None` (the default, e.g. an admin-web submission that omits it) means
+    # "leave it as-is" -- `_put_settings` below only touches
+    # `tenant_orchestrator_configs` when this is explicitly provided, so a
+    # qualitative-only save (the pre-existing behavior) never clobbers it.
+    turn_cap: int | None = Field(default=None, ge=1)
 
     @field_validator("sidebar_workspace_label", "dashboard_title")
     @classmethod
@@ -97,7 +104,20 @@ async def _get_settings(request: Request, claims: AuthClaims) -> AdminBotSetting
 async def _put_settings(
     body: AdminBotSettingsRequest, request: Request, claims: AuthClaims,
 ) -> AdminBotSettingsResponse:
-    """Write ONLY qualitative fields; thresholds/provider/model are untouched."""
+    """Write the qualitative fields, plus ``turn_cap`` when provided.
+
+    Thresholds/``identity_gate_enabled``/provider/model stay untouched here
+    otherwise. ``turn_cap`` lives in ``tenant_orchestrator_configs``, a
+    DIFFERENT table from ``tenant_bot_settings`` -- when the caller provides
+    it, the CURRENT orchestrator config is read first so
+    ``upsert_orchestrator_config`` (a full-row upsert) can be called with the
+    tenant's existing ``answer_threshold``/``escalate_threshold``/
+    ``identity_gate_enabled`` alongside the new ``turn_cap``, instead of
+    silently clobbering those three back to their defaults. A ``None``
+    ``turn_cap`` (the field's default) means "not provided" -- the
+    orchestrator table is left completely untouched, exactly as before this
+    field existed.
+    """
     db = request.app.state.db
 
     await upsert_bot_settings(
@@ -111,6 +131,17 @@ async def _put_settings(
         sidebar_workspace_label=body.sidebar_workspace_label,
         dashboard_title=body.dashboard_title,
     )
+
+    if body.turn_cap is not None:
+        current_orchestrator_config = await get_orchestrator_config(db, claims)
+        await upsert_orchestrator_config(
+            db,
+            claims,
+            answer_threshold=current_orchestrator_config.answer_threshold,
+            escalate_threshold=current_orchestrator_config.escalate_threshold,
+            turn_cap=body.turn_cap,
+            identity_gate_enabled=current_orchestrator_config.identity_gate_enabled,
+        )
 
     await record_audit(
         db,

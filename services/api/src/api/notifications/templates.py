@@ -24,14 +24,25 @@ def _local_wall_clock(starts_at: datetime, timezone: str) -> str:
     return local.strftime("%Y-%m-%d %H:%M %Z")
 
 
-def booking_confirmation_message(*, starts_at: datetime, timezone: str) -> tuple[str, str]:
-    """Build the ``(subject, body)`` for a booking-confirmation email."""
+def booking_confirmation_message(
+    *, starts_at: datetime, timezone: str, calendly_link: str | None = None
+) -> tuple[str, str]:
+    """Build the ``(subject, body)`` for a booking-confirmation email.
+
+    ``calendly_link``, when the tenant has one configured, replaces the
+    generic "contact us" fallback line with a direct reschedule/manage link.
+    """
     when = _local_wall_clock(starts_at, timezone)
     subject = "Your call is confirmed"
+    reschedule_line = (
+        f"Need to reschedule? Manage your booking here: {calendly_link}"
+        if calendly_link
+        else "If you need to reschedule, please contact us."
+    )
     body = (
         "Your call is confirmed.\n\n"
         f"When: {when}\n\n"
-        "If you need to reschedule, please contact us."
+        f"{reschedule_line}"
     )
     return subject, body
 

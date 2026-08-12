@@ -202,10 +202,11 @@ describe("fieldValuesFromSettings", () => {
       businessHoursText: '{\n  "mon": [\n    "09:00",\n    "17:00"\n  ]\n}',
       escalationPolicy: "Escalate on refunds.",
       tone: "friendly",
+      turnCap: "7",
     });
   });
 
-  it("maps nulls to empty strings", () => {
+  it("maps nulls to empty strings (turnCap is never null -- always a number)", () => {
     expect(
       fieldValuesFromSettings({
         ...baseSettings,
@@ -225,7 +226,64 @@ describe("fieldValuesFromSettings", () => {
       businessHoursText: "",
       escalationPolicy: "",
       tone: "",
+      turnCap: "7",
     });
+  });
+});
+
+describe("settingsFormSchema -- turnCap", () => {
+  it("a blank turnCap -> undefined (leave-as-is sentinel)", () => {
+    const result = settingsFormSchema.safeParse({
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      turnCap: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.turnCap).toBeUndefined();
+    }
+  });
+
+  it("a valid whole-number turnCap parses to a number", () => {
+    const result = settingsFormSchema.safeParse({
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      turnCap: "3",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.turnCap).toBe(3);
+    }
+  });
+
+  it("a non-numeric turnCap fails validation", () => {
+    const result = settingsFormSchema.safeParse({
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      turnCap: "not-a-number",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.find((i) => i.path[0] === "turnCap")?.message;
+      expect(msg).toMatch(/whole number/i);
+    }
+  });
+
+  it("a turnCap below 1 fails validation", () => {
+    const result = settingsFormSchema.safeParse({
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      turnCap: "0",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.find((i) => i.path[0] === "turnCap")?.message;
+      expect(msg).toMatch(/at least 1/i);
+    }
   });
 });
 

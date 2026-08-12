@@ -244,14 +244,21 @@ _ESCALATE_REPLY = (
     "happy for us to contact you, and I'll pass it along."
 )
 
-# Fixed turn-cap template (S10.4 decision 7) -- the turn-count-cap
-# short-circuit's reply. Same dual-purpose (schedule_cta-or-lead_form)
-# phrasing as _ESCALATE_REPLY, but acknowledges the long conversation.
+# Fixed turn-cap template (S10.4 decision 7; retuned once the reply text
+# actually reaches the screen instead of being overwritten by the widget's
+# now-removed hardcoded apology). Same dual-purpose (schedule_cta-or-
+# lead_form) phrasing as _ESCALATE_REPLY, but acknowledges the long
+# conversation and drops the earlier "if that's available" hedge -- the
+# widget already renders whichever card the `action` actually resolves to
+# (calendar or lead form) directly beneath this reply, so the copy no longer
+# needs to hedge its own uncertainty; it still never hard-promises a
+# calendar (dual-purpose, per decision 7 -- the fallback may still resolve
+# to lead_form).
 _TURN_CAP_REPLY = (
-    "We've covered a lot here -- to make sure you get exactly the help you "
-    "need, let's connect you with someone from our team. Book a call if "
-    "that's available, or leave your name and email and confirm you're "
-    "happy for us to contact you, and we'll reach out."
+    "We've covered a lot here -- let's connect you with someone from our "
+    "team who can help further. Book a call, or share your name and email "
+    "below and confirm you're happy for us to contact you, and we'll reach "
+    "out."
 )
 
 # Fixed identity-gate template (SR-14 D1/D4) -- the trusted-constant reply

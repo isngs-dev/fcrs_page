@@ -175,7 +175,8 @@ export function SettingsForm({
     fields.dashboardTitle !== serverFields.dashboardTitle ||
     fields.businessHoursText !== serverFields.businessHoursText ||
     fields.escalationPolicy !== serverFields.escalationPolicy ||
-    fields.tone !== serverFields.tone;
+    fields.tone !== serverFields.tone ||
+    fields.turnCap !== serverFields.turnCap;
 
   function handleDiscard() {
     setFields(serverFields);
@@ -422,22 +423,46 @@ export function SettingsForm({
               ) : null}
             </SetRow>
 
-            {/* Thresholds (B9): real values, rendered as 3 READ-ONLY chips
-                per the reference -- PUT /admin/settings never writes them
-                (page.tsx's documented read-only set). Chips are inherently
-                non-interactive, so this stays a safe read-only surface. */}
-            <SetRow label="Thresholds" description="Governed by orchestrator config -- not editable from this screen." isLast>
-              <div className="flex flex-wrap gap-2">
+            {/* Thresholds (B9): answer/escalate stay READ-ONLY chips per the
+                reference -- PUT /admin/settings never writes them
+                (page.tsx's documented read-only set). Turn cap (Tier 2) IS
+                now editable from this screen -- `settings_routes.py`'s PUT
+                handler writes it to `tenant_orchestrator_configs` while
+                preserving the other two, so it gets a real numeric input
+                instead of a non-interactive chip. */}
+            <SetRow
+              label="Thresholds & turn cap"
+              description='Answer/escalate confidence thresholds are governed by orchestrator config and not editable here. Turn cap controls how many visitor messages the bot answers before proactively offering to connect with sales.'
+              htmlFor="turnCap"
+              isLast
+            >
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-secondary px-3 py-1.5 text-[12px] font-semibold text-foreground">
                   Answer {currentSettings.answerThreshold}
                 </span>
                 <span className="rounded-full bg-secondary px-3 py-1.5 text-[12px] font-semibold text-foreground">
                   Escalate {currentSettings.escalateThreshold}
                 </span>
-                <span className="rounded-full bg-secondary px-3 py-1.5 text-[12px] font-semibold text-foreground">
-                  Turn cap {currentSettings.turnCap}
-                </span>
+                <label className="text-[12px] font-semibold text-foreground" htmlFor="turnCap">
+                  Turn cap
+                </label>
+                <input
+                  id="turnCap"
+                  name="turnCap"
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={fields.turnCap}
+                  onChange={(e) => setFields((f) => ({ ...f, turnCap: e.target.value }))}
+                  className={`${SET_ROW_FIELD_CLASS} w-20`}
+                />
               </div>
+              {fieldErrors.turnCap ? (
+                <p role="alert" className="mt-1.5 text-sm text-destructive">
+                  {fieldErrors.turnCap}
+                </p>
+              ) : null}
             </SetRow>
           </div>
 

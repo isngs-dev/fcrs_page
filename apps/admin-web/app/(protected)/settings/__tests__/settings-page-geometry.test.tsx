@@ -151,7 +151,7 @@ describe("SettingsPage -- single route, two stacked shells (D1)", () => {
     expect(html).not.toMatch(/aria-label="[^"]*[Ee]scalat[^"]*"[^>]*>\s*[−-]\s*</);
   });
 
-  it("Bot-settings shell: thresholds render as read-only chips, never inputs", async () => {
+  it("Bot-settings shell: answer/escalate thresholds render as read-only chips, never inputs; turn cap is a real editable number input (Tier 2)", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
     mockAllFetch();
 
@@ -160,7 +160,11 @@ describe("SettingsPage -- single route, two stacked shells (D1)", () => {
 
     expect(html).toMatch(/Answer 0\.5/);
     expect(html).toMatch(/Escalate 0\.35/);
-    expect(html).toMatch(/Turn cap 6/);
+    // Turn cap is now a live `<input name="turnCap">`, pre-filled from the
+    // server value -- not baked into static text like the other two.
+    expect(html).toMatch(/name="turnCap"/);
+    expect(html).toMatch(/id="turnCap"[^>]*value="6"|value="6"[^>]*id="turnCap"/);
+    expect(html).not.toMatch(/Turn cap 6/);
   });
 
   it("Bot-settings shell: Appearance rail entry is disabled, no Appearance section is built (D4)", async () => {

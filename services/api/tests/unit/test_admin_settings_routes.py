@@ -46,13 +46,19 @@ class _StubDatabase:
         self.updated_tables: list[str] = []
 
     def seed_orchestrator_config(
-        self, *, tenant_id: str, answer_threshold: float, escalate_threshold: float, turn_cap: int
+        self,
+        *,
+        tenant_id: str,
+        answer_threshold: float,
+        escalate_threshold: float,
+        turn_cap: int,
+        identity_gate_enabled: bool | None = None,
     ) -> None:
         self._orchestrator_configs[tenant_id] = {
             "answer_threshold": answer_threshold,
             "escalate_threshold": escalate_threshold,
             "turn_cap": turn_cap,
-            "identity_gate_enabled": None,
+            "identity_gate_enabled": identity_gate_enabled,
         }
 
     def seed_llm_config(self, *, tenant_id: str, provider: str, model: str) -> None:
@@ -95,9 +101,18 @@ class _StubDatabase:
             }
             self.updated_tables.append("tenant_bot_settings")
             return "INSERT 0 1"
-        if "TENANT_ORCHESTRATOR_CONFIGS" in q and q.startswith("UPDATE"):
+        if "TENANT_ORCHESTRATOR_CONFIGS" in q and ("INSERT INTO" in q or q.startswith("UPDATE")):
+            # Mirrors config_repository.upsert_orchestrator_config's real
+            # INSERT ... ON CONFLICT DO UPDATE bind order.
+            tenant_id, answer_threshold, escalate_threshold, turn_cap, identity_gate_enabled = args
+            self._orchestrator_configs[tenant_id] = {
+                "answer_threshold": answer_threshold,
+                "escalate_threshold": escalate_threshold,
+                "turn_cap": turn_cap,
+                "identity_gate_enabled": identity_gate_enabled,
+            }
             self.updated_tables.append("tenant_orchestrator_configs")
-            return "UPDATE 1"
+            return "INSERT 0 1"
         if "TENANT_LLM_CONFIGS" in q and q.startswith("UPDATE"):
             self.updated_tables.append("tenant_llm_configs")
             return "UPDATE 1"
@@ -401,3 +416,86 @@ async def test_put_settings_workspace_label_too_long_422(app: Any, field: str) -
         )
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# PUT /admin/settings -- turn_cap (Tier 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_put_settings_turn_cap_updates_orchestrator_config_preserving_thresholds(
+    app: Any, db: _StubDatabase
+) -> None:
+    """Providing turn_cap writes tenant_orchestrator_configs, but the
+    existing answer_threshold/escalate_threshold/identity_gate_enabled must
+    survive untouched (the upsert is a full-row write)."""
+    db.seed_orchestrator_config(
+        tenant_id=_TENANT_ID,
+        answer_threshold=0.8,
+        escalate_threshold=0.3,
+        turn_cap=6,
+        identity_gate_enabled=True,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        put_response = await client.put(
+            "/admin/settings",
+            json={"greeting": "Hi", "turn_cap": 3},
+            cookies={"access_token": token},
+        )
+
+    assert put_response.status_code == 200
+    assert put_response.json()["turn_cap"] == 3
+    assert "tenant_orchestrator_configs" in db.updated_tables
+
+    stored = db._orchestrator_configs[_TENANT_ID]
+    assert stored["turn_cap"] == 3
+    assert stored["answer_threshold"] == 0.8
+    assert stored["escalate_threshold"] == 0.3
+    assert stored["identity_gate_enabled"] is True
+
+
+async def test_put_settings_without_turn_cap_does_not_touch_orchestrator_config(
+    app: Any, db: _StubDatabase
+) -> None:
+    """A PUT that omits turn_cap entirely (the pre-existing qualitative-only
+    save) must leave tenant_orchestrator_configs completely untouched."""
+    db.seed_orchestrator_config(
+        tenant_id=_TENANT_ID, answer_threshold=0.8, escalate_threshold=0.3, turn_cap=6
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        await client.put(
+            "/admin/settings",
+            json={"greeting": "Hi"},
+            cookies={"access_token": token},
+        )
+
+    assert "tenant_orchestrator_configs" not in db.updated_tables
+    assert db._orchestrator_configs[_TENANT_ID]["turn_cap"] == 6
+
+
+async def test_put_settings_turn_cap_below_one_422(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={"turn_cap": 0},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
+
+
+async def test_put_settings_turn_cap_client_agent_403(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_AGENT)
+        response = await client.put(
+            "/admin/settings",
+            json={"turn_cap": 3},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 403

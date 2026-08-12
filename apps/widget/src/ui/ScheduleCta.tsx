@@ -40,6 +40,12 @@ import { SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT, bookSlot, fetchSlots, 
 
 const LOG_PREFIX = "[chatbot-widget]";
 
+/** Generic rep-identity copy (no per-rep names/avatars -- explicit product
+ * decision: this platform has no rep data model). Extracted to a single
+ * constant so the "who you'll meet" and success-message strings can never
+ * drift from each other. */
+const SALES_TEAM_LABEL = "Sales team";
+
 /** A short, fixed list covering common regions plus the visitor's own
  * resolved zone (added dynamically if not already present) — this widget
  * has no server-delivered timezone catalog, so the selector stays a small,
@@ -177,7 +183,7 @@ function ScheduleCard({ children, onClose }: { children: ReactNode; onClose: () 
       </div>
       <div className="cw-sched-rep">
         <span className="cw-sched-rep-avatar" aria-hidden="true" />
-        <span><span className="cw-sched-rep-label">You&rsquo;ll meet with</span><strong>Sales team</strong></span>
+        <span><span className="cw-sched-rep-label">You&rsquo;ll meet with</span><strong>{SALES_TEAM_LABEL}</strong></span>
       </div>
       {children}
     </div>
@@ -659,7 +665,7 @@ export function ScheduleCta({ config, leadId, summary }: ScheduleCtaProps) {
         <div className="cw-sched-booked-message">Meeting invite sent to {email.trim()}.</div>
         <div className="cw-sched-confirmation cw-sched-success-card">
           <span className="cw-sched-success-icon"><CheckGlyph /></span>
-          <strong>You&rsquo;re all set to meet the Sales team on {formatSlotDate(step.slot.startsAt, timeZone)} at {formatSlotTime(step.slot.startsAt, timeZone)}.</strong>
+          <strong>You&rsquo;re all set to meet the {SALES_TEAM_LABEL} on {formatSlotDate(step.slot.startsAt, timeZone)} at {formatSlotTime(step.slot.startsAt, timeZone)}.</strong>
         </div>
       </div>
     );

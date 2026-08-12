@@ -29,6 +29,7 @@ import { getApiKeyInfo } from "@/lib/api-keys";
 import { SettingsForm } from "@/app/(protected)/settings/settings-form";
 import { WorkspaceSection } from "@/app/(protected)/settings/workspace-section";
 import { ApiKeysSection } from "@/app/(protected)/settings/api-keys-section";
+import { AvailabilitySection } from "@/app/(protected)/settings/availability-section";
 import { DisabledSections } from "@/app/(protected)/settings/disabled-sections";
 import { SettingsRail, type SettingsRailRow } from "@/app/(protected)/settings/settings-rail";
 
@@ -217,6 +218,12 @@ export default async function SettingsPage() {
                 {apiKeyResult.message}
               </p>
             ) : null}
+
+            {/* Tier 2 (sales-call-booking flow fix): scheduling availability
+                -- timezone/weekly hours/slot length/buffer -- via
+                PUT /admin/schedule/availability. CLIENT_ADMIN-only, same as
+                Workspace/API keys above. */}
+            <AvailabilitySection />
 
             <DisabledSections />
           </div>
