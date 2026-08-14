@@ -33,7 +33,22 @@ def apply_security_headers(response: Response) -> None:
 
 # -- Dynamic per-tenant CORS --------------------------------------------------
 
-_CORS_CACHE_PREFIX = "cors:origin:"
+CORS_CACHE_PREFIX = "cors:origin:"
+
+
+def cors_cache_key(origin: str) -> str:
+    """The cache key ``is_known_origin`` reads/writes for *origin*.
+
+    Exported (not module-private) because it is also the cross-module
+    invalidation contract: any code that mutates a tenant's
+    ``allowed_origins`` (``api.admin.api_keys_repository
+    .update_allowed_origins``'s caller) MUST delete this key for every
+    origin added or removed, or the stale cached verdict (positive OR
+    negative) survives until ``cors_origin_cache_ttl_seconds`` elapses --
+    CLAUDE.md §3's "invalidate on mutation, never on read" applied to a
+    global (not tenant-scoped) cache key.
+    """
+    return f"{CORS_CACHE_PREFIX}{origin}"
 
 
 async def is_known_origin(
@@ -45,10 +60,10 @@ async def is_known_origin(
 ) -> bool:
     """Return True if *origin* appears in any enabled tenant's allowed_origins.
 
-    Cached under ``cors:origin:<origin>`` (global key — CORS validity is a
+    Cached under ``cors_cache_key(origin)`` (global key — CORS validity is a
     platform-global fact, not tenant-scoped data).
     """
-    cache_key = f"{_CORS_CACHE_PREFIX}{origin}"
+    cache_key = cors_cache_key(origin)
     cached = await cache.get(cache_key)
     if cached is not None:
         return cached == "1"

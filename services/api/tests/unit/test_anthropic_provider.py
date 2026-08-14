@@ -231,6 +231,42 @@ async def test_classify_system_instruction_includes_balanced_fewshot_examples() 
     assert len(set(example_lines)) >= 2
 
 
+async def test_classify_passes_label_descriptions_into_the_instruction() -> None:
+    """label_descriptions reaches the system instruction sent upstream --
+    proves the off-topic-misclassification fix is actually wired through
+    to the real Anthropic call, not just built in classify_matching.py."""
+    stub = _StubMessages(text="off_topic")
+    client = _make_stub_client(stub)
+    provider = AnthropicProvider(client=client)
+
+    await provider.classify(
+        "Who is the President of India?",
+        labels=["question", "off_topic"],
+        model="claude-opus-4-8",
+        label_descriptions={"off_topic": "unrelated to this business"},
+    )
+
+    instruction = stub.last_kwargs["system"]
+    assert "Label meanings" in instruction
+    assert "off_topic: unrelated to this business" in instruction
+
+
+async def test_classify_without_label_descriptions_omits_label_meanings() -> None:
+    """Omitting label_descriptions (the default) keeps today's instruction
+    byte-for-byte -- no behavior change for callers that don't opt in."""
+    stub = _StubMessages(text="Support")
+    client = _make_stub_client(stub)
+    provider = AnthropicProvider(client=client)
+
+    await provider.classify(
+        "I need help with my order",
+        labels=["Sales", "Support", "Billing"],
+        model="claude-opus-4-8",
+    )
+
+    assert "Label meanings" not in stub.last_kwargs["system"]
+
+
 async def test_classify_wraps_api_error_in_llm_error() -> None:
     """classify APIError → LLMError."""
     mock_request = MagicMock()

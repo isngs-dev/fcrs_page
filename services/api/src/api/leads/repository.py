@@ -7,10 +7,12 @@ Every method:
 - Never returns or accepts ``tenant_id`` in its public return types; that is
   an internal filter only.
 
-Data model (migration 0014):
+Data model (migration 0014, ``email_verdict``/``email_verdict_reason``/
+``email_verdict_at`` added by migration 0048):
 - ``leads(tenant_id PK, lead_id PK, visitor_id, name, email, phone, status,
   stage, qualification_score, consent jsonb, assigned_agent_id, source,
-  created_at, updated_at)``.
+  created_at, updated_at, email_verdict, email_verdict_reason,
+  email_verdict_at)``.
 """
 from __future__ import annotations
 
@@ -44,6 +46,13 @@ class Lead:
     created_at: datetime
     updated_at: datetime
     converted_to_contact_id: str | None = None
+    email_verdict: str | None = None
+    """``"qualified"`` / ``"disqualified"`` / ``"needs_review"``, or ``None``
+    if this lead has never been through email classification (migration
+    0048, ``api.leads.email_classification``)."""
+    email_verdict_reason: str | None = None
+    """Machine-readable reason code paired with ``email_verdict``, e.g.
+    ``"typo_domain"``, ``"no_mx_record"``, ``"ok"``."""
 
 
 @dataclass(frozen=True)
@@ -186,7 +195,8 @@ async def get_lead(
     row = await db.fetchrow(
         "SELECT lead_id, visitor_id, name, email, phone, status, stage, "
         "qualification_score, consent, assigned_agent_id, source, "
-        "created_at, updated_at, converted_to_contact_id "
+        "created_at, updated_at, converted_to_contact_id, "
+        "email_verdict, email_verdict_reason "
         "FROM leads "
         "WHERE tenant_id = $1 AND lead_id = $2",
         claims.tenant_id,
@@ -273,6 +283,43 @@ async def update_lead_stage(
         stage,
         status,
         qualification_score,
+        claims.tenant_id,
+        lead_id,
+    )
+    if _rows_affected(result) == 0:
+        return None
+
+    return await get_lead(db, claims, lead_id)
+
+
+async def update_lead_email_verdict(
+    db: Database,
+    claims: AuthClaims,
+    lead_id: str,
+    *,
+    verdict: str,
+    reason: str,
+) -> Lead | None:
+    """Persist a lead's email-classification result, tenant-scoped.
+
+    Sets ``email_verdict``/``email_verdict_reason``/``email_verdict_at``
+    (stamped server-side via ``now()``). Independent of ``stage``/``status``/
+    ``qualification_score`` -- callers (``api.leads.tasks.classify_lead_email``)
+    decide separately, via ``update_lead_stage``, whether a definitive
+    verdict should also move the lead's pipeline stage.
+
+    Returns the updated ``Lead``, or ``None`` if no row matched (missing
+    ``lead_id`` or cross-tenant access -- same no-cross-tenant-existence-leak
+    contract as ``update_lead_stage``).
+    """
+    _reject_global(claims)
+
+    result = await db.execute(
+        "UPDATE leads SET email_verdict = $1, email_verdict_reason = $2, "
+        "email_verdict_at = now(), updated_at = now() "
+        "WHERE tenant_id = $3 AND lead_id = $4",
+        verdict,
+        reason,
         claims.tenant_id,
         lead_id,
     )
@@ -424,7 +471,8 @@ async def list_leads_for_export(
     rows = await db.fetch(
         "SELECT lead_id, visitor_id, name, email, phone, status, stage, "
         "qualification_score, consent, assigned_agent_id, source, "
-        "created_at, updated_at, converted_to_contact_id "
+        "created_at, updated_at, converted_to_contact_id, "
+        "email_verdict, email_verdict_reason "
         "FROM leads "
         "WHERE tenant_id = $1 "
         "ORDER BY created_at DESC",
@@ -532,7 +580,8 @@ async def list_leads(
     rows = await db.fetch(
         "SELECT lead_id, visitor_id, name, email, phone, status, stage, "
         "qualification_score, consent, assigned_agent_id, source, "
-        "created_at, updated_at, converted_to_contact_id "
+        "created_at, updated_at, converted_to_contact_id, "
+        "email_verdict, email_verdict_reason "
         "FROM leads " + where + " "
         f"{order_by} LIMIT ${limit_idx} OFFSET ${offset_idx}",
         *page_params,
@@ -639,6 +688,10 @@ def _row_to_lead(row: Any) -> Lead:
         updated_at=row["updated_at"],
         converted_to_contact_id=(
             row["converted_to_contact_id"] if "converted_to_contact_id" in row.keys() else None
+        ),
+        email_verdict=row["email_verdict"] if "email_verdict" in row.keys() else None,
+        email_verdict_reason=(
+            row["email_verdict_reason"] if "email_verdict_reason" in row.keys() else None
         ),
     )
 

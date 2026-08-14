@@ -17,11 +17,8 @@
  */
 import { getLeadActivities, getLeadDetail } from "@/lib/leads";
 import { getLeadTimeline } from "@/lib/timeline";
-import { LeadDrawer, TABS, type Tab } from "@/app/(protected)/leads/lead-drawer";
-
-function isTab(value: string | undefined): value is Tab {
-  return !!value && (TABS as readonly string[]).includes(value);
-}
+import { LeadDrawer } from "@/app/(protected)/leads/lead-drawer";
+import { isTab, type Tab } from "@/app/(protected)/leads/lead-drawer-tabs";
 
 export async function LeadDrawerContainer({
   leadId,

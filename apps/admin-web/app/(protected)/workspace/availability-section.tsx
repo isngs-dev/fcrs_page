@@ -28,8 +28,8 @@ import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { SoftCard } from "@/components/admin/soft-card";
-import { SetRow, SET_ROW_FIELD_CLASS } from "@/app/(protected)/settings/set-row";
-import { saveAvailability, type SaveAvailabilityState } from "@/app/(protected)/settings/availability-actions";
+import { SetRow, SET_ROW_FIELD_CLASS } from "@/components/admin/set-row";
+import { saveAvailability, type SaveAvailabilityState } from "@/app/(protected)/workspace/availability-actions";
 import {
   DAY_KEYS,
   DAY_LABELS,

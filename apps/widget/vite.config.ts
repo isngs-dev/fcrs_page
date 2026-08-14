@@ -14,6 +14,20 @@ import { defineConfig, loadEnv } from "vite";
  * gateway URL baked in when the integrator doesn't supply `data-api-base`.
  * It is a public URL, never a secret, sourced from `VITE_WIDGET_API_BASE`
  * (see `.env.example`).
+ *
+ * `process.env.NODE_ENV` MUST also be defined here. Vite's normal app-mode
+ * build injects this automatically (so it never came up in `npm run dev`,
+ * which serves raw source through Vite's own dev server); library mode does
+ * NOT get that automatic injection. Without it, React's own bundled
+ * dev/prod branching code (`react.development.js` vs
+ * `react.production.min.js`, selected via a literal
+ * `process.env.NODE_ENV==="production"` check) ships into `widget.js`
+ * completely unreplaced -- and since a browser has no Node `process`
+ * global, evaluating that IIFE on a real host page throws
+ * `Cannot read properties of undefined (reading 'NODE_ENV')` before the
+ * widget's own `entry.tsx` boot logic (and its top-level catch) ever runs.
+ * Always "production" -- `widget.js` is the one artifact ever distributed
+ * to a client site, there is no "development widget.js".
  */
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -23,6 +37,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       __WIDGET_API_BASE__: JSON.stringify(apiBase),
+      "process.env.NODE_ENV": JSON.stringify("production"),
     },
     build: {
       lib: {

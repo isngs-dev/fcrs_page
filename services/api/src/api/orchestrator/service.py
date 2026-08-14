@@ -191,6 +191,31 @@ class _FinalizedGeneration:
 # numeric thresholds are tenant-tunable; the taxonomy itself is not.
 _INTENT_LABELS: list[str] = ["question", "chitchat", "scheduling_request", "off_topic", "other"]
 
+# Bare label names alone under-specify "off_topic" vs "question": a
+# grammatically well-formed question unrelated to this business (e.g. "What
+# is the capital of France?" or "Who is the President of India?") has no
+# signal distinguishing it from a genuine on-topic "question" without this.
+# Passed to `provider.classify()`'s `label_descriptions` (classify_matching.py)
+# so the classify prompt states each label's MEANING, not just its name --
+# still code-owned/domain-agnostic (no real tenant/business facts), so this
+# stays consistent across every tenant regardless of what they sell.
+_INTENT_LABEL_DESCRIPTIONS: dict[str, str] = {
+    "question": (
+        "a genuine question about THIS business -- its products, services, "
+        "pricing, policies, hours, or how to get help from it"
+    ),
+    "chitchat": "a greeting, pleasantry, or small talk that is not asking anything specific",
+    "scheduling_request": (
+        "an explicit request to book a call, schedule a meeting, or talk to a person/sales rep"
+    ),
+    "off_topic": (
+        "unrelated to this business -- general knowledge trivia, current "
+        "events, other companies, public figures, politics, or any topic "
+        "this business's assistant would not be expected to answer"
+    ),
+    "other": "does not clearly fit any of the above",
+}
+
 _NO_ANSWER_SENTINEL = "NO_ANSWER_FOUND"
 # SR-13 decision 3: an early no-answer clarifies at most once.
 _NO_ANSWER_CLARIFY_MAX_TURNS = 2
@@ -240,6 +265,20 @@ _CLARIFY_REPLY = (
 _ESCALATE_REPLY = (
     "I'm not able to answer that confidently from what I know here. I can "
     "help connect you with someone who can -- book a call if that's "
+    "available, or share your name and email below and confirm you're "
+    "happy for us to contact you, and I'll pass it along."
+)
+
+# Fixed off-topic template -- a DISTINCT reply from _ESCALATE_REPLY (used
+# only for scheduling_request + the sub-floor-confidence question escalate,
+# see the branches below), because the honest reason differs: off_topic
+# means "outside what I can help with here" (a scope mismatch), not "I'm
+# not confident enough" (a low-confidence-but-relevant answer). Same
+# dual-purpose schedule_cta/lead_form phrasing as _ESCALATE_REPLY -- the
+# widget renders whichever card `action` resolves to either way.
+_OFF_TOPIC_REPLY = (
+    "That's outside of what I can help with here. I'd recommend talking "
+    "with our sales team for more information -- book a call if that's "
     "available, or share your name and email below and confirm you're "
     "happy for us to contact you, and I'll pass it along."
 )
@@ -542,7 +581,13 @@ async def _resolve_turn(
     # stored, so a classify failure never loses the visitor's message. On
     # LLMError this propagates untouched -> LLM_ERROR 502 (decision 9,
     # fail-loud, same class of failure as generate).
-    intent = await provider.classify(message, _INTENT_LABELS, model=config.model)
+    # `label_descriptions` tells the model what each label MEANS (not just
+    # its bare name) so a well-formed but off-topic question ("What's the
+    # capital of France?") is reliably distinguished from an on-topic one --
+    # see _INTENT_LABEL_DESCRIPTIONS's own comment.
+    intent = await provider.classify(
+        message, _INTENT_LABELS, model=config.model, label_descriptions=_INTENT_LABEL_DESCRIPTIONS,
+    )
 
     # Step 8: branch on intent -> decision -> plan (decisions 2 + 6).
     if intent == "chitchat":
@@ -575,10 +620,14 @@ async def _resolve_turn(
         # classify already ran on `provider`; no _GeneratePlan will carry it
         # onward, so close it before returning the fixed-template reply.
         await provider.aclose()
+        # off_topic gets its own honest copy ("outside what I can help with")
+        # -- distinct from scheduling_request's _ESCALATE_REPLY, which fits a
+        # "wants to book/talk to someone" request, not a scope mismatch.
+        reply = _OFF_TOPIC_REPLY if intent == "off_topic" else _ESCALATE_REPLY
         return _FixedOutcome(
             conversation_id=conversation_id,
             assistant_id=assistant_id,
-            reply=_ESCALATE_REPLY,
+            reply=reply,
             decision="escalate",
             confidence=None,
             sources=[],

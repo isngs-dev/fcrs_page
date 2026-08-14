@@ -1,11 +1,14 @@
 /**
- * SR-27 slices 7/8 -- geometry + no-dead-control regression tests for the
- * single `/settings` route hosting BOTH the Settings and Bot-settings
- * reference shells (D1). Uses this repo's established
+ * Geometry + no-dead-control regression tests for the `/settings` route.
+ * This route used to also host the workspace/account "Settings" shell
+ * stacked below Bot settings (SR-27 slices 7/8, D1); that shell has since
+ * moved to its own `/workspace` route (see `workspace/__tests__/
+ * workspace-page-geometry.test.tsx` for its tests) on user request. This
+ * file now covers ONLY the Bot-settings shell. Uses this repo's established
  * `environment: "node"` `renderToStaticMarkup` pattern with mocked
- * `next/headers` cookies + `fetch`, mirroring
- * `accounts/__tests__/accounts-page.test.tsx` and
- * `notifications/__tests__/notifications-page.test.tsx`.
+ * `next/headers` cookies + `fetch`, mirroring `accounts/__tests__/
+ * accounts-page.test.tsx` and `notifications/__tests__/
+ * notifications-page.test.tsx`.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -36,7 +39,7 @@ function signToken(role: string): string {
   });
 }
 
-function mockAllFetch() {
+function mockSettingsFetch() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     if (url.includes("/admin/settings")) {
@@ -58,89 +61,42 @@ function mockAllFetch() {
         { status: 200 }
       );
     }
-    if (url.includes("/admin/workspace")) {
-      return new Response(
-        JSON.stringify({ name: "Acme", slug: "acme", timezone: "Europe/London" }),
-        { status: 200 }
-      );
-    }
-    if (url.includes("/admin/api-keys")) {
-      return new Response(JSON.stringify({ has_key: true, allowed_origins: ["https://acme.test"] }), {
-        status: 200,
-      });
-    }
     return new Response(JSON.stringify({}), { status: 404 });
   });
 }
 
-describe("SettingsPage -- single route, two stacked shells (D1)", () => {
+describe("SettingsPage -- Bot-settings shell only (split from the combined route)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     getMock.mockReset();
     redirectMock.mockClear();
   });
 
-  it("renders BOTH 'Settings' and 'Bot settings' shell headers in one route for CLIENT_ADMIN", async () => {
+  it("renders the 'Bot settings' shell header for CLIENT_ADMIN, and no workspace-shell header", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
-    mockAllFetch();
+    mockSettingsFetch();
 
     const element = await SettingsPage();
     const html = renderToStaticMarkup(element);
 
-    expect(html).toMatch(/>Settings</);
     expect(html).toMatch(/>Bot settings</);
+    expect(html).not.toMatch(/Manage your workspace, members, and integrations\./);
   });
 
-  it("renders both 184px settings rails", async () => {
+  it("renders exactly one 184px settings rail (the shared primitive is not duplicated now the shells are split)", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
-    mockAllFetch();
+    mockSettingsFetch();
 
     const element = await SettingsPage();
     const html = renderToStaticMarkup(element);
 
     const railMatches = html.match(/w-\[184px\]/g) ?? [];
-    expect(railMatches.length).toBeGreaterThanOrEqual(2);
+    expect(railMatches.length).toBe(1);
   });
 
-  it("Settings shell: Delete workspace button is disabled, never a live/clickable control (D2/G19)", async () => {
+  it("no numeric stepper for escalation policy -- it stays a text field (verified string type, lib/settings.ts:22)", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
-    mockAllFetch();
-
-    const element = await SettingsPage();
-    const html = renderToStaticMarkup(element);
-
-    expect(html).toMatch(/Delete workspace/);
-    // The Danger-zone button carries `disabled` -- react-dom serializes a
-    // boolean disabled attribute as bare `disabled=""`.
-    expect(html).toMatch(/Delete workspace<\/button>|disabled=""[^>]*>\s*Delete workspace/);
-    expect(html).toMatch(/disabled=""/);
-  });
-
-  it("Settings shell: Language row renders aria-disabled, never a live editable field (D3/G18)", async () => {
-    getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
-    mockAllFetch();
-
-    const element = await SettingsPage();
-    const html = renderToStaticMarkup(element);
-
-    expect(html).toMatch(/Language/);
-    expect(html).toMatch(/aria-disabled="true"[^]*?Not configured/);
-  });
-
-  it("Settings shell: Billing rail row is disabled/aria-disabled, no href (G20)", async () => {
-    getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
-    mockAllFetch();
-
-    const element = await SettingsPage();
-    const html = renderToStaticMarkup(element);
-
-    // Billing must not appear as a real navigable link.
-    expect(html).not.toMatch(/<a[^>]+href="[^"]*billing[^"]*"/i);
-  });
-
-  it("Bot-settings shell: no numeric stepper for escalation policy -- it stays a text field (verified string type, lib/settings.ts:22)", async () => {
-    getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
-    mockAllFetch();
+    mockSettingsFetch();
 
     const element = await SettingsPage();
     const html = renderToStaticMarkup(element);
@@ -151,9 +107,9 @@ describe("SettingsPage -- single route, two stacked shells (D1)", () => {
     expect(html).not.toMatch(/aria-label="[^"]*[Ee]scalat[^"]*"[^>]*>\s*[−-]\s*</);
   });
 
-  it("Bot-settings shell: answer/escalate thresholds render as read-only chips, never inputs; turn cap is a real editable number input (Tier 2)", async () => {
+  it("answer/escalate thresholds render as read-only chips, never inputs; turn cap is a real editable number input (Tier 2)", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
-    mockAllFetch();
+    mockSettingsFetch();
 
     const element = await SettingsPage();
     const html = renderToStaticMarkup(element);
@@ -167,9 +123,9 @@ describe("SettingsPage -- single route, two stacked shells (D1)", () => {
     expect(html).not.toMatch(/Turn cap 6/);
   });
 
-  it("Bot-settings shell: Appearance rail entry is disabled, no Appearance section is built (D4)", async () => {
+  it("Appearance rail entry is disabled, no Appearance section is built (D4)", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
-    mockAllFetch();
+    mockSettingsFetch();
 
     const element = await SettingsPage();
     const html = renderToStaticMarkup(element);
@@ -180,7 +136,7 @@ describe("SettingsPage -- single route, two stacked shells (D1)", () => {
 
   it("CLIENT_AGENT gets a read-only view, no Save/Publish/Discard buttons", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_AGENT") });
-    mockAllFetch();
+    mockSettingsFetch();
 
     const element = await SettingsPage();
     const html = renderToStaticMarkup(element);

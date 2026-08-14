@@ -1,0 +1,16 @@
+# Keep the build context small and never leak local state into an image.
+.git
+.claude
+venv
+node_modules
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/dist
+**/.next
+.env
+**/.env
+*.log
+knowledge_base
+system_flow

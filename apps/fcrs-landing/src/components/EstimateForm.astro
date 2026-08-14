@@ -1,0 +1,335 @@
+---
+import { SERVICE_OPTIONS, STATE_OPTIONS } from "../lib/estimate-form-schema.js";
+---
+<div class="form-card">
+  <div class="form-header">
+    <h2>Get Your Free AL &amp; GA Roofing Estimate</h2>
+    <p>No obligation. No pressure. Just an honest assessment.</p>
+  </div>
+
+  <div id="form-body" class="form-body">
+    <p
+      id="form-generic-error"
+      class="generic-error"
+      role="alert"
+      hidden
+    ></p>
+    <form id="estimate-form" novalidate>
+      <div class="field">
+        <label for="f-name">Full Name <span class="required-marker" aria-hidden="true">*</span></label>
+        <input
+          id="f-name"
+          name="name"
+          type="text"
+          autocomplete="name"
+          placeholder="Jane Smith"
+          aria-describedby="f-name-error"
+        />
+        <p id="f-name-error" class="field-error" role="alert" hidden></p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="f-phone">Phone <span class="required-marker" aria-hidden="true">*</span></label>
+          <input
+            id="f-phone"
+            name="phone"
+            type="tel"
+            autocomplete="tel"
+            placeholder="(989) 843-4628"
+            aria-describedby="f-phone-error"
+          />
+          <p id="f-phone-error" class="field-error" role="alert" hidden></p>
+        </div>
+        <div class="field">
+          <label for="f-email">Email <span class="required-marker" aria-hidden="true">*</span></label>
+          <input
+            id="f-email"
+            name="email"
+            type="email"
+            autocomplete="email"
+            placeholder="you@email.com"
+            aria-describedby="f-email-error"
+          />
+          <p id="f-email-error" class="field-error" role="alert" hidden></p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="f-service">Service Needed <span class="required-marker" aria-hidden="true">*</span></label>
+        <select id="f-service" name="service" aria-describedby="f-service-error">
+          <option value="" selected disabled>Select a service…</option>
+          {SERVICE_OPTIONS.map((opt) => <option value={opt}>{opt}</option>)}
+        </select>
+        <p id="f-service-error" class="field-error" role="alert" hidden></p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="f-state">State <span class="required-marker" aria-hidden="true">*</span></label>
+          <select id="f-state" name="state" aria-describedby="f-state-error">
+            <option value="" selected disabled>Select…</option>
+            {STATE_OPTIONS.map((opt) => <option value={opt}>{opt}</option>)}
+          </select>
+          <p id="f-state-error" class="field-error" role="alert" hidden></p>
+        </div>
+        <div class="field">
+          <label for="f-zip">Zip Code <span class="required-marker" aria-hidden="true">*</span></label>
+          <input
+            id="f-zip"
+            name="zip"
+            type="text"
+            inputmode="numeric"
+            autocomplete="postal-code"
+            placeholder="35203"
+            aria-describedby="f-zip-error"
+          />
+          <p id="f-zip-error" class="field-error" role="alert" hidden></p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="f-date">Preferred Date / Time</label>
+        <input id="f-date" name="date" type="datetime-local" />
+      </div>
+
+      <div class="field">
+        <label for="f-notes">Additional Details <span class="optional-marker">(optional)</span></label>
+        <textarea
+          id="f-notes"
+          name="notes"
+          rows="3"
+          placeholder="Tell us about your roof, storm damage, timeline…"
+        ></textarea>
+      </div>
+
+      <button type="submit">
+        <i class="fa-solid fa-house-circle-check"></i> Get My Free Estimate
+      </button>
+      <p class="privacy-note">
+        <i class="fa-solid fa-lock"></i> We never share your information.
+      </p>
+    </form>
+  </div>
+
+  <!-- Fallback success panel. The normal 200 path navigates to /thank-you
+       (see scripts/estimate-form.js); this only shows if that navigation
+       does not happen. -->
+  <div id="form-success" class="form-success">
+    <div class="success-icon"><i class="fa-solid fa-check"></i></div>
+    <h3 id="form-success-heading">Request Received!</h3>
+    <p>
+      Thank you. A First Class Roofing specialist will contact you shortly to
+      schedule your free inspection.
+    </p>
+    <a href="tel:+19898434628" class="success-call">
+      <i class="fa-solid fa-phone-volume"></i> Need help now? Call us
+    </a>
+  </div>
+</div>
+
+<style>
+  .form-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    box-shadow: 0 30px 60px -22px rgba(27, 43, 72, 0.28);
+    overflow: hidden;
+  }
+
+  .form-header {
+    background: var(--navy);
+    padding: 22px 26px;
+  }
+
+  .form-header h2 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 1.35rem;
+    color: #fff;
+    line-height: 1.2;
+  }
+
+  .form-header p {
+    color: var(--dark-panel-subtext);
+    font-size: 13.5px;
+    margin-top: 6px;
+  }
+
+  .form-body {
+    padding: 24px 26px 26px;
+  }
+
+  #estimate-form {
+    display: grid;
+    gap: 14px;
+  }
+
+  .field {
+    display: grid;
+    gap: 5px;
+  }
+
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  label {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--navy);
+  }
+
+  .required-marker {
+    color: var(--orange-d);
+    font-weight: 800;
+  }
+
+  .optional-marker {
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  input,
+  select,
+  textarea {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    font-size: 15px;
+    background: var(--input-bg);
+    color: var(--ink);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  textarea {
+    resize: vertical;
+  }
+
+  input[aria-invalid="true"],
+  select[aria-invalid="true"],
+  textarea[aria-invalid="true"] {
+    border-color: #d64545;
+  }
+
+  .field-error {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #c62828;
+    line-height: 1.4;
+  }
+
+  .generic-error {
+    font-size: 13px;
+    font-weight: 600;
+    color: #c62828;
+    background: rgba(198, 40, 40, 0.08);
+    border: 1px solid rgba(198, 40, 40, 0.25);
+    border-radius: 11px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+  }
+
+  button[type="submit"] {
+    margin-top: 4px;
+    width: 100%;
+    background: var(--orange);
+    color: #fff;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 1.05rem;
+    padding: 15px;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    box-shadow: 0 10px 26px rgba(255, 153, 0, 0.38);
+    transition: transform 0.18s ease, background 0.18s ease;
+  }
+
+  button[type="submit"]:hover:not(:disabled) {
+    transform: translateY(-2px);
+    background: var(--orange-d);
+  }
+
+  button[type="submit"]:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+
+  .privacy-note {
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .privacy-note i {
+    color: var(--lock-icon);
+  }
+
+  .form-success {
+    display: none;
+    padding: 40px 30px;
+    text-align: center;
+  }
+
+  .success-icon {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 18px;
+    border-radius: 50%;
+    background: var(--success-wash);
+    color: var(--success);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+  }
+
+  #form-success-heading {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 1.4rem;
+    color: var(--navy);
+  }
+
+  #form-success-heading:focus {
+    outline: none;
+  }
+
+  .form-success p {
+    color: var(--muted);
+    font-size: 15px;
+    margin-top: 10px;
+    line-height: 1.55;
+  }
+
+  .success-call {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: 22px;
+    background: var(--navy);
+    color: #fff;
+    font-family: var(--font-heading);
+    font-weight: 600;
+    padding: 13px 24px;
+    border-radius: 11px;
+  }
+
+  @media (max-width: 520px) {
+    .field-row {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

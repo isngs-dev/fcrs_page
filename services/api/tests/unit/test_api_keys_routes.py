@@ -292,6 +292,39 @@ async def test_put_origins_client_admin_200(app: Any, db: _StubDatabase) -> None
     assert response.json()["allowed_origins"] == ["https://new.example.com"]
 
 
+async def test_put_origins_invalidates_edge_cors_cache_for_added_and_removed_origins(
+    app: Any, db: _StubDatabase,
+) -> None:
+    """Regression guard: PUT /admin/api-keys/origins must invalidate
+    api.edge.is_known_origin's CORS cache for every origin the change
+    touches -- both the newly-added one (previously stayed WRONGLY blocked
+    for up to cors_origin_cache_ttl_seconds behind a stale negative cache
+    entry) and the just-removed one (would otherwise stay WRONGLY allowed
+    for the same window). The fixture seeds allowed_origins=
+    ["https://old.example.com"]; this PUT replaces it with
+    ["https://new.example.com"].
+    """
+    from api.edge import cors_cache_key
+
+    cache = app.state.cache
+    # Simulate BOTH stale cache states a real request cycle could have left
+    # behind before this PUT runs.
+    await cache.set(cors_cache_key("https://new.example.com"), "0", 300)  # stale negative
+    await cache.set(cors_cache_key("https://old.example.com"), "1", 300)  # stale positive
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/api-keys/origins",
+            json={"origins": ["https://new.example.com"]},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 200
+    assert await cache.get(cors_cache_key("https://new.example.com")) is None
+    assert await cache.get(cors_cache_key("https://old.example.com")) is None
+
+
 async def test_put_origins_empty_list_allowed(app: Any, db: _StubDatabase) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         token = _token(Role.CLIENT_ADMIN)

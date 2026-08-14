@@ -17,6 +17,7 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings,
   Settings2,
   Users2,
   UsersRound,
@@ -129,9 +130,21 @@ const toolsItems: NavItem[] = [
   {
     href: "/settings",
     label: "Bot settings",
-    mobileLabel: "Settings",
+    mobileLabel: "Bot settings",
     icon: Settings2,
     roles: ["CLIENT_ADMIN", "CLIENT_AGENT"],
+  },
+  // Split out of the combined `/settings` route on user request -- see
+  // `app/(protected)/workspace/page.tsx`'s doc comment. CLIENT_ADMIN-only:
+  // this shell (General/Members/Billing/API keys/Notifications/Danger zone)
+  // was always gated behind claims.role === "CLIENT_ADMIN" even when it
+  // lived inside `/settings`; a CLIENT_AGENT never saw it there either.
+  {
+    href: "/workspace",
+    label: "Workspace settings",
+    mobileLabel: "Workspace",
+    icon: Settings,
+    roles: ["CLIENT_ADMIN"],
   },
 ];
 

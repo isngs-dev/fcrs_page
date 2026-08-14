@@ -35,10 +35,15 @@ export interface MessageListProps {
  * the orchestrator turn, without duplicating the literal string). */
 export const BOOK_CALL_SUGGESTION_MESSAGE = "Book a call with sales";
 
+// FCRS deployment: replaced the generic SaaS placeholder chips ("How does
+// the Pro plan compare?" / "I need help with a problem") with roofing/
+// solar-relevant equivalents -- same icon/intent pairing (an informational
+// "chat" question, an unchanged "calendar" booking chip, and an urgent
+// "support" question), just on-topic for this business.
 const SUGGESTIONS = [
-  { message: "How does the Pro plan compare?", label: "How does the Pro plan compare?", icon: "chat" },
+  { message: "Do you offer free roof inspections?", label: "Do you offer free roof inspections?", icon: "chat" },
   { message: BOOK_CALL_SUGGESTION_MESSAGE, label: BOOK_CALL_SUGGESTION_MESSAGE, icon: "calendar" },
-  { message: "I need help with a problem", label: "I need help with a problem", icon: "support" },
+  { message: "I have a roof leak, can you help?", label: "I have a roof leak, can you help?", icon: "support" },
 ] as const;
 
 function SuggestionGlyph({ name }: { name: (typeof SUGGESTIONS)[number]["icon"] }) {

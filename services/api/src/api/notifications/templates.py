@@ -25,12 +25,20 @@ def _local_wall_clock(starts_at: datetime, timezone: str) -> str:
 
 
 def booking_confirmation_message(
-    *, starts_at: datetime, timezone: str, calendly_link: str | None = None
+    *,
+    starts_at: datetime,
+    timezone: str,
+    calendly_link: str | None = None,
+    meet_url: str | None = None,
 ) -> tuple[str, str]:
     """Build the ``(subject, body)`` for a booking-confirmation email.
 
     ``calendly_link``, when the tenant has one configured, replaces the
     generic "contact us" fallback line with a direct reschedule/manage link.
+    ``meet_url`` (SR-22), when the calendar sync created a Google Meet
+    conference, adds a join-link line -- omitted entirely (not a placeholder
+    line) when there isn't one, so the email never implies a call method
+    that doesn't exist.
     """
     when = _local_wall_clock(starts_at, timezone)
     subject = "Your call is confirmed"
@@ -39,22 +47,33 @@ def booking_confirmation_message(
         if calendly_link
         else "If you need to reschedule, please contact us."
     )
+    meet_line = f"\n\nJoin the call: {meet_url}" if meet_url else ""
     body = (
         "Your call is confirmed.\n\n"
-        f"When: {when}\n\n"
+        f"When: {when}"
+        f"{meet_line}\n\n"
         f"{reschedule_line}"
     )
     return subject, body
 
 
-def reminder_message(*, offset: str, starts_at: datetime, timezone: str) -> tuple[str, str]:
-    """Build the ``(subject, body)`` for a reminder email at ``offset`` before the call."""
+def reminder_message(
+    *, offset: str, starts_at: datetime, timezone: str, meet_url: str | None = None
+) -> tuple[str, str]:
+    """Build the ``(subject, body)`` for a reminder email at ``offset`` before the call.
+
+    ``meet_url`` (SR-22): same omit-if-absent rule as
+    ``booking_confirmation_message`` -- a reminder with nowhere to click
+    would be worse than one that just states the time.
+    """
     when = _local_wall_clock(starts_at, timezone)
     label = _OFFSET_LABELS.get(offset, offset)
     subject = f"Reminder: your call is in {label} ({offset})"
+    meet_line = f"\n\nJoin the call: {meet_url}" if meet_url else ""
     body = (
         f"This is a reminder that your call is coming up in {label}.\n\n"
         f"When: {when}"
+        f"{meet_line}"
     )
     return subject, body
 

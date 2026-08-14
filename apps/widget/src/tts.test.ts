@@ -140,6 +140,144 @@ describe("tts", () => {
       expect(() => speakGreeting()).not.toThrow();
       expect(speak).not.toHaveBeenCalled();
     });
+
+    it("calls onBlocked when the capability check fails (no speechSynthesis)", () => {
+      Object.defineProperty(window, "speechSynthesis", {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+      const onBlocked = vi.fn();
+
+      speakGreeting(onBlocked);
+
+      expect(onBlocked).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls onBlocked when SpeechSynthesisUtterance is absent", () => {
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak: vi.fn(), cancel: vi.fn() },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+      const onBlocked = vi.fn();
+
+      speakGreeting(onBlocked);
+
+      expect(onBlocked).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls onBlocked when speak() throws synchronously", () => {
+      Object.defineProperty(window, "speechSynthesis", {
+        value: {
+          speak: vi.fn(() => {
+            throw new Error("blocked by browser policy");
+          }),
+          cancel: vi.fn(),
+        },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: class {
+          constructor(public text: string) {}
+        },
+        configurable: true,
+        writable: true,
+      });
+      const onBlocked = vi.fn();
+
+      speakGreeting(onBlocked);
+
+      expect(onBlocked).toHaveBeenCalledTimes(1);
+    });
+
+    it("wires onBlocked to the utterance's error event for a genuine block reason (Chrome's not-allowed)", () => {
+      const speak = vi.fn();
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak, cancel: vi.fn() },
+        configurable: true,
+        writable: true,
+      });
+      class FakeUtterance {
+        text: string;
+        onerror: ((event: { error: string }) => void) | null = null;
+        constructor(text: string) {
+          this.text = text;
+        }
+      }
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: FakeUtterance,
+        configurable: true,
+        writable: true,
+      });
+      const onBlocked = vi.fn();
+
+      speakGreeting(onBlocked);
+
+      expect(onBlocked).not.toHaveBeenCalled();
+      const uttered = speak.mock.calls[0]?.[0] as FakeUtterance;
+      uttered.onerror?.({ error: "not-allowed" });
+      expect(onBlocked).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["canceled", "interrupted"])(
+      "does NOT call onBlocked when the error is '%s' -- that means our own cancel() (or a newer speak()) stopped an utterance that genuinely played/queued, not a browser-policy block",
+      (errorCode) => {
+        const speak = vi.fn();
+        Object.defineProperty(window, "speechSynthesis", {
+          value: { speak, cancel: vi.fn() },
+          configurable: true,
+          writable: true,
+        });
+        class FakeUtterance {
+          text: string;
+          onerror: ((event: { error: string }) => void) | null = null;
+          constructor(text: string) {
+            this.text = text;
+          }
+        }
+        Object.defineProperty(window, "SpeechSynthesisUtterance", {
+          value: FakeUtterance,
+          configurable: true,
+          writable: true,
+        });
+        const onBlocked = vi.fn();
+
+        speakGreeting(onBlocked);
+
+        const uttered = speak.mock.calls[0]?.[0] as FakeUtterance;
+        uttered.onerror?.({ error: errorCode });
+        expect(onBlocked).not.toHaveBeenCalled();
+      },
+    );
+
+    it("never calls onBlocked when speak() succeeds and no error event fires", () => {
+      const speak = vi.fn();
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak, cancel: vi.fn() },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: class {
+          onerror: (() => void) | null = null;
+          constructor(public text: string) {}
+        },
+        configurable: true,
+        writable: true,
+      });
+      const onBlocked = vi.fn();
+
+      speakGreeting(onBlocked);
+
+      expect(onBlocked).not.toHaveBeenCalled();
+    });
   });
 
   describe("cancel", () => {

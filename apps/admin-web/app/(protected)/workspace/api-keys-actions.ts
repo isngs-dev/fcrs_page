@@ -35,7 +35,7 @@ export async function rotateApiKey(): Promise<RotateKeyState> {
   try {
     const response = await adminApiFetch("/admin/api-keys/rotate", { method: "POST" });
     const body = (await response.json()) as { client_key: string };
-    revalidatePath("/settings");
+    revalidatePath("/workspace");
     return { status: "rotated", clientKey: body.client_key };
   } catch (err) {
     if (err instanceof AdminApiError) {
@@ -122,7 +122,7 @@ export async function updateOrigins(
   }
 
   const body = (await response.json()) as { allowed_origins: string[] };
-  revalidatePath("/settings");
+  revalidatePath("/workspace");
   return { status: "saved", allowedOrigins: body.allowed_origins };
 }
 

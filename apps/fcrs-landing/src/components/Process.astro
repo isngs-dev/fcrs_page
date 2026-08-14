@@ -1,0 +1,130 @@
+---
+const steps = [
+  { n: 1, title: "Request Your Free Inspection", body: "Fill out the form or call us directly. We’ll schedule a convenient time for a technician to evaluate your AL or GA roof.", delay: "", color: "navy" },
+  { n: 2, title: "Receive an Honest Quote", body: "Get a transparent, itemized estimate with zero pressure and complete clarity on costs and timelines.", delay: "reveal-delay-3", color: "navy" },
+  { n: 3, title: "Get It Fixed Right", body: "Our certified local crew completes the work safely, cleanly, and on schedule — backed by our ironclad warranty.", delay: "reveal-delay-6", color: "orange" },
+];
+---
+<section id="process" class="process">
+  <div class="inner">
+    <div data-reveal class="section-head">
+      <span class="eyebrow">// How It Works</span>
+      <h2>Your Roof Fixed in 3 Simple Steps</h2>
+    </div>
+
+    <div class="steps-wrap">
+      <div aria-hidden="true" class="connector"></div>
+      <div class="steps">
+        {steps.map((s) => (
+          <div data-reveal class:list={["step", s.delay]}>
+            <div class:list={["circle", s.color === "orange" ? "circle-orange" : ""]}>{s.n}</div>
+            <h3>{s.title}</h3>
+            <p>{s.body}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .process {
+    background: #fff;
+    padding: var(--section-pad);
+  }
+
+  .inner {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .section-head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto 52px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 1px;
+    color: var(--green);
+  }
+
+  .section-head h2 {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: var(--h2);
+    color: var(--navy);
+    line-height: 1.1;
+    margin-top: 10px;
+    letter-spacing: -0.4px;
+  }
+
+  .steps-wrap {
+    position: relative;
+  }
+
+  .connector {
+    position: absolute;
+    top: 34px;
+    left: 12%;
+    right: 12%;
+    height: 2px;
+    background: repeating-linear-gradient(
+      90deg,
+      var(--line) 0 10px,
+      transparent 10px 20px
+    );
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 32px;
+    position: relative;
+  }
+
+  .step {
+    text-align: center;
+  }
+
+  .circle {
+    width: 68px;
+    height: 68px;
+    margin: 0 auto 20px;
+    border-radius: 50%;
+    background: var(--navy);
+    color: #fff;
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: 1.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 8px #fff, 0 0 0 9px var(--line);
+  }
+
+  .circle-orange {
+    background: var(--orange);
+    box-shadow: 0 0 0 8px #fff, 0 0 0 9px rgba(255, 153, 0, 0.25);
+  }
+
+  .step h3 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 1.2rem;
+    color: var(--navy);
+  }
+
+  .step p {
+    color: var(--muted);
+    font-size: 14.5px;
+    line-height: 1.6;
+    margin-top: 11px;
+    max-width: 30ch;
+    margin-left: auto;
+    margin-right: auto;
+  }
+</style>

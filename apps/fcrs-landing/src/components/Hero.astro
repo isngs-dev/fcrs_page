@@ -1,0 +1,200 @@
+---
+import EstimateForm from "./EstimateForm.astro";
+---
+<section id="top" class="hero">
+  <div aria-hidden="true" class="hero-photo"></div>
+  <div aria-hidden="true" class="hero-gradient"></div>
+  <div class="hero-inner">
+    <div class="hero-left">
+      <div class="rating-pill">
+        <i class="fa-solid fa-star"></i> Rated 4.9/5 across Alabama &amp; Georgia
+      </div>
+      <h1>Trusted Roofing Services Across <span class="green">Alabama &amp; Georgia</span></h1>
+      <p class="lead">
+        Fast, honest, and built for Southern weather. Schedule your
+        zero-obligation, <strong>100% free roof inspection</strong> today.
+      </p>
+
+      <ul class="trust-bullets">
+        <li>
+          <span class="bullet-icon"><i class="fa-solid fa-magnifying-glass-dollar"></i></span>
+          <span><strong>FREE Inspection</strong> — $0 out-of-pocket diagnosis for AL &amp; GA property owners.</span>
+        </li>
+        <li>
+          <span class="bullet-icon"><i class="fa-solid fa-helmet-safety"></i></span>
+          <span><strong>Expert Craftsmanship</strong> — Certified installers using high-wind &amp; weather-rated materials.</span>
+        </li>
+        <li>
+          <span class="bullet-icon"><i class="fa-solid fa-shield-halved"></i></span>
+          <span><strong>Licensed, Insured &amp; Bonded</strong> — Fully credentialed in both Alabama and Georgia.</span>
+        </li>
+        <li>
+          <span class="bullet-icon"><i class="fa-solid fa-award"></i></span>
+          <span><strong>Warranted &amp; Local</strong> — Industry-leading warranties backed by a local team you can trust.</span>
+        </li>
+      </ul>
+
+      <div class="trust-badges">
+        <span><i class="fa-brands fa-google"></i> 4.9★ Google Reviews</span>
+        <span><i class="fa-solid fa-shield-halved"></i> Licensed &amp; Insured</span>
+        <span><i class="fa-solid fa-file-contract"></i> Bonded in AL &amp; GA</span>
+        <span><i class="fa-solid fa-medal"></i> Ironclad Warranty</span>
+      </div>
+    </div>
+
+    <div id="form-col" class="hero-form-col">
+      <EstimateForm />
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    background: linear-gradient(180deg, #fff 0%, var(--gray) 100%);
+    border-bottom: 1px solid var(--line);
+    overflow: hidden;
+  }
+
+  .hero-photo {
+    position: absolute;
+    inset: 0;
+    background: url("/images/hero-bg.jpg") center 30% / cover;
+  }
+
+  .hero-gradient {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      rgba(255, 255, 255, 0.9) 0%,
+      rgba(255, 255, 255, 0.72) 42%,
+      rgba(248, 249, 250, 0.32) 100%
+    );
+  }
+
+  .hero-inner {
+    position: relative;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--hero-pad);
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: var(--hero-grid-gap);
+    align-items: start;
+  }
+
+  .rating-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(27, 43, 72, 0.06);
+    border: 1px solid var(--line);
+    color: var(--navy);
+    font-weight: 700;
+    font-size: 12.5px;
+    letter-spacing: 0.4px;
+    padding: 8px 15px;
+    border-radius: 999px;
+    margin-bottom: 22px;
+    white-space: nowrap;
+  }
+
+  .rating-pill i {
+    color: var(--gold);
+  }
+
+  h1 {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: var(--h1);
+    line-height: 1.06;
+    color: var(--navy);
+    letter-spacing: -0.5px;
+    text-wrap: balance;
+  }
+
+  h1 .green {
+    color: var(--green);
+  }
+
+  .lead {
+    font-size: var(--lead);
+    line-height: 1.6;
+    color: var(--muted);
+    margin-top: 18px;
+    max-width: 34ch;
+  }
+
+  .lead strong {
+    color: var(--ink);
+  }
+
+  .trust-bullets {
+    list-style: none;
+    display: grid;
+    gap: 14px;
+    margin-top: 26px;
+  }
+
+  .trust-bullets li {
+    display: flex;
+    align-items: flex-start;
+    gap: 13px;
+  }
+
+  .bullet-icon {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--green-wash);
+    color: var(--green);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+  }
+
+  .trust-bullets li > span:last-child {
+    font-size: 15.5px;
+    line-height: 1.45;
+  }
+
+  .trust-bullets strong {
+    color: var(--navy);
+  }
+
+  .trust-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    margin-top: 24px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+  }
+
+  .trust-badges span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .trust-badges i {
+    color: var(--green);
+  }
+
+  .hero-form-col {
+    align-self: start;
+  }
+
+  @media (min-width: 900px) {
+    .hero-form-col {
+      position: sticky;
+      top: 100px;
+    }
+  }
+</style>

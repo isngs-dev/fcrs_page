@@ -116,7 +116,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-sched-slot:focus-visible, .cw-sched-checkbox:focus-visible, .cw-sched-confirm-button:focus-visible,
 .cw-sched-back-button:focus-visible, .cw-sched-retry:focus-visible, .cw-status-retry:focus-visible,
 .cw-sched-handoff-link-button:focus-visible, .cw-sched-handoff-continue-button:focus-visible,
-.cw-sched-close:focus-visible, .cw-sched-change-button:focus-visible, .cw-sched-timezone-inline:focus-visible {
+.cw-sched-close:focus-visible, .cw-sched-change-button:focus-visible, .cw-sched-timezone-inline:focus-visible,
+.cw-confirm-close-no:focus-visible, .cw-confirm-close-yes:focus-visible {
   outline: 2px solid var(--cw-ink);
   outline-offset: 2px;
 }
@@ -208,6 +209,19 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-header-button svg { width: 17px; height: 17px; }
 .cw-close-button svg { width: 18px; height: 18px; }
 .cw-mute-toggle svg, .cw-close-button svg, .cw-send-button svg, .cw-launcher svg { display: block; }
+
+/* Exit confirmation ("Are you sure you want to exit?") — replaces the ENTIRE
+   panel body (header included) while showing, so the hand-rolled focus trap
+   in ChatWidget.tsx naturally confines Tab/Shift+Tab to just these two
+   buttons with no extra logic. */
+.cw-confirm-close { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; padding: 32px 24px; text-align: center; }
+.cw-confirm-close-message { margin: 0; color: var(--cw-ink); font-size: 16px; font-weight: 700; line-height: 1.4; }
+.cw-confirm-close-actions { display: flex; gap: 10px; width: 100%; max-width: 260px; }
+.cw-confirm-close-no, .cw-confirm-close-yes { flex: 1 1 0; min-height: 44px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
+.cw-confirm-close-no { border: 1px solid #d8dce2; background: var(--cw-paper); color: var(--cw-text-secondary); }
+.cw-confirm-close-no:hover { background: var(--cw-cool-paper); }
+.cw-confirm-close-yes { border: 1px solid var(--cw-citron); background: var(--cw-citron); color: var(--cw-paper); }
+.cw-confirm-close-yes:hover { background: #1d4ed8; border-color: #1d4ed8; }
 
 /* Offline / connection-status banner — #fff9ec/#f0e2bd/#6a4e00 + bordered "Retry now" pill */
 .cw-status { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-bottom: 1px solid var(--cw-warning-line); background: var(--cw-warning-bg); color: var(--cw-warning-ink); font-size: 12px; }
@@ -576,6 +590,10 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-sched-card .cw-sched-recap strong { color: var(--cw-ink); font-size: 14px; }
 .cw-sched-email-label { color: var(--cw-ink); font-size: 14px; font-weight: 700; }
 .cw-sched-card .cw-sched-email-input, .cw-sched-card .cw-sched-name-input { min-height: 50px; padding: 11px 13px; border: 1px solid #d8dce2; border-radius: 10px; background: var(--cw-paper); font-size: 14px; }
+.cw-sched-card .cw-sched-phone-group { display: flex; align-items: stretch; min-height: 50px; border: 1px solid #d8dce2; border-radius: 10px; background: var(--cw-paper); overflow: hidden; }
+.cw-sched-card .cw-sched-phone-group:focus-within { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+.cw-sched-card .cw-sched-phone-code { flex: 0 0 auto; max-width: 92px; margin: 0; padding: 11px 6px 11px 13px; border: none; border-right: 1px solid #d8dce2; border-radius: 0; background: transparent; color: var(--cw-ink); font-size: 14px; font-family: inherit; outline: none; }
+.cw-sched-card .cw-sched-phone-input { flex: 1 1 auto; min-width: 0; min-height: 0; margin: 0; padding: 11px 13px; border: none; border-radius: 0; background: transparent; font-size: 14px; }
 .cw-sched-card .cw-sched-confirm-actions { align-items: stretch; }
 .cw-sched-card .cw-sched-confirm-actions .cw-sched-back-button { flex: 0 0 auto; min-width: 82px; border-radius: 9px; font-size: 13px; }
 .cw-sched-card .cw-sched-confirm-actions .cw-sched-confirm-button { flex: 1 1 auto; border-radius: 9px; font-size: 13px; }

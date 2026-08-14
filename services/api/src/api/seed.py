@@ -18,12 +18,18 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
+from pathlib import Path
 from uuid import uuid4
 
 import asyncpg
 from common.crypto import hash_password
+from dotenv import load_dotenv
 
 from api.admin.repository import _hash_client_key
+
+# Load .env from the repo root regardless of CWD (mirrors migrations/env.py and
+# common.settings.Settings, which load the same file for alembic and the running app).
+load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
 _REQUIRED_ENV = (
     "SEED_TENANT_NAME",

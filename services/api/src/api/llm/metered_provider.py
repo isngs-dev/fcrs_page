@@ -74,13 +74,14 @@ class MeteredProvider:
         labels: list[str],
         *,
         model: str,
+        label_descriptions: dict[str, str] | None = None,
     ) -> Label:
         try:
             with LLM_REQUEST_DURATION.labels(
                 provider=self._provider, op="classify",
             ).time():
                 return await self._delegate.classify(
-                    text, labels, model=model,
+                    text, labels, model=model, label_descriptions=label_descriptions,
                 )
         except Exception:
             LLM_ERRORS.labels(provider=self._provider, op="classify").inc()

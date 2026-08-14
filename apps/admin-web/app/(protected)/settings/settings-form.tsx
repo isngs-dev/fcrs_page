@@ -74,8 +74,8 @@ import {
 import type { BotSettings } from "@/lib/settings";
 import { InstallSnippet } from "@/app/(protected)/settings/install-snippet";
 import { WidgetPreview } from "@/app/(protected)/settings/widget-preview";
-import { SetRow, SET_ROW_FIELD_CLASS } from "@/app/(protected)/settings/set-row";
-import { SettingsRail, type SettingsRailRow } from "@/app/(protected)/settings/settings-rail";
+import { SetRow, SET_ROW_FIELD_CLASS } from "@/components/admin/set-row";
+import { SettingsRail, type SettingsRailRow } from "@/components/admin/settings-rail";
 import { BusinessHoursPicker } from "@/app/(protected)/settings/business-hours-picker";
 
 const initialState: SaveState = { status: "idle" };
@@ -89,12 +89,6 @@ const PERSONA_ICON = (
 const BEHAVIOR_ICON = (
   <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" />
-  </svg>
-);
-const WORKSPACE_ICON = (
-  <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <rect x="3" y="7" width="18" height="13" rx="2" />
-    <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
   </svg>
 );
 const INSTALL_ICON = (
@@ -234,21 +228,22 @@ export function SettingsForm({
       ) : null}
 
       <div className="flex flex-col gap-6 pt-5 lg:flex-row lg:items-start">
-        {/* SR-27 slice 8: five-entry icon rail via the shared SettingsRail
-            primitive (Persona/Behavior/Workspace/Install/Appearance).
-            Persona/Behavior/Install are in-page anchors (this shell owns
-            those sections); Workspace anchors into the OTHER shell on this
-            same route (per D1, both shells share `/settings`); Appearance
-            is disabled -- no appearance/theme field exists anywhere on the
-            bot-settings or workspace payloads (matching the Billing
-            treatment in the Settings shell). */}
+        {/* SR-27 slice 8, later trimmed to four entries (Workspace row
+            removed on user request -- it was a dead in-page anchor left
+            over from before the `/settings` and `/workspace` route split;
+            see workspace/page.tsx's doc comment for that split): icon rail
+            via the shared SettingsRail primitive (Persona/Behavior/Install/
+            Appearance). Persona/Behavior/Install are in-page anchors (this
+            shell owns those sections); Appearance is disabled -- no
+            appearance/theme field exists anywhere on the bot-settings or
+            workspace payloads (matching the Billing treatment in the
+            Settings shell). */}
         <SettingsRail
           eyebrow="Sections"
           rows={
             [
               { kind: "anchor", key: "persona", label: "Persona", href: "#settings-persona", icon: PERSONA_ICON, active: true },
               { kind: "anchor", key: "behavior", label: "Behavior", href: "#settings-behavior", icon: BEHAVIOR_ICON },
-              { kind: "anchor", key: "workspace", label: "Workspace", href: "#settings-workspace", icon: WORKSPACE_ICON },
               { kind: "anchor", key: "install", label: "Install", href: "#settings-install", icon: INSTALL_ICON },
               { kind: "disabled", key: "appearance", label: "Appearance", icon: APPEARANCE_ICON },
             ] satisfies SettingsRailRow[]

@@ -1,0 +1,123 @@
+---
+const cards = [
+  { icon: "fa-solid fa-tags", title: "Transparent Pricing", body: "Clear, detailed quotes with zero hidden fees or surprises.", delay: "" },
+  { icon: "fa-solid fa-bolt", title: "Fast Response", body: "Rapid dispatch for local inspections and emergency roof repairs.", delay: "reveal-delay-2" },
+  { icon: "fa-solid fa-broom", title: "Clean-Site Guarantee", body: "We respect your property. Magnetic sweepers ensure zero left-behind nails.", delay: "reveal-delay-4" },
+  { icon: "fa-solid fa-map-location-dot", title: "Local AL & GA Experts", body: "Deep roots in Alabama and Georgia — we stand by our work for the long haul.", delay: "reveal-delay-5" },
+];
+---
+<section id="why" class="why">
+  <div aria-hidden="true" class="stripes"></div>
+  <div class="inner">
+    <div data-reveal class="section-head">
+      <span class="eyebrow">// Why Choose Us</span>
+      <h2>A Roofer Your Neighbors Trust</h2>
+    </div>
+
+    <div class="cards">
+      {cards.map((c) => (
+        <div data-reveal class:list={["card", c.delay]}>
+          <span class="icon-tile"><i class={c.icon}></i></span>
+          <h3>{c.title}</h3>
+          <p>{c.body}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .why {
+    position: relative;
+    background: linear-gradient(180deg, var(--navy) 0%, var(--navy-2) 100%);
+    padding: var(--section-pad);
+    overflow: hidden;
+  }
+
+  .stripes {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.025) 0 22px,
+      transparent 22px 44px
+    );
+  }
+
+  .inner {
+    position: relative;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .section-head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto 46px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 1px;
+    color: var(--green);
+  }
+
+  .section-head h2 {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: var(--h2);
+    color: #fff;
+    line-height: 1.1;
+    margin-top: 10px;
+    letter-spacing: -0.4px;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 22px;
+  }
+
+  .card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 30px 26px;
+    box-shadow: 0 2px 4px rgba(27, 43, 72, 0.04);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+  }
+
+  .card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 24px 40px -22px rgba(27, 43, 72, 0.28);
+  }
+
+  .icon-tile {
+    width: 56px;
+    height: 56px;
+    border-radius: 15px;
+    background: var(--green-wash);
+    color: var(--green);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 23px;
+    margin-bottom: 18px;
+  }
+
+  .card h3 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 1.18rem;
+    color: var(--navy);
+  }
+
+  .card p {
+    color: var(--muted);
+    font-size: 14.5px;
+    line-height: 1.55;
+    margin-top: 10px;
+  }
+</style>

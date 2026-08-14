@@ -32,6 +32,7 @@ from api.admin.api_keys_repository import (
 )
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
+from api.edge import cors_cache_key
 
 _log = get_logger(__name__)
 
@@ -103,7 +104,24 @@ async def _update_origins(
 ) -> ApiKeyInfoResponse:
     db = request.app.state.db
 
+    # Read the PRE-update allowlist so both sides of the change (an origin
+    # newly added, or one just removed) get their edge-middleware CORS
+    # cache entry invalidated below -- not just the new list.
+    previous_info = await get_api_key_info(db, claims)
+
     info = await update_allowed_origins(db, claims, origins=body.origins)
+
+    # Invalidate api.edge.is_known_origin's cache for every origin this
+    # change touched (union of old + new). Without this, a newly-added
+    # origin stays blocked -- or a removed one stays allowed -- until
+    # cors_origin_cache_ttl_seconds elapses (CLAUDE.md §3: invalidate on
+    # mutation, never on read). Best-effort: a cache backend outage here
+    # must never fail the admin's actual, already-durable origin update.
+    cache = getattr(request.app.state, "cache", None)
+    if cache is not None:
+        touched_origins = set(previous_info.allowed_origins) | set(info.allowed_origins)
+        for touched_origin in touched_origins:
+            await cache.delete(cors_cache_key(touched_origin))
 
     await record_audit(
         db,

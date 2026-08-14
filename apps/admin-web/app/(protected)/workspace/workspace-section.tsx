@@ -16,8 +16,8 @@ import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SoftCard } from "@/components/admin/soft-card";
-import { SetRow, SET_ROW_FIELD_CLASS } from "@/app/(protected)/settings/set-row";
-import { saveWorkspace, type SaveWorkspaceState } from "@/app/(protected)/settings/workspace-actions";
+import { SetRow, SET_ROW_FIELD_CLASS } from "@/components/admin/set-row";
+import { saveWorkspace, type SaveWorkspaceState } from "@/app/(protected)/workspace/workspace-actions";
 import type { Workspace } from "@/lib/workspace";
 
 const initialState: SaveWorkspaceState = { status: "idle" };

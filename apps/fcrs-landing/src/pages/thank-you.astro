@@ -1,0 +1,574 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+<BaseLayout
+  title="Thank You | First Class Roofing & Solar"
+  description="Thanks for your request. A First Class Roofing & Solar specialist will get back to you within 24 hours."
+>
+  <!-- Dedicated post-submit page. Single-viewport by contract: nothing here
+       may cause the document to scroll. See the no-scroll budget in the
+       stylesheet below before adding any element. -->
+  <div class="ty-page">
+    <div class="ty-texture" aria-hidden="true"></div>
+    <div class="ty-glow ty-glow-green" aria-hidden="true"></div>
+    <div class="ty-glow ty-glow-orange" aria-hidden="true"></div>
+
+    <header class="ty-header">
+      <img
+        src="/images/logo.png"
+        alt="First Class Roofing & Solar"
+        class="ty-logo"
+        width="161"
+        height="68"
+      />
+      <a href="tel:+19898434628" class="ty-header-call">
+        <i class="fa-solid fa-phone-volume" aria-hidden="true"></i> (989) 843-4628
+      </a>
+    </header>
+
+    <main class="ty-main">
+      <div class="ty-copy">
+        <span class="ty-eyebrow">// Request Received</span>
+        <h1 class="ty-h1">Thank you for your <span class="ty-h1-accent">response.</span></h1>
+        <p class="ty-lead">
+          We&rsquo;ve received your inquiry and our roofing specialists are
+          already reviewing your request for your Alabama or Georgia property.
+        </p>
+
+        <div class="ty-pill">
+          <i class="fa-solid fa-clock" aria-hidden="true"></i>
+          <span>We&rsquo;ll get back to you within <strong>24 hours</strong>.</span>
+        </div>
+
+        <div class="ty-actions">
+          <a href="tel:+19898434628" class="ty-btn-call">
+            <i class="fa-solid fa-phone-volume" aria-hidden="true"></i> Call Now for Immediate Help
+          </a>
+          <a href="/" class="ty-btn-home">
+            <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Home
+          </a>
+        </div>
+      </div>
+
+      <div class="ty-seal-col">
+        <div class="ty-seal">
+          <span class="ty-seal-ring" aria-hidden="true"></span>
+          <span class="ty-seal-dashed" aria-hidden="true"></span>
+          <div class="ty-seal-disc">
+            <svg viewBox="0 0 100 100" class="ty-seal-check" aria-hidden="true" focusable="false">
+              <path
+                d="M26 52 L44 70 L76 32"
+                fill="none"
+                stroke="#5cc47a"
+                stroke-width="9"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="ty-footer">
+      <span>&copy; 2026 First Class Roofing &amp; Solar. All rights reserved.</span>
+      <span class="ty-website-by">&middot; Website by <img src="/assets/isn-logo.png" alt="iSN" /></span>
+    </footer>
+  </div>
+</BaseLayout>
+
+<style>
+  /* ---- page-local dark-context tokens ----
+     These deliberately do NOT reuse global --ink/--muted/--line names: this
+     page is a dark context and those global tokens hold light-context colors
+     with the same names but different values. Prefixed --ty- so a reader
+     never confuses them with the sitewide set. Do not add these to
+     tokens.css — that file is the documented global set. */
+  .ty-page {
+    --ty-green-l: #5cc47a;
+    --ty-ink: #eef1ee;
+    --ty-muted: #9aa5b1;
+    --ty-line: rgba(255, 255, 255, 0.1);
+    --ty-footer-meta: #6b7688;
+
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100svh;
+    font-family: var(--font-body);
+    color: var(--ty-ink);
+    background: radial-gradient(120% 90% at 15% 0%, #1c2128 0%, var(--navy) 45%, var(--navy-2) 100%);
+  }
+
+  .ty-texture {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.02) 0 24px,
+      transparent 24px 48px
+    );
+  }
+
+  .ty-glow {
+    position: absolute;
+    width: 520px;
+    height: 520px;
+    border-radius: 50%;
+    filter: blur(10px);
+    pointer-events: none;
+  }
+
+  .ty-glow-green {
+    top: -160px;
+    right: -120px;
+    background: radial-gradient(circle, rgba(58, 166, 85, 0.28), transparent 68%);
+  }
+
+  .ty-glow-orange {
+    bottom: -200px;
+    left: -140px;
+    width: 560px;
+    height: 560px;
+    background: radial-gradient(circle, rgba(255, 153, 0, 0.16), transparent 68%);
+  }
+
+  .ty-header {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 26px clamp(22px, 5vw, 64px);
+  }
+
+  .ty-logo {
+    height: 42px;
+    width: auto;
+    filter: brightness(0) invert(1);
+  }
+
+  .ty-header-call {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 14px;
+    color: #fff;
+    border: 1px solid var(--ty-line);
+    padding: 9px 18px;
+    border-radius: 999px;
+    transition: background 0.18s ease, border-color 0.18s ease;
+  }
+
+  .ty-header-call:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.28);
+  }
+
+  .ty-header-call i {
+    color: var(--orange);
+  }
+
+  .ty-main {
+    position: relative;
+    z-index: 2;
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    align-items: center;
+    gap: clamp(34px, 5vw, 72px);
+    width: 100%;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: clamp(24px, 4vw, 48px) clamp(22px, 5vw, 64px) clamp(40px, 5vw, 64px);
+  }
+
+  .ty-eyebrow {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 1.5px;
+    color: var(--ty-green-l);
+    animation: tyRise 0.5s ease 0.1s both;
+  }
+
+  .ty-h1 {
+    margin-top: 14px;
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: clamp(2.4rem, 5.4vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -1px;
+    color: #fff;
+    text-wrap: balance;
+    animation: tyRise 0.5s ease 0.18s both;
+  }
+
+  .ty-h1-accent {
+    color: var(--orange);
+  }
+
+  .ty-lead {
+    margin-top: 20px;
+    max-width: 44ch;
+    font-size: clamp(1.05rem, 1.6vw, 1.2rem);
+    line-height: 1.6;
+    color: var(--ty-muted);
+    animation: tyRise 0.5s ease 0.26s both;
+  }
+
+  .ty-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 26px;
+    padding: 14px 22px;
+    border-radius: 16px;
+    background: rgba(58, 166, 85, 0.1);
+    border: 1px solid rgba(58, 166, 85, 0.35);
+    animation: tyRise 0.5s ease 0.34s both;
+  }
+
+  .ty-pill i {
+    color: var(--ty-green-l);
+    font-size: 20px;
+  }
+
+  .ty-pill span {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: 1.02rem;
+    color: #fff;
+  }
+
+  .ty-pill strong {
+    color: var(--ty-green-l);
+    font-weight: 800;
+  }
+
+  .ty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 34px;
+    animation: tyRise 0.5s ease 0.42s both;
+  }
+
+  .ty-btn-call,
+  .ty-btn-home {
+    display: inline-flex;
+    align-items: center;
+    gap: 11px;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 1.05rem;
+    padding: 15px 28px;
+    border-radius: 999px;
+    color: #fff;
+  }
+
+  .ty-btn-call {
+    background: var(--orange);
+    box-shadow: 0 12px 30px rgba(255, 153, 0, 0.4);
+    transition: transform 0.18s ease, background 0.18s ease;
+  }
+
+  .ty-btn-call:hover {
+    color: #fff;
+    transform: translateY(-2px);
+    background: var(--orange-d);
+  }
+
+  .ty-btn-home {
+    gap: 10px;
+    border: 1px solid var(--ty-line);
+    transition: background 0.18s ease, border-color 0.18s ease;
+  }
+
+  .ty-btn-home:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .ty-btn-home i {
+    font-size: 13px;
+  }
+
+  .ty-seal-col {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ty-seal {
+    position: relative;
+    width: min(340px, 72vw, 38vh);
+    aspect-ratio: 1;
+    animation: tyFloat 6s ease-in-out infinite;
+  }
+
+  .ty-seal-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid var(--green);
+    animation: tyRing 2.4s ease-out 0.4s infinite;
+  }
+
+  .ty-seal-dashed {
+    position: absolute;
+    inset: 6%;
+    border-radius: 50%;
+    border: 1px dashed rgba(92, 196, 122, 0.4);
+  }
+
+  .ty-seal-disc {
+    position: absolute;
+    inset: 14%;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(
+      circle at 40% 30%,
+      rgba(58, 166, 85, 0.28),
+      rgba(58, 166, 85, 0.08)
+    );
+    border: 1.5px solid rgba(92, 196, 122, 0.5);
+    box-shadow: inset 0 0 60px rgba(58, 166, 85, 0.25),
+      0 30px 70px -20px rgba(58, 166, 85, 0.5);
+  }
+
+  .ty-seal-check {
+    width: 52%;
+    height: 52%;
+  }
+
+  .ty-seal-check path {
+    stroke-dasharray: 120;
+    stroke-dashoffset: 120;
+    animation: tyDraw 0.7s ease 0.5s forwards;
+  }
+
+  .ty-footer {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    padding: 18px 24px 26px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--ty-footer-meta);
+  }
+
+  .ty-website-by {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .ty-website-by img {
+    height: 16px;
+    width: auto;
+    filter: brightness(0) invert(1);
+    opacity: 0.8;
+  }
+
+  @keyframes tyDraw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  @keyframes tyRise {
+    from {
+      opacity: 0;
+      transform: translateY(22px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes tyRing {
+    0% {
+      transform: scale(0.6);
+      opacity: 0.6;
+    }
+    100% {
+      transform: scale(1.9);
+      opacity: 0;
+    }
+  }
+
+  @keyframes tyFloat {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+
+  @media (max-width: 1024px) {
+    .ty-main {
+      gap: clamp(24px, 3.5vw, 44px);
+      padding: clamp(16px, 3vw, 32px) clamp(22px, 5vw, 48px) clamp(24px, 3vw, 40px);
+    }
+    .ty-seal {
+      width: min(300px, 34vw, 34vh);
+    }
+  }
+
+  @media (max-width: 859px) {
+    .ty-main {
+      grid-template-columns: 1fr;
+      align-items: center;
+      padding: 12px clamp(22px, 6vw, 40px) 20px;
+    }
+    .ty-seal-col {
+      display: none;
+    }
+    .ty-header {
+      padding: 18px clamp(22px, 6vw, 40px);
+    }
+    .ty-logo {
+      height: 36px;
+    }
+    .ty-h1 {
+      font-size: clamp(2rem, 8vw, 2.6rem);
+    }
+    .ty-lead {
+      margin-top: 16px;
+      font-size: 1rem;
+      max-width: 100%;
+    }
+    .ty-pill {
+      margin-top: 20px;
+      padding: 12px 18px;
+      gap: 12px;
+    }
+    .ty-pill span {
+      font-size: 0.95rem;
+    }
+    .ty-actions {
+      margin-top: 24px;
+      gap: 12px;
+    }
+    .ty-btn-call,
+    .ty-btn-home {
+      font-size: 1rem;
+      padding: 13px 22px;
+    }
+    .ty-footer {
+      padding: 12px 20px 18px;
+      font-size: 11.5px;
+    }
+  }
+
+  @media (max-height: 800px) {
+    .ty-header {
+      padding-top: 14px;
+      padding-bottom: 14px;
+    }
+    .ty-main {
+      padding-top: clamp(12px, 2.5vw, 28px);
+      padding-bottom: clamp(20px, 3vw, 36px);
+    }
+    .ty-h1 {
+      font-size: clamp(1.85rem, 4.4vw, 2.6rem);
+      margin-top: 10px;
+    }
+    .ty-lead {
+      margin-top: 12px;
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+    .ty-pill {
+      margin-top: 16px;
+      padding: 10px 16px;
+    }
+    .ty-actions {
+      margin-top: 18px;
+    }
+    .ty-btn-call,
+    .ty-btn-home {
+      padding: 12px 20px;
+      font-size: 0.98rem;
+    }
+    .ty-seal {
+      width: min(340px, 72vw, 42vh);
+    }
+    .ty-footer {
+      padding: 10px 20px 14px;
+    }
+  }
+
+  @media (max-height: 560px) {
+    .ty-seal-col {
+      display: none;
+    }
+    .ty-main {
+      grid-template-columns: 1fr;
+      padding-top: 8px;
+      padding-bottom: 12px;
+    }
+    .ty-h1 {
+      font-size: 1.7rem;
+    }
+    .ty-lead {
+      font-size: 0.95rem;
+      margin-top: 10px;
+    }
+    .ty-pill {
+      margin-top: 12px;
+    }
+    .ty-actions {
+      margin-top: 14px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ty-eyebrow,
+    .ty-h1,
+    .ty-lead,
+    .ty-pill,
+    .ty-actions,
+    .ty-seal,
+    .ty-seal-ring {
+      animation: none;
+    }
+    .ty-eyebrow,
+    .ty-h1,
+    .ty-lead,
+    .ty-pill,
+    .ty-actions {
+      opacity: 1;
+      transform: none;
+    }
+    .ty-seal-check path {
+      animation: none;
+      stroke-dashoffset: 0;
+    }
+    .ty-btn-call,
+    .ty-btn-home,
+    .ty-header-call {
+      transition: none;
+    }
+  }
+</style>

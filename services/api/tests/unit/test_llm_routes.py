@@ -145,6 +145,7 @@ class _StubProvider:
         labels: list[str],
         *,
         model: str,
+        label_descriptions: dict[str, str] | None = None,
     ) -> Label:
         return self._label
 

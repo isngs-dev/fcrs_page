@@ -46,14 +46,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from pathlib import Path
 
 from common.auth import AuthClaims, Role
 from common.db import Database
+from dotenv import load_dotenv
 
 from api.orchestrator.config_repository import get_orchestrator_config, upsert_orchestrator_config
 from api.scheduling.admin_routes import AvailabilityUpsertRequest, RulesPayload
 from api.scheduling.calendar_config_repository import get_calendar_config, upsert_calendar_config
 from api.scheduling.repository import upsert_availability
+
+# Load .env from the repo root regardless of CWD (mirrors migrations/env.py and
+# api.seed, which load the same file so this script works standalone).
+load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
 _TARGET_RULES = RulesPayload(
     slot_minutes=30,

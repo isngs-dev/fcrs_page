@@ -19,7 +19,7 @@ import {
   rotateApiKey,
   updateOrigins,
   type UpdateOriginsState,
-} from "@/app/(protected)/settings/api-keys-actions";
+} from "@/app/(protected)/workspace/api-keys-actions";
 import type { ApiKeyInfo } from "@/lib/api-keys";
 
 const initialOriginsState: UpdateOriginsState = { status: "idle" };

@@ -100,11 +100,12 @@ class AnthropicProvider:
         labels: list[str],
         *,
         model: str,
+        label_descriptions: dict[str, str] | None = None,
     ) -> Label:
         if not labels:
             raise LLMError("LLM request failed.")
 
-        instruction = build_classify_instruction(labels)
+        instruction = build_classify_instruction(labels, label_descriptions)
 
         try:
             resp = await self._client.messages.create(

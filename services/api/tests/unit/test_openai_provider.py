@@ -571,6 +571,42 @@ async def test_classify_system_instruction_includes_balanced_fewshot_examples() 
     assert len(set(example_lines)) >= 2
 
 
+async def test_classify_passes_label_descriptions_into_the_instruction() -> None:
+    """label_descriptions reaches the system message sent upstream -- proves
+    the off-topic-misclassification fix is wired through to the real OpenAI
+    call, not just built in classify_matching.py."""
+    stub = _StubCompletions(text="off_topic")
+    client = _make_stub_client(completions=stub)
+    provider = OpenAICompatibleProvider(client=client)
+
+    await provider.classify(
+        "Who is the President of India?",
+        labels=["question", "off_topic"],
+        model="gpt-4o",
+        label_descriptions={"off_topic": "unrelated to this business"},
+    )
+
+    instruction = stub.last_kwargs["messages"][0]["content"]
+    assert "Label meanings" in instruction
+    assert "off_topic: unrelated to this business" in instruction
+
+
+async def test_classify_without_label_descriptions_omits_label_meanings() -> None:
+    """Omitting label_descriptions (the default) keeps today's instruction
+    byte-for-byte -- no behavior change for callers that don't opt in."""
+    stub = _StubCompletions(text="Support")
+    client = _make_stub_client(completions=stub)
+    provider = OpenAICompatibleProvider(client=client)
+
+    await provider.classify(
+        "I need help with my order",
+        labels=["Sales", "Support", "Billing"],
+        model="gpt-4o",
+    )
+
+    assert "Label meanings" not in stub.last_kwargs["messages"][0]["content"]
+
+
 async def test_classify_empty_choices_raises_llm_error() -> None:
     """classify with empty choices → LLMError."""
     stub = _StubCompletions(empty_choices=True)

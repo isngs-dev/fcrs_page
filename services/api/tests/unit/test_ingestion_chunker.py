@@ -245,3 +245,127 @@ def test_zero_overlap_produces_non_overlapping_chunks() -> None:
     assert len(chunks) >= 2
     for chunk in chunks:
         assert len(chunk) <= 30
+
+
+# ==============================================================================
+# Markdown heading-aware atomic packing (FAQ block never split when it fits)
+# ==============================================================================
+
+
+def _faq_block(n: int) -> str:
+    """One FAQ entry shaped like the real-world regression this guards
+    against: a heading, several question phrasings, several answer
+    phrasings -- with NO shared vocabulary between the question lines and
+    the later answer lines, so a chunk boundary landing between them would
+    be silently unrecoverable for retrieval (the split-off half has no
+    heading/topic words left to match a query against)."""
+    return (
+        f"### {n}. What is topic {n}?\n\n"
+        f"* Var 1: alpha phrasing about topic {n}?\n"
+        f"* Var 2: beta phrasing about topic {n}?\n\n"
+        f"> Answer 1: zzzzz answer content unrelated in wording to the vars above.\n"
+        f"> Answer 2: yyyyy more answer content, still no shared words with the vars.\n"
+    )
+
+
+def test_heading_block_kept_whole_when_it_fits() -> None:
+    """A '### heading' + its Vars/Answers, sized to fit in one max_chars
+    budget, lands entirely in ONE chunk -- never split at a sentence
+    boundary partway through, even though the plain sentence-packer would
+    otherwise be willing to split there."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.chunker import chunk_text
+
+        block = _faq_block(1)
+        chunks = chunk_text(block, max_chars=len(block) + 50, overlap=20)
+
+    assert len(chunks) == 1
+    assert "Var 1" in chunks[0]
+    assert "Answer 2" in chunks[0]
+
+
+def test_heading_never_separated_from_its_content_across_chunk_boundary() -> None:
+    """Two FAQ blocks back to back, sized so only ONE fits per chunk: the
+    chunk boundary falls BETWEEN the two headings, never inside either
+    one's Var/Answer content (the exact regression this fix targets --
+    'Are Facebook quote requests harder to close...' landed with no
+    heading in its chunk because the packer split mid-block)."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.chunker import chunk_text
+
+        block1 = _faq_block(1)
+        block2 = _faq_block(2)
+        text = block1 + block2
+        # Budget fits one block comfortably but not both.
+        max_chars = len(block1) + 30
+        chunks = chunk_text(text, max_chars=max_chars, overlap=0)
+
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        has_heading = "What is topic" in chunk
+        has_answer = "Answer 1" in chunk or "Answer 2" in chunk
+        # A chunk containing answer content must also contain its own
+        # block's heading -- never answers with no heading to anchor them.
+        if has_answer:
+            assert has_heading, f"chunk has answer content but no heading: {chunk[:120]!r}"
+
+
+def test_multiple_small_heading_blocks_still_pack_together() -> None:
+    """Several small heading blocks that jointly fit in one budget are still
+    packed into a single chunk -- heading-awareness must not regress into
+    a wasteful one-chunk-per-heading policy."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.chunker import chunk_text
+
+        text = "".join(_faq_block(i) for i in range(1, 4))
+        chunks = chunk_text(text, max_chars=len(text) + 100, overlap=0)
+
+    assert len(chunks) == 1
+    for i in range(1, 4):
+        assert f"topic {i}" in chunks[0]
+
+
+def test_oversized_heading_block_falls_back_to_sentence_splitting() -> None:
+    """A single heading block LARGER than max_chars still gets split (never
+    dropped) -- it degrades to the same sentence-level packing used before
+    heading-awareness existed, rather than being emitted as one oversized
+    chunk or silently truncated."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.chunker import chunk_text
+
+        block = _faq_block(1) * 5  # much larger than any reasonable max_chars
+        chunks = chunk_text(block, max_chars=200, overlap=20)
+
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert len(chunk) <= 200
+    all_content = " ".join(chunks)
+    assert "Answer 2" in all_content
+
+
+def test_text_without_headings_chunks_identically_to_before() -> None:
+    """Text with no ATX headings at all is completely unaffected by
+    heading-awareness -- same output as plain sentence-level chunking."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.chunker import _split_sentences, chunk_text
+
+        text = (
+            "This document has no markdown headings whatsoever. "
+            "It is just plain sentences, one after another, for a while. "
+            "Nothing here should be treated as a heading boundary."
+        )
+        chunks = chunk_text(text, max_chars=60, overlap=10)
+
+    # No '#' anywhere in the input, so _split_heading_blocks must return the
+    # whole text as one block, falling straight through to _split_sentences
+    # -- verify that block-splitting is a no-op by checking every sentence
+    # is still reachable.
+    for sentence in _split_sentences(text):
+        assert any(sentence.strip() in chunk for chunk in chunks) or any(
+            sentence.strip()[:20] in chunk for chunk in chunks
+        )

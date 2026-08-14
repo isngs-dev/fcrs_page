@@ -22,6 +22,7 @@ from api.crm.tasks import sync_lead
 from api.gateway.dependencies import get_visitor_claims
 from api.leads.assignment import assign_lead_fail_open
 from api.leads.repository import create_lead
+from api.leads.tasks import classify_lead_email
 from api.notifications.emit import emit_event_safe
 
 _log = get_logger(__name__)
@@ -165,6 +166,27 @@ async def capture_lead(
             "crm_enqueue_failed",
             extra={
                 "event": "crm_enqueue_failed",
+                "lead_id": lead_id,
+                "tenant_id": claims.tenant_id,
+            },
+        )
+
+    # -- Enqueue email qualification (fire-and-forget) ----------------------
+    # Never awaited, never allowed to fail the capture: an enqueue failure is
+    # logged and swallowed, same convention as the CRM sync enqueue above.
+    # classify_lead_email re-derives everything it needs from the trusted
+    # tenant_id + lead_id; nothing from the request body is passed.
+    try:
+        classify_lead_email.delay(
+            tenant_id=claims.tenant_id,
+            lead_id=lead_id,
+            correlation_id=correlation_id,
+        )
+    except Exception:
+        _log.warning(
+            "lead_email_classify_enqueue_failed",
+            extra={
+                "event": "lead_email_classify_enqueue_failed",
                 "lead_id": lead_id,
                 "tenant_id": claims.tenant_id,
             },

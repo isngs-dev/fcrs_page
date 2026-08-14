@@ -99,6 +99,7 @@ describe("SR-30 D30-1: nested Overview nav (supersedes SR-15 D6's flat-nav claus
       "/notifications",
       "/knowledge",
       "/settings",
+      "/workspace",
     ]);
   });
 
@@ -132,6 +133,19 @@ describe("SR-15 non-regression: existing role gates are untouched", () => {
   it("/members remains CLIENT_ADMIN-only after the restyle", () => {
     expect(visibleItemsForRole("CLIENT_ADMIN").map((i) => i.href)).toContain("/members");
     expect(visibleItemsForRole("CLIENT_AGENT").map((i) => i.href)).not.toContain("/members");
+  });
+
+  // Workspace settings split out of the combined "/settings" route on user
+  // request -- see app/(protected)/workspace/page.tsx's doc comment. That
+  // shell (General/Members/Billing/API keys/Notifications/Danger zone) was
+  // always CLIENT_ADMIN-only even while it lived inside "/settings", so the
+  // sidebar gate mirrors /knowledge and /members above, not "/settings"'s
+  // two-role gate.
+  it("/workspace is CLIENT_ADMIN-only; /settings (Bot settings) stays reachable by both roles", () => {
+    expect(visibleItemsForRole("CLIENT_ADMIN").map((i) => i.href)).toContain("/workspace");
+    expect(visibleItemsForRole("CLIENT_AGENT").map((i) => i.href)).not.toContain("/workspace");
+    expect(visibleItemsForRole("CLIENT_ADMIN").map((i) => i.href)).toContain("/settings");
+    expect(visibleItemsForRole("CLIENT_AGENT").map((i) => i.href)).toContain("/settings");
   });
 });
 

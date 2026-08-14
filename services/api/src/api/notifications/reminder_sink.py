@@ -60,7 +60,10 @@ class NotificationReminderSink:
         timezone = contact.timezone if contact is not None else "UTC"
 
         subject, body = reminder_message(
-            offset=reminder.offset, starts_at=reminder.starts_at, timezone=timezone
+            offset=reminder.offset,
+            starts_at=reminder.starts_at,
+            timezone=timezone,
+            meet_url=contact.meet_url if contact is not None else None,
         )
 
         dedupe_key = f"reminder:{reminder.event_id}:{reminder.offset}"

@@ -1,4 +1,4 @@
-{
+﻿{
   "hooks": {
     "PreToolUse": [
       {
@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Projects/chatbot/marketing_chatbot/.claude/hooks/block_commands.py\""
+            "command": "python \"C:/Users/ISN/Desktop/Chatbot/marketing_chatbot/.claude/hooks/block_commands.py\""
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Projects/chatbot/marketing_chatbot/.claude/hooks/protect_paths.py\""
+            "command": "python \"C:/Users/ISN/Desktop/Chatbot/marketing_chatbot/.claude/hooks/protect_paths.py\""
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Projects/chatbot/marketing_chatbot/.claude/hooks/verify_reminder.py\""
+            "command": "python \"C:/Users/ISN/Desktop/Chatbot/marketing_chatbot/.claude/hooks/verify_reminder.py\""
           }
         ]
       }

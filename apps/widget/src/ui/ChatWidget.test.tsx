@@ -20,7 +20,7 @@ const fetchSlotsMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<F
 const fetchAvailabilitySummaryMock = vi.fn<(config: WidgetConfig) => Promise<FetchAvailabilitySummaryResult>>();
 const postHandoffIntentMock = vi.fn<(config: WidgetConfig, input: { email: string }) => Promise<PostHandoffIntentResult>>();
 const mintVisitorSessionMock = vi.fn<(config: WidgetConfig) => Promise<AdmissionResult>>();
-const speakGreetingMock = vi.fn<() => void>();
+const speakGreetingMock = vi.fn<(onBlocked?: () => void) => void>();
 const ttsCancelMock = vi.fn<() => void>();
 // SR-3: isResumeEnabled defaults false so every pre-existing test above
 // (none of which opt into resume) sees byte-for-byte the same behavior —
@@ -65,9 +65,11 @@ vi.mock("../resume", () => ({
 
 // S14.5: mock the TTS module so ChatWidget's gesture-gating logic (only
 // speak on the first open, only when not muted) can be asserted precisely
-// without depending on jsdom having a real Web Speech API (it doesn't).
+// without depending on jsdom having a real Web Speech API (it doesn't). The
+// `onBlocked` callback is forwarded so tests can simulate Chrome's
+// autoplay-policy block (see tts.ts) by invoking it themselves.
 vi.mock("../tts", () => ({
-  speakGreeting: () => speakGreetingMock(),
+  speakGreeting: (onBlocked?: () => void) => speakGreetingMock(onBlocked),
   cancel: () => ttsCancelMock(),
   TTS_GREETING_TEXT: "Hi! How can we help?",
 }));
@@ -145,11 +147,38 @@ function getSendButton(): HTMLButtonElement {
   return button;
 }
 
+/** Idempotent: the panel now opens automatically on mount, so most callers
+ * just need "the panel to be open" and this is a no-op in that case. Tests
+ * about the open/close TOGGLE itself use `closePanel()` + a direct
+ * `launcher.click()` to exercise a real gesture. */
 function openPanel(): void {
   const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder");
   if (!launcher) throw new Error("launcher not found");
+  if (launcher.getAttribute("aria-expanded") === "true") return;
   act(() => {
     launcher.click();
+  });
+}
+
+/** Idempotent counterpart to `openPanel()` -- closes via the launcher
+ * (a real click gesture) if open, no-ops if already closed. Closing is now
+ * a two-step exit-confirm interaction (click -> "Are you sure you want to
+ * exit?" -> Yes), so this helper drives both steps transparently for every
+ * existing call site that just wants "the panel is now closed and its chat
+ * history cleared" as an end state. Tests about the confirmation step
+ * itself (its exact message, the "No"/dismiss path, repeated-click
+ * idempotency) exercise the two steps directly instead of using this. */
+function closePanel(): void {
+  const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder");
+  if (!launcher) throw new Error("launcher not found");
+  if (launcher.getAttribute("aria-expanded") === "false") return;
+  act(() => {
+    launcher.click();
+  });
+  const yesButton = container.querySelector<HTMLButtonElement>(".cw-confirm-close-yes");
+  if (!yesButton) throw new Error("exit-confirm Yes button not found");
+  act(() => {
+    yesButton.click();
   });
 }
 
@@ -193,14 +222,15 @@ describe("ChatWidget", () => {
     });
 
     const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
-    expect(launcher.getAttribute("aria-label")).toBe("Open chat");
-    expect(launcher.getAttribute("aria-expanded")).toBe("false");
+    // Opens automatically on mount -- no click required.
+    expect(launcher.getAttribute("aria-label")).toBe("Close chat");
+    expect(launcher.getAttribute("aria-expanded")).toBe("true");
     expect(launcher.textContent).toContain("Chat <b>with us</b>");
     expect(launcher.querySelector("b")).toBeNull();
 
-    openPanel();
-    expect(launcher.getAttribute("aria-label")).toBe("Close chat");
-    expect(launcher.getAttribute("aria-expanded")).toBe("true");
+    closePanel();
+    expect(launcher.getAttribute("aria-label")).toBe("Open chat");
+    expect(launcher.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("uses the explicit default launcher label when no tenant label is supplied", () => {
@@ -221,11 +251,13 @@ describe("ChatWidget", () => {
     expect(widgetCss).not.toContain("Inter");
   });
 
-  it("toggles the panel open/closed via the launcher", () => {
+  it("opens automatically on mount, and the launcher still toggles it closed/open", () => {
     act(() => {
       root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
     });
 
+    expect(container.querySelector(".cw-panel")).not.toBeNull();
+    closePanel();
     expect(container.querySelector(".cw-panel")).toBeNull();
     openPanel();
     expect(container.querySelector(".cw-panel")).not.toBeNull();
@@ -652,14 +684,16 @@ describe("ChatWidget", () => {
   });
 
   describe("S14.5 focus management + live region + TTS gesture gating", () => {
-    it("opening the panel moves focus into it (the message input) and sets aria-expanded", () => {
+    it("is open with focus in it (the message input) immediately on mount, and re-opening after a close moves focus back in", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
 
       const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
-      expect(launcher.getAttribute("aria-expanded")).toBe("false");
+      expect(launcher.getAttribute("aria-expanded")).toBe("true");
+      expect(document.activeElement).toBe(getInput());
 
+      closePanel();
       openPanel();
 
       expect(launcher.getAttribute("aria-expanded")).toBe("true");
@@ -701,7 +735,7 @@ describe("ChatWidget", () => {
 
       expect(container.querySelector(".cw-welcome")?.textContent).toMatch(/Rebecca/i);
       const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
-        (button) => button.textContent?.includes("How does the Pro plan compare?"),
+        (button) => button.textContent?.includes("Do you offer free roof inspections?"),
       );
       expect(suggestion).toBeDefined();
 
@@ -712,11 +746,11 @@ describe("ChatWidget", () => {
 
       expect(sendTurnMock).toHaveBeenCalledWith(
         baseConfig,
-        expect.objectContaining({ message: "How does the Pro plan compare?", conversationId: null }),
+        expect.objectContaining({ message: "Do you offer free roof inspections?", conversationId: null }),
       );
       expect(container.querySelector(".cw-welcome")).not.toBeNull();
-      expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain("How does the Pro plan compare?");
-      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("How does the Pro plan compare?");
+      expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain("Do you offer free roof inspections?");
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Do you offer free roof inspections?");
     });
 
     it("uses browser speech recognition when available and stops it when the panel closes", () => {
@@ -783,7 +817,7 @@ describe("ChatWidget", () => {
       expect(container.querySelector(".cw-voice-button")).toBeNull();
     });
 
-    it("has an in-panel close control that restores launcher focus", () => {
+    it("has an in-panel close control that shows the exit confirmation, then closes + restores launcher focus on Yes", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
@@ -795,12 +829,24 @@ describe("ChatWidget", () => {
         closeButton?.click();
       });
 
+      // Clicking X no longer closes immediately -- it shows the exit
+      // confirmation in place of the normal panel body; the panel itself
+      // stays mounted throughout.
+      expect(container.querySelector(".cw-panel")).not.toBeNull();
+      expect(container.querySelector(".cw-panel-header")).toBeNull();
+      const yesButton = container.querySelector<HTMLButtonElement>(".cw-confirm-close-yes");
+      expect(yesButton).not.toBeNull();
+
+      act(() => {
+        yesButton?.click();
+      });
+
       const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
       expect(container.querySelector(".cw-panel")).toBeNull();
       expect(document.activeElement).toBe(launcher);
     });
 
-    it("Escape closes the panel and restores focus to the launcher", () => {
+    it("Escape shows the exit confirmation (not an immediate close); a second Escape dismisses it and keeps the panel open", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
@@ -810,6 +856,35 @@ describe("ChatWidget", () => {
       const panel = container.querySelector<HTMLDivElement>(".cw-panel")!;
       act(() => {
         panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+
+      // First Escape: shows the confirmation, panel stays open/mounted.
+      expect(container.querySelector(".cw-confirm-close")).not.toBeNull();
+      expect(container.querySelector(".cw-panel")).not.toBeNull();
+
+      // Second Escape, while confirming: acts as "No" -- dismisses the
+      // confirmation and returns to the normal (still-open) panel view.
+      act(() => {
+        panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(container.querySelector(".cw-confirm-close")).toBeNull();
+      expect(container.querySelector(".cw-panel-header")).not.toBeNull();
+      expect(container.querySelector(".cw-panel")).not.toBeNull();
+    });
+
+    it("Escape then Yes (via click) closes the panel and restores focus to the launcher", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      const panel = container.querySelector<HTMLDivElement>(".cw-panel")!;
+      act(() => {
+        panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      const yesButton = container.querySelector<HTMLButtonElement>(".cw-confirm-close-yes")!;
+      act(() => {
+        yesButton.click();
       });
 
       expect(container.querySelector(".cw-panel")).toBeNull();
@@ -905,25 +980,18 @@ describe("ChatWidget", () => {
       });
     });
 
-    it("TTS: does not speak before the panel is ever opened", () => {
+    it("TTS: speaks exactly once automatically on the mount-time auto-open, when not muted", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
 
-      expect(speakGreetingMock).not.toHaveBeenCalled();
-    });
-
-    it("TTS: speaks exactly once on the first panel-open gesture when not muted", () => {
-      act(() => {
-        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
-      });
-
-      openPanel();
+      // The panel opens automatically on mount, and the greeting is
+      // attempted right along with it (user request) -- no click required.
       expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
-      // Closing and reopening in the same page session must not speak again.
-      openPanel(); // close
-      openPanel(); // reopen
+      // Closing and reopening again in the same page session must not speak again.
+      closePanel();
+      openPanel();
       expect(speakGreetingMock).toHaveBeenCalledTimes(1);
     });
 
@@ -932,7 +1000,7 @@ describe("ChatWidget", () => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
 
-      openPanel(); // first open — the gesture the spec requires; greets once
+      // Mount-time auto-open already greeted once.
       expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
       const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
@@ -940,24 +1008,22 @@ describe("ChatWidget", () => {
         muteToggle.click();
       });
 
-      openPanel(); // close
+      closePanel();
       openPanel(); // reopen while muted
-      // Greeting only ever fires on the *first* open in the page session
-      // (decision 5), so this also confirms mute doesn't retroactively
-      // matter for the already-consumed first-open call — the important
-      // invariant is no *additional* speak call happens.
+      // Greeting only ever fires once per page session (decision 5), so
+      // this also confirms mute doesn't retroactively matter for the
+      // already-consumed mount-time call — the important invariant is no
+      // *additional* speak call happens.
       expect(speakGreetingMock).toHaveBeenCalledTimes(1);
     });
 
     it("TTS: the mute toggle mutes future opens and is visible with aria-pressed", () => {
-      // Use a second render to test "muted before any open" semantics
-      // cleanly: open once (consumes the greeting), mute, close, reopen —
-      // no further speak calls, and the toggle communicates state via
-      // aria-pressed.
+      // Mount-time auto-open already consumes the once-per-session
+      // greeting; mute, close, reopen — no further speak calls, and the
+      // toggle communicates state via aria-pressed.
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
-      openPanel();
       expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
       const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
@@ -968,6 +1034,339 @@ describe("ChatWidget", () => {
       });
       expect(muteToggle.getAttribute("aria-pressed")).toBe("true");
       expect(ttsCancelMock).toHaveBeenCalled();
+    });
+
+    it("TTS: retries on the visitor's first interaction anywhere on the page after a blocked mount-time attempt", () => {
+      // Simulate Chrome's "no speak() without prior user activation"
+      // autoplay policy: the mount-time attempt is blocked (onBlocked fires
+      // synchronously here in place of the utterance's real async onerror,
+      // see tts.ts) -- the retry after a real interaction then succeeds,
+      // matching Chrome's actual behavior once activation has been granted.
+      speakGreetingMock.mockImplementationOnce((onBlocked) => onBlocked?.());
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      // Mount-time attempt, blocked.
+      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+
+      // The visitor's first interaction anywhere on the page -- not the
+      // widget itself -- grants the activation Chrome requires and should
+      // trigger a genuine retry.
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+      });
+      expect(speakGreetingMock).toHaveBeenCalledTimes(2);
+
+      // That retry succeeded (no onBlocked this time), so a further
+      // interaction must not speak a third time.
+      act(() => {
+        document.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true }));
+      });
+      expect(speakGreetingMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("TTS: does not retry on interaction once the mount-time attempt genuinely spoke", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        document.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("TTS: a first-interaction retry does not fire once muted", () => {
+      speakGreetingMock.mockImplementation((onBlocked) => onBlocked?.());
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+
+      const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
+      act(() => {
+        muteToggle.click();
+      });
+      // The mute click itself is a real page interaction and may already
+      // trigger one more (still-blocked) attempt before the `muted` state
+      // update lands -- assert relative to that, not a fixed count, so this
+      // test is only about what happens AFTER muting has genuinely landed.
+      const callsAfterMuting = speakGreetingMock.mock.calls.length;
+
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+      });
+      expect(speakGreetingMock).toHaveBeenCalledTimes(callsAfterMuting);
+    });
+  });
+
+  describe("exit confirmation on close (X) — clears client-side chat history, never admin data", () => {
+    it("clicking the close (X) button shows the exact confirmation message and does not close the panel", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      const closeButton = container.querySelector<HTMLButtonElement>(".cw-close-button")!;
+      act(() => {
+        closeButton.click();
+      });
+
+      expect(container.querySelector(".cw-confirm-close-message")?.textContent).toBe(
+        "Are you sure you want to exit?",
+      );
+      // Still open -- the confirmation replaces the panel body, it does not
+      // close the panel by itself.
+      expect(container.querySelector(".cw-panel")).not.toBeNull();
+    });
+
+    it("focus lands on 'No' (the safe/non-destructive option) when the confirmation appears", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-close-button")!.click();
+      });
+
+      expect(document.activeElement).toBe(container.querySelector(".cw-confirm-close-no"));
+    });
+
+    it("repeated close clicks cannot stack multiple confirmations -- the close button is replaced by the dialog, not layered on top of it", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-close-button")!.click();
+      });
+      expect(container.querySelectorAll(".cw-confirm-close").length).toBe(1);
+      // The trigger itself is gone now (replaced by the confirm view), so a
+      // "repeated click" on it is structurally impossible via the UI --
+      // there is nothing left to click that could show a second dialog.
+      expect(container.querySelector(".cw-close-button")).toBeNull();
+    });
+
+    it("'No' keeps the panel open and preserves chat history + the conversation id exactly as it was", async () => {
+      sendTurnMock
+        .mockResolvedValueOnce({
+          ok: true,
+          turn: {
+            conversationId: "conv-keep-me",
+            messageId: "msg-1",
+            reply: "Sure, here you go.",
+            decision: "answer",
+            confidence: 0.9,
+            sources: [],
+            action: null,
+          },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          turn: {
+            conversationId: "conv-keep-me",
+            messageId: "msg-2",
+            reply: "Still here.",
+            decision: "answer",
+            confidence: 0.9,
+            sources: [],
+            action: null,
+          },
+        });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+      typeAndSend("Hello there");
+      await flush();
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Hello there");
+
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-close-button")!.click();
+      });
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-confirm-close-no")!.click();
+      });
+
+      // Back to the normal view, panel still open, nothing cleared.
+      expect(container.querySelector(".cw-confirm-close")).toBeNull();
+      expect(container.querySelector(".cw-panel")).not.toBeNull();
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Hello there");
+      expect(container.querySelector(".cw-bubble-row-bot")?.textContent).toContain("Sure, here you go.");
+      // A follow-up send continues the SAME conversation -- confirms
+      // conversationIdRef was never touched by "No".
+      typeAndSend("Follow-up");
+      await flush();
+      expect(sendTurnMock).toHaveBeenLastCalledWith(
+        baseConfig,
+        expect.objectContaining({ message: "Follow-up", conversationId: "conv-keep-me" }),
+      );
+      // Declining the exit is a purely local UI decision -- resume.ts is
+      // never touched by "No".
+      expect(clearResumeRecordMock).not.toHaveBeenCalled();
+    });
+
+    it("dismissing via Escape while the confirmation is showing behaves exactly like 'No' -- history preserved, focus returns to the input", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          reply: "Sure.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+      typeAndSend("Keep this");
+      await flush();
+
+      const panel = container.querySelector<HTMLDivElement>(".cw-panel")!;
+      act(() => {
+        panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(container.querySelector(".cw-confirm-close")).not.toBeNull();
+
+      act(() => {
+        panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+
+      expect(container.querySelector(".cw-confirm-close")).toBeNull();
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Keep this");
+      expect(document.activeElement).toBe(getInput());
+    });
+
+    it("'Yes' closes the panel, clears the visible message history, and the next reopen starts a completely fresh chat (no previous messages, new conversation_id)", async () => {
+      sendTurnMock
+        .mockResolvedValueOnce({
+          ok: true,
+          turn: {
+            conversationId: "conv-old",
+            messageId: "msg-1",
+            reply: "First reply.",
+            decision: "answer",
+            confidence: 0.9,
+            sources: [],
+            action: null,
+          },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          turn: {
+            conversationId: "conv-new",
+            messageId: "msg-2",
+            reply: "Second reply.",
+            decision: "answer",
+            confidence: 0.9,
+            sources: [],
+            action: null,
+          },
+        });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+      typeAndSend("Old conversation");
+      await flush();
+      expect(container.querySelector(".cw-bubble-row-user")).not.toBeNull();
+
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-close-button")!.click();
+      });
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-confirm-close-yes")!.click();
+      });
+
+      // Actually closed now, focus restored to the launcher (S14.5's
+      // existing close-focus-restore behavior, unchanged for the Yes path).
+      expect(container.querySelector(".cw-panel")).toBeNull();
+      const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
+      expect(document.activeElement).toBe(launcher);
+
+      openPanel();
+      // No previous messages visible -- the message list is back to the
+      // fresh-open welcome state, not "Old conversation" / "First reply.".
+      expect(container.querySelector(".cw-bubble-row-user")).toBeNull();
+      expect(container.querySelector(".cw-bubble-row-bot")).toBeNull();
+
+      typeAndSend("New conversation");
+      await flush();
+      // The NEXT turn carries conversationId: null (a brand-new thread),
+      // never "conv-old" -- proves conversationIdRef was actually cleared,
+      // not just the visible bubbles.
+      expect(sendTurnMock).toHaveBeenLastCalledWith(
+        baseConfig,
+        expect.objectContaining({ message: "New conversation", conversationId: null }),
+      );
+    });
+
+    it("'Yes' clears the SR-3 sessionStorage resume mirror only when the tenant has resume enabled -- mirrors the existing 'New chat' reset button's own opt-in gating", () => {
+      isResumeEnabledMock.mockReturnValue(true);
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-close-button")!.click();
+      });
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-confirm-close-yes")!.click();
+      });
+
+      expect(clearResumeRecordMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("'Yes' never calls any network function beyond what a normal turn/admission already uses -- no admin/delete endpoint is touched, so the admin dashboard's copy of this conversation is never affected", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-1",
+          messageId: "msg-1",
+          reply: "Hi!",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+      typeAndSend("Hello");
+      await flush();
+      const sendTurnCallsBeforeClose = sendTurnMock.mock.calls.length;
+      const mintCallsBeforeClose = mintVisitorSessionMock.mock.calls.length;
+
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-close-button")!.click();
+      });
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-confirm-close-yes")!.click();
+      });
+
+      // Exiting is a purely client-side state clear: it issues no new
+      // sendTurn or mintVisitorSession call, and (per this file's ../resume
+      // mock) the ONLY resume.ts function it invokes is clearResumeRecord,
+      // never anything that could reach a server-side delete/admin route --
+      // nothing here is even capable of touching the conversation_store the
+      // admin dashboard reads from.
+      expect(sendTurnMock.mock.calls.length).toBe(sendTurnCallsBeforeClose);
+      expect(mintVisitorSessionMock.mock.calls.length).toBe(mintCallsBeforeClose);
     });
   });
 
@@ -1530,7 +1929,7 @@ describe("ChatWidget", () => {
       openPanel();
 
       const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
-        (button) => button.textContent?.includes("I need help with a problem"),
+        (button) => button.textContent?.includes("I have a roof leak, can you help?"),
       );
       act(() => {
         suggestion?.click();
@@ -1539,7 +1938,7 @@ describe("ChatWidget", () => {
 
       expect(sendTurnMock).toHaveBeenCalledWith(
         baseConfig,
-        expect.objectContaining({ message: "I need help with a problem", conversationId: null }),
+        expect.objectContaining({ message: "I have a roof leak, can you help?", conversationId: null }),
       );
       expect(fetchAvailabilitySummaryMock).not.toHaveBeenCalled();
     });

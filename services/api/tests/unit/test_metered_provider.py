@@ -46,6 +46,7 @@ class _StubProvider:
         self._stream_chunks = stream_chunks or [Chunk("He"), Chunk("llo")]
         self._raise_on = raise_on
         self.aclose_calls = 0
+        self.last_classify_label_descriptions: dict[str, str] | None = None
 
     async def generate(
         self,
@@ -74,7 +75,9 @@ class _StubProvider:
         labels: list[str],
         *,
         model: str,
+        label_descriptions: dict[str, str] | None = None,
     ) -> str:
+        self.last_classify_label_descriptions = label_descriptions
         if self._raise_on == "classify":
             raise LLMError("LLM request failed.")
         return self._label
@@ -194,6 +197,23 @@ async def test_metered_embed_records_duration_count() -> None:
 
 
 # -- classify: duration only, no tokens ----------------------------------------
+
+
+async def test_metered_classify_forwards_label_descriptions_to_delegate() -> None:
+    """MeteredProvider is a pure pass-through decorator -- label_descriptions
+    must reach the wrapped provider unchanged, not get dropped."""
+    stub = _StubProvider()
+    metered = MeteredProvider(stub, provider="openai")
+    descriptions = {"off_topic": "unrelated to this business"}
+
+    await metered.classify(
+        "Who is the President of India?",
+        labels=["question", "off_topic"],
+        model="gpt-4o",
+        label_descriptions=descriptions,
+    )
+
+    assert stub.last_classify_label_descriptions == descriptions
 
 
 async def test_metered_classify_records_duration_count() -> None:

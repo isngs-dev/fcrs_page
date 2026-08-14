@@ -1,0 +1,179 @@
+---
+---
+<section id="reviews" class="reviews">
+  <div class="inner">
+    <div data-reveal class="badge-wrap">
+      <div class="badge">
+        <i class="fa-brands fa-google"></i>
+        <span class="badge-text">
+          <span class="stars">★★★★★</span>
+          <span class="rating-copy">Rated 4.9/5 across Alabama &amp; Georgia</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="cards">
+      <figure data-reveal class="reveal-delay-1 card">
+        <i class="fa-solid fa-quote-right quote-glyph"></i>
+        <div class="stars">★★★★★</div>
+        <blockquote>
+          &ldquo;Absolutely amazing company. Josh and his team are very
+          knowledgeable, no pressure, and the hardest working roofers I have
+          met. This is the team to trust!&rdquo;
+        </blockquote>
+        <figcaption>
+          <span class="avatar">BW</span>
+          <span>
+            <span class="name">Ben Williams</span>
+            <span class="role">Local Guide</span>
+          </span>
+        </figcaption>
+      </figure>
+
+      <figure data-reveal class="reveal-delay-4 card">
+        <i class="fa-solid fa-quote-right quote-glyph"></i>
+        <div class="stars">★★★★★</div>
+        <blockquote>
+          &ldquo;Josh, Jill, Sergio and the team were excellent. They helped
+          me navigate the insurance process and the final product looked
+          great. We love our new roof.&rdquo;
+        </blockquote>
+        <figcaption>
+          <span class="avatar">JW</span>
+          <span>
+            <span class="name">Jason Whitehurst</span>
+            <span class="role">Local Guide</span>
+          </span>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<style>
+  .reviews {
+    background: var(--gray);
+    padding: var(--section-pad);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .inner {
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .badge-wrap {
+    text-align: center;
+    margin-bottom: 44px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px 22px;
+    box-shadow: 0 8px 22px -14px rgba(27, 43, 72, 0.3);
+  }
+
+  .badge > i {
+    font-size: 26px;
+    color: var(--navy);
+  }
+
+  .badge-text {
+    text-align: left;
+    line-height: 1.2;
+  }
+
+  .badge-text .stars {
+    display: block;
+    color: var(--gold);
+    font-size: 16px;
+    letter-spacing: 2px;
+  }
+
+  .rating-copy {
+    display: block;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--navy);
+    margin-top: 2px;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 26px;
+  }
+
+  .card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 32px 30px;
+    position: relative;
+    box-shadow: 0 2px 4px rgba(27, 43, 72, 0.04);
+  }
+
+  .quote-glyph {
+    position: absolute;
+    top: 26px;
+    right: 28px;
+    font-size: 34px;
+    color: var(--placeholder-glyph);
+  }
+
+  .card > .stars {
+    color: var(--gold);
+    font-size: 15px;
+    letter-spacing: 2px;
+    margin-bottom: 16px;
+  }
+
+  blockquote {
+    font-size: 16.5px;
+    line-height: 1.65;
+    color: var(--ink);
+  }
+
+  figcaption {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+
+  .avatar {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: var(--navy);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-heading);
+    font-weight: 700;
+  }
+
+  .name {
+    display: block;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    color: var(--navy);
+    font-size: 15px;
+  }
+
+  .role {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+  }
+</style>

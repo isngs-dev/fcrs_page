@@ -14,12 +14,21 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from common.auth import AuthClaims, Role
+from common.errors import ValidationError
 from common.logging import get_logger
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 from api.auth.dependencies import require_roles
+from api.config import get_api_settings
 from api.scheduling.calendar_config_repository import upsert_calendar_config
+from api.scheduling.google_oauth import (
+    GoogleOAuthError,
+    build_google_authorize_url,
+    exchange_google_auth_code,
+)
+from api.scheduling.google_oauth_state import get_google_oauth_state_store
 from api.scheduling.repository import upsert_availability
 
 _log = get_logger(__name__)
@@ -174,3 +183,138 @@ async def put_calendar_config(
         enabled=body.enabled,
         scheduling_url=body.scheduling_url,
     )
+
+
+class GoogleAuthorizeResponse(BaseModel):
+    """Body for GET /admin/schedule/calendar/google/authorize.
+
+    A JSON body, not an HTTP redirect -- this route is called by admin-web
+    (fetch/server action), which then navigates the ADMIN'S OWN browser to
+    ``authorize_url`` itself (a plain fetch response's redirects aren't
+    exposed the same way to the caller's top-level window).
+    """
+
+    authorize_url: str
+
+
+@router.get("/calendar/google/authorize")
+async def google_calendar_authorize(
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> GoogleAuthorizeResponse:
+    """Start the "Connect Google Calendar" OAuth flow (SR-22). ``CLIENT_ADMIN`` only.
+
+    Issues a one-time ``state`` token bound to the caller's tenant
+    (``google_oauth_state.py`` -- Redis, single-use, TTL'd) and returns the
+    Google consent-screen URL to send the admin's browser to. Raises a
+    deterministic ``GOOGLE_OAUTH_NOT_CONFIGURED`` error (422) up front if the
+    platform's own OAuth client isn't configured -- never lets an admin go
+    through Google's consent screen only to fail on the callback.
+    """
+    settings = get_api_settings()
+    if not settings.google_oauth_client_id or not settings.google_oauth_redirect_uri:
+        raise ValidationError(
+            "Google Calendar OAuth is not configured on this deployment.",
+            code="GOOGLE_OAUTH_NOT_CONFIGURED",
+        )
+
+    assert claims.tenant_id is not None  # noqa: S101 -- require_roles(CLIENT_ADMIN) guarantees this
+
+    state_store = get_google_oauth_state_store(request)
+    state = await state_store.issue(claims.tenant_id, settings.google_oauth_state_ttl_seconds)
+
+    authorize_url = build_google_authorize_url(
+        client_id=settings.google_oauth_client_id,
+        redirect_uri=settings.google_oauth_redirect_uri,
+        state=state,
+    )
+    return GoogleAuthorizeResponse(authorize_url=authorize_url)
+
+
+@router.get("/calendar/google/callback")
+async def google_calendar_callback(
+    request: Request,
+    code: str | None = Query(default=None),  # noqa: B008
+    state: str | None = Query(default=None),  # noqa: B008
+    error: str | None = Query(default=None),  # noqa: B008
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> RedirectResponse:
+    """Google's OAuth redirect target (SR-22). ``CLIENT_ADMIN`` only.
+
+    Hit by a raw top-level browser navigation FROM Google, not an API
+    caller -- the admin's existing session cookie rides along automatically
+    (SameSite=Lax explicitly allows a top-level GET navigation to carry it),
+    so ``require_roles`` works unchanged here. Every outcome redirects the
+    browser back into admin-web's Workspace screen (``workspace
+    ?calendar_connected=true`` on success, ``workspace?calendar_error=<reason>``
+    otherwise) -- not ``/settings`` (bot persona/behavior) -- since that's
+    where the sibling scheduling-availability config
+    (``workspace/availability-section.tsx``) already lives, rather than
+    returning raw JSON, since a human is looking at this response, not code.
+
+    ``state`` is consumed exactly once (Redis GETDEL) -- a replayed
+    callback URL fails on its second use. The consumed state's tenant_id is
+    cross-checked against the CALLER's own authenticated tenant_id (defense
+    in depth on top of the state token itself): a state issued for tenant A
+    can never be completed while authenticated as tenant B.
+    """
+    settings = get_api_settings()
+    workspace_url = f"{settings.admin_web_base_url}/workspace"
+
+    if error:
+        _log.warning(
+            "google_calendar_oauth_denied",
+            extra={"event": "google_calendar_oauth_denied", "tenant_id": claims.tenant_id},
+        )
+        return RedirectResponse(f"{workspace_url}?calendar_error=access_denied")
+
+    if not code or not state:
+        return RedirectResponse(f"{workspace_url}?calendar_error=missing_code_or_state")
+
+    state_store = get_google_oauth_state_store(request)
+    state_tenant_id = await state_store.consume(state)
+    if state_tenant_id is None or state_tenant_id != claims.tenant_id:
+        _log.warning(
+            "google_calendar_oauth_state_invalid",
+            extra={"event": "google_calendar_oauth_state_invalid", "tenant_id": claims.tenant_id},
+        )
+        return RedirectResponse(f"{workspace_url}?calendar_error=invalid_state")
+
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret \
+            or not settings.google_oauth_redirect_uri:
+        return RedirectResponse(f"{workspace_url}?calendar_error=not_configured")
+
+    try:
+        tokens = await exchange_google_auth_code(
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+            redirect_uri=settings.google_oauth_redirect_uri,
+            code=code,
+            timeout_seconds=settings.calendar_http_timeout_seconds,
+        )
+    except GoogleOAuthError:
+        _log.warning(
+            "google_calendar_oauth_exchange_failed",
+            extra={"event": "google_calendar_oauth_exchange_failed", "tenant_id": claims.tenant_id},
+        )
+        return RedirectResponse(f"{workspace_url}?calendar_error=exchange_failed")
+
+    # The refresh token is the ONLY thing stored -- never the access token
+    # this exchange also returned (api.scheduling.calendar.calendar_provider_for_async
+    # mints a fresh access token from this refresh token immediately before
+    # every real Calendar API call, see its own docstring for why).
+    await upsert_calendar_config(
+        request.app.state.db,
+        claims,
+        provider="google",
+        calendar_id="primary",
+        credentials=tokens.refresh_token,
+        busy=[],
+        enabled=True,
+    )
+
+    _log.info(
+        "google_calendar_connected",
+        extra={"event": "google_calendar_connected", "tenant_id": claims.tenant_id},
+    )
+    return RedirectResponse(f"{workspace_url}?calendar_connected=true")

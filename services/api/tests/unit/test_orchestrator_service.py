@@ -38,7 +38,9 @@ from api.orchestrator.service import (
     _GROUNDING_SYSTEM_PROMPT,
     _GUARDRAIL_SAFE_REPLY,
     _IDENTITY_GATE_REPLY,
+    _INTENT_LABEL_DESCRIPTIONS,
     _NO_ANSWER_SENTINEL,
+    _OFF_TOPIC_REPLY,
     _TURN_CAP_REPLY,
     Source,
     StreamEvent,
@@ -490,7 +492,8 @@ async def test_chitchat_answers_without_rag() -> None:
 
 async def test_off_topic_escalates_no_rag_no_generate() -> None:
     """classify -> "off_topic" -> neither retrieve_hybrid nor generate called;
-    reply == _ESCALATE_REPLY; decision="escalate", confidence=None."""
+    reply == _OFF_TOPIC_REPLY (its OWN copy, distinct from _ESCALATE_REPLY --
+    see the branch's own comment); decision="escalate", confidence=None."""
     p = _Patched(classify_return="off_topic")
     with p:
         result = await answer_turn(db=object(), claims=_claims(), message="what is the capital of France?")
@@ -507,12 +510,42 @@ async def test_off_topic_escalates_no_rag_no_generate() -> None:
     assert assistant_call["sources"] == []
 
     assert result.decision == "escalate"
-    assert result.reply == _ESCALATE_REPLY
+    assert result.reply == _OFF_TOPIC_REPLY
+    assert result.reply != _ESCALATE_REPLY
     assert result.confidence is None
 
     # Resource-leak fix: classify ran on `provider` but no _GeneratePlan
     # carries it onward for off_topic -- _resolve_turn must close it itself.
     p.provider.aclose.assert_awaited_once()
+
+
+def test_off_topic_reply_is_distinct_and_scope_forward() -> None:
+    """_OFF_TOPIC_REPLY communicates a scope mismatch ("outside what I can
+    help with"), not low confidence -- and is still consent/scheduling-
+    forward like the other fixed escalate templates, so the widget's
+    schedule_cta/lead_form rendering keeps working regardless of which
+    escalate reply is shown."""
+    lowered = _OFF_TOPIC_REPLY.lower()
+    assert "outside" in lowered or "can't help" in lowered or "cannot help" in lowered
+    assert "book" in lowered
+    assert "email" in lowered or "contact" in lowered or "name" in lowered
+    assert _OFF_TOPIC_REPLY != _ESCALATE_REPLY
+
+
+async def test_classify_is_called_with_intent_label_descriptions() -> None:
+    """classify() receives label_descriptions so the model is told what
+    "off_topic" MEANS, not just its bare name -- the actual fix for
+    well-formed-but-unrelated questions ("What is the capital of France?")
+    being misclassified as "question" instead of "off_topic"."""
+    p = _Patched(classify_return="off_topic")
+    with p:
+        await answer_turn(db=object(), claims=_claims(), message="what is the capital of France?")
+
+    p.provider.classify.assert_awaited_once()
+    call_kwargs = p.provider.classify.await_args.kwargs
+    assert call_kwargs["label_descriptions"] == _INTENT_LABEL_DESCRIPTIONS
+    assert "off_topic" in _INTENT_LABEL_DESCRIPTIONS
+    assert "unrelated" in _INTENT_LABEL_DESCRIPTIONS["off_topic"].lower()
 
 
 # -- scheduling_request -> escalate -------------------------------------------------

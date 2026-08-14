@@ -16,7 +16,7 @@ vi.mock("next/cache", () => ({
 }));
 
 const { saveAvailability } = await import(
-  "@/app/(protected)/settings/availability-actions"
+  "@/app/(protected)/workspace/availability-actions"
 );
 const { AdminApiError } = await import("@/lib/api");
 
@@ -96,7 +96,7 @@ describe("saveAvailability", () => {
         },
       },
     });
-    expect(revalidatePathMock).toHaveBeenCalledWith("/settings");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/workspace");
   });
 
   it("rejects an all-closed week without calling adminApiFetch", async () => {

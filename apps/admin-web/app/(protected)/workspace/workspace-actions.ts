@@ -8,7 +8,8 @@
  *
  * Confirmed, not optimistic (mirrors `settings/actions.ts`'s pattern): on a
  * 200, the returned state carries the PUT response body's fresh values.
- * `revalidatePath("/settings")` re-syncs the RSC.
+ * `revalidatePath("/workspace")` re-syncs the RSC (moved from `/settings`
+ * when the workspace-settings screen split into its own route).
  */
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -113,7 +114,7 @@ export async function saveWorkspace(
 
   const body = (await response.json()) as AdminWorkspaceResponseBody;
 
-  revalidatePath("/settings");
+  revalidatePath("/workspace");
 
   return { status: "saved", workspace: body };
 }

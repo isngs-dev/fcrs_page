@@ -1,0 +1,97 @@
+---
+---
+<header class="site-header">
+  <div class="inner">
+    <a href="#top" data-scroll class="logo-link">
+      <img
+        src="/images/logo.png"
+        alt="First Class Roofing & Solar"
+        class="logo"
+      />
+    </a>
+    <div class="cta-col">
+      <a href="tel:+19898434628" class="call-btn">
+        <i class="fa-solid fa-phone-volume"></i><span>Call Now: (989) 843-4628</span>
+      </a>
+      <span class="service-area">
+        <i class="fa-solid fa-location-dot"></i> Serving Homeowners &amp; Businesses Across Alabama &amp; Georgia
+      </span>
+    </div>
+  </div>
+</header>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+  }
+
+  .logo-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--navy);
+  }
+
+  .logo {
+    height: 68px;
+    width: 161px;
+    display: block;
+  }
+
+  .cta-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 7px;
+  }
+
+  .call-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--orange);
+    color: #fff;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: clamp(0.95rem, 1.6vw, 1.1rem);
+    padding: 12px 22px;
+    border-radius: 12px;
+    box-shadow: 0 8px 22px rgba(255, 153, 0, 0.35);
+    transition: transform 0.18s ease, background 0.18s ease;
+    white-space: nowrap;
+  }
+
+  .call-btn:hover {
+    transform: translateY(-2px);
+    background: var(--orange-d);
+    color: #fff;
+  }
+
+  .service-area {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .service-area i {
+    color: var(--green);
+  }
+</style>

@@ -1,0 +1,61 @@
+---
+---
+<div id="mobile-cta" class="mobile-cta">
+  <a href="tel:+19898434628" class="call">
+    <i class="fa-solid fa-phone-volume"></i> Call
+  </a>
+  <a href="#top" data-scroll class="estimate">
+    <i class="fa-solid fa-clipboard-check"></i> Free Estimate
+  </a>
+</div>
+
+<style>
+  .mobile-cta {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 200;
+    background: #fff;
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -8px 24px -12px rgba(27, 43, 72, 0.3);
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .call,
+  .estimate {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 15px;
+    padding: 14px;
+    border-radius: 12px;
+    color: #fff;
+  }
+
+  .call {
+    flex: 1;
+    background: var(--navy);
+  }
+
+  .estimate {
+    flex: 1.4;
+    background: var(--orange);
+  }
+
+  .estimate:hover,
+  .call:hover {
+    color: #fff;
+  }
+
+  @media (max-width: 899px) {
+    .mobile-cta {
+      display: flex;
+    }
+  }
+</style>

@@ -1,0 +1,63 @@
+# Relocated to the repo root (Render's default Blueprint path) when
+# fcrs_landing_page/ was merged into the unified chatbot repo -- backend
+# moved to services/fcrs-landing-api, frontend to apps/fcrs-landing. If the
+# connected Render service was ever configured with a non-default Blueprint
+# YAML path in the dashboard, that setting needs a matching check.
+services:
+  # ---------------------------------------------------------------
+  # Backend — Express API. Long-running Node process, NOT serverless.
+  # Render injects PORT; server.js already reads it.
+  # ---------------------------------------------------------------
+  - type: web
+    runtime: node
+    name: fcrs-api
+    rootDir: services/fcrs-landing-api
+    plan: starter
+    region: oregon
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        sync: false
+      - key: EMAILJS_SERVICE_ID
+        sync: false
+      - key: EMAILJS_PUBLIC_KEY
+        sync: false
+      - key: EMAILJS_PRIVATE_KEY
+        sync: false
+      - key: EMAILJS_TEMPLATE_ID_CONFIRMATION
+        sync: false
+      - key: EMAILJS_TEMPLATE_ID_INTERNAL
+        sync: false
+      - key: LEAD_WEBHOOK_SECRET
+        sync: false
+      - key: INTERNAL_NOTIFICATION_EMAIL
+        sync: false
+      - key: DUPLICATE_WINDOW_MINUTES
+        value: "30"
+      - key: ALLOWED_ORIGIN
+        sync: false
+
+  # ---------------------------------------------------------------
+  # Frontend — Astro static output. The /api/* rewrite proxies to the
+  # backend service so the browser stays same-origin (no CORS preflight)
+  # and PUBLIC_API_URL can remain unset.
+  # ---------------------------------------------------------------
+  - type: web
+    runtime: static
+    name: fcrs-landing
+    rootDir: apps/fcrs-landing
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://fcrs-api.onrender.com/api/*

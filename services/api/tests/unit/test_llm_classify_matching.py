@@ -12,7 +12,7 @@ unambiguous match.
 """
 from __future__ import annotations
 
-from api.llm.classify_matching import match_label
+from api.llm.classify_matching import build_classify_instruction, match_label
 
 _LABELS = ["question", "chitchat", "scheduling_request", "off_topic", "other"]
 
@@ -87,3 +87,58 @@ def test_match_label_whole_word_substring_not_matched_as_prefix() -> None:
     # "category" is not a whole word in "categories"; "cat" is not a whole
     # word either -- no match should be produced.
     assert match_label(reply, labels) is None
+
+
+# -- build_classify_instruction: label_descriptions -----------------------------------
+
+
+def test_build_classify_instruction_without_descriptions_omits_label_meanings() -> None:
+    """No `label_descriptions` (or an empty dict) -> byte-for-byte today's
+    bare-label-name-only behavior, no "Label meanings" section at all."""
+    instruction = build_classify_instruction(_LABELS)
+    assert "Label meanings" not in instruction
+    assert build_classify_instruction(_LABELS, {}) == instruction
+    assert build_classify_instruction(_LABELS, None) == instruction
+
+
+def test_build_classify_instruction_includes_given_label_meanings() -> None:
+    """Each described label appears as its own "- label: description" line."""
+    descriptions = {
+        "off_topic": "unrelated to this business",
+        "question": "a genuine question about this business",
+    }
+    instruction = build_classify_instruction(_LABELS, descriptions)
+    assert "Label meanings" in instruction
+    assert "- off_topic: unrelated to this business" in instruction
+    assert "- question: a genuine question about this business" in instruction
+
+
+def test_build_classify_instruction_ignores_descriptions_for_labels_not_in_the_label_list() -> None:
+    """A description for a label the caller did NOT pass in `labels` is
+    silently dropped -- never invents a label meaning for something not
+    being classified."""
+    descriptions = {"off_topic": "unrelated to this business", "not_a_real_label": "should never appear"}
+    instruction = build_classify_instruction(["question", "off_topic"], descriptions)
+    assert "not_a_real_label" not in instruction
+    assert "- off_topic: unrelated to this business" in instruction
+
+
+def test_build_classify_instruction_partial_descriptions_only_describes_given_labels() -> None:
+    """Only labels present in `label_descriptions` get a meaning line --
+    every other label falls back to bare-name-only, exactly as before."""
+    descriptions = {"off_topic": "unrelated to this business"}
+    instruction = build_classify_instruction(_LABELS, descriptions)
+    assert "- off_topic: unrelated to this business" in instruction
+    for label in ("question", "chitchat", "scheduling_request", "other"):
+        assert f"- {label}:" not in instruction
+    # The bare label is still listed in the valid-labels line regardless.
+    assert "question" in instruction
+    assert "chitchat" in instruction
+
+
+def test_build_classify_instruction_still_forbids_conversational_replies_with_descriptions() -> None:
+    """Adding label_descriptions must not weaken the existing strict,
+    non-conversational, output-shape instruction."""
+    instruction = build_classify_instruction(_LABELS, {"off_topic": "unrelated to this business"})
+    assert "not a conversational assistant" in instruction.lower()
+    assert "only the label" in instruction.lower() or "only one label" in instruction.lower()

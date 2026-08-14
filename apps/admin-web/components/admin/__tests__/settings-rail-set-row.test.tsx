@@ -1,12 +1,15 @@
 /**
  * SR-27 slice 0 -- geometry-isolation tests for the shared `set-row` and
  * `settings-rail` primitives, verified BEFORE the Settings/Bot-settings
- * shells (slices 7-8) are built against them.
+ * shells (slices 7-8) are built against them. Moved here from
+ * `app/(protected)/settings/__tests__/` when the primitives themselves moved
+ * to `components/admin/` (they are now shared across the `/settings` and
+ * `/workspace` routes, not just within one route).
  */
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SetRow } from "@/app/(protected)/settings/set-row";
-import { SettingsRail } from "@/app/(protected)/settings/settings-rail";
+import { SetRow } from "@/components/admin/set-row";
+import { SettingsRail } from "@/components/admin/settings-rail";
 
 describe("SetRow (Console.dc.html:880-883 .set-row recipe)", () => {
   it("renders a 210px label column against a flexible field column", () => {

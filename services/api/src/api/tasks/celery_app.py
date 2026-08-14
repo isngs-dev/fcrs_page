@@ -75,6 +75,7 @@ celery_app = Celery(
         "api.scheduling.tasks",
         "api.notifications.tasks",
         "api.notifications.events_tasks",
+        "api.leads.tasks",
     ],
 )
 

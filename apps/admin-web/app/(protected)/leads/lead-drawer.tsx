@@ -46,9 +46,7 @@ import { addLeadNote, type AddNoteState } from "@/app/(protected)/leads/actions"
 import type { TimelineFetchResult } from "@/lib/timeline";
 import { RecordDrawerTimelinePanel } from "@/components/admin/record-drawer";
 import { cn } from "@/lib/utils";
-
-const TABS = ["timeline", "details", "notes"] as const;
-type Tab = (typeof TABS)[number];
+import { TABS, type Tab } from "@/app/(protected)/leads/lead-drawer-tabs";
 
 const TAB_LABELS: Record<Tab, string> = {
   timeline: "Timeline",
@@ -485,6 +483,3 @@ function NotesTab({
     </div>
   );
 }
-
-export type { Tab };
-export { TABS };

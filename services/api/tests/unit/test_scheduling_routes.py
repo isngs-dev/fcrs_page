@@ -18,6 +18,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import asyncpg
+import pytest
 from common.auth import AuthClaims, Role
 from common.cache import InMemoryCache
 from httpx import ASGITransport, AsyncClient
@@ -50,6 +51,23 @@ _TEST_SETTINGS_ENV = {
     "LOG_LEVEL": "WARNING",
     "COOKIE_SECURE": "false",
 }
+
+@pytest.fixture(autouse=True)
+def _mock_lead_qualification_enqueue() -> Any:
+    """Prevent every booking test from making a real (slow, ultimately
+    failing against the fake ``stub-host`` broker) Celery dispatch for the
+    new ``classify_lead_email(...)`` enqueue in the booking-lead autolink's
+    genuinely-new-lead branch (``api.scheduling.routes``). Before this
+    feature, that route had no Celery-task side effect at all, so no test
+    here needed to mock one -- autouse keeps every existing test function
+    unchanged rather than touching each of the dozens of tests below that
+    incidentally create a fresh lead while booking.
+    """
+    with patch.dict("os.environ", _TEST_SETTINGS_ENV, clear=False), patch(
+        "api.scheduling.routes.classify_lead_email"
+    ):
+        yield
+
 
 _RULES = {
     "slot_minutes": 30,
@@ -176,10 +194,11 @@ class _StubDatabase:
             return "INSERT 0 1"
 
         if q.startswith("UPDATE SCHEDULE_EVENTS"):
-            tenant_id, event_id, calendar_ref = args
+            tenant_id, event_id, calendar_ref, meet_url = args
             key = (tenant_id, event_id)
             if key in self._events:
                 self._events[key]["calendar_ref"] = calendar_ref
+                self._events[key]["meet_url"] = meet_url
             return "UPDATE 1"
 
         if q.startswith("DELETE FROM SCHEDULE_EVENTS"):
@@ -666,7 +685,12 @@ async def test_post_book_with_calendar_creates_and_persists_calendar_ref() -> No
     assert response.status_code == 201
     stored = next(iter(db._events.values()))
     assert stored["status"] == "booked"
-    assert stored["calendar_ref"] == f"stub:stub-{response.json()['event_id']}"
+    event_id = response.json()["event_id"]
+    assert stored["calendar_ref"] == f"stub:stub-{event_id}"
+    # StubCalendarProvider (SR-22) returns a deterministic fake Meet URL --
+    # proves it's actually persisted onto the booking, not just returned and
+    # dropped.
+    assert stored["meet_url"] == f"https://meet.google.com/stub-{event_id}"
 
 
 async def test_post_book_calendar_sync_failure_compensates_no_orphan() -> None:
@@ -813,15 +837,18 @@ async def test_post_book_reminder_creation_happens_before_calendar_sync() -> Non
 
         return await _real(db_, claims_, **kwargs)
 
-    def _spy_calendar_provider_for(*args: Any, **kwargs: Any) -> Any:
-        call_order.append("calendar_provider_for")
-        from api.scheduling.calendar import calendar_provider_for as _real
+    async def _spy_calendar_provider_for_async(*args: Any, **kwargs: Any) -> Any:
+        call_order.append("calendar_provider_for_async")
+        from api.scheduling.calendar import calendar_provider_for_async as _real
 
-        return _real(*args, **kwargs)
+        return await _real(*args, **kwargs)
 
     with (
         patch("api.scheduling.routes.create_reminder_jobs", side_effect=_spy_create_reminder_jobs),
-        patch("api.scheduling.routes.calendar_provider_for", side_effect=_spy_calendar_provider_for),
+        patch(
+            "api.scheduling.routes.calendar_provider_for_async",
+            side_effect=_spy_calendar_provider_for_async,
+        ),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             admin_token = _admin_token()
@@ -834,7 +861,7 @@ async def test_post_book_reminder_creation_happens_before_calendar_sync() -> Non
             )
 
     assert response.status_code == 201
-    assert call_order == ["create_reminder_jobs", "calendar_provider_for"]
+    assert call_order == ["create_reminder_jobs", "calendar_provider_for_async"]
 
 
 async def test_post_book_calendar_sync_failure_cascades_reminder_rows() -> None:
@@ -1348,6 +1375,29 @@ async def test_post_book_no_prior_lead_creates_lead_and_links_and_activity() -> 
     assert activities[0]["payload"]["event_id"] == event_id
     assert "starts_at" in activities[0]["payload"]
     assert "timezone" in activities[0]["payload"]
+
+
+async def test_post_book_with_phone_creates_lead_with_phone() -> None:
+    """A booking that includes a phone number persists it on the autolinked
+    lead (thread-through of BookRequest.phone -> create_lead(phone=...),
+    previously hardcoded to None regardless of what the client sent)."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    body = _book_body()
+    body.update({"email": "qa+phone@example.com", "name": "QA Person", "phone": "+1 555-0100"})
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _visitor_token(visitor_id="visitor-phone")
+        response = await client.post(
+            "/public/schedule/book", json=body, headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert response.status_code == 201
+
+    assert len(db._leads) == 1
+    lead = next(iter(db._leads.values()))
+    assert lead["phone"] == "+1 555-0100"
 
 
 async def test_post_book_existing_lead_links_without_duplicating() -> None:

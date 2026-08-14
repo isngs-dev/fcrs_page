@@ -85,6 +85,18 @@ class _StubDatabase:
             existing["updated_at"] = _NOW
             return "UPDATE 1"
 
+        if q.startswith("UPDATE LEADS SET EMAIL_VERDICT"):
+            # update_lead_email_verdict -- args: verdict, reason, tenant_id, lead_id
+            verdict, reason, tenant_id, lead_id = args
+            key = (tenant_id, lead_id)
+            existing = self._leads.get(key)
+            if existing is None:
+                return "UPDATE 0"
+            existing["email_verdict"] = verdict
+            existing["email_verdict_reason"] = reason
+            existing["updated_at"] = _NOW
+            return "UPDATE 1"
+
         if q.startswith("UPDATE LEADS"):
             # args: stage, status, qualification_score, tenant_id, lead_id
             stage = args[0]
@@ -713,6 +725,132 @@ async def test_update_lead_stage_rejects_global_caller() -> None:
                 stage="qualified",
                 status="open",
                 qualification_score=55,
+            )
+
+
+# ---------------------------------------------------------------------------
+# update_lead_email_verdict (migration 0048)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_lead_email_verdict_updates_and_returns_lead() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import Lead, create_lead, update_lead_email_verdict
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        lead_id = await create_lead(
+            db,
+            claims,
+            visitor_id="visitor-1",
+            name="Jane",
+            email="jane@gmial.com",
+            phone=None,
+            consent={"granted": True, "purpose": "contact", "text": "OK"},
+            source="widget",
+        )
+
+        updated = await update_lead_email_verdict(
+            db, claims, lead_id, verdict="disqualified", reason="typo_domain",
+        )
+
+        assert isinstance(updated, Lead)
+        assert updated.lead_id == lead_id
+        assert updated.email_verdict == "disqualified"
+        assert updated.email_verdict_reason == "typo_domain"
+        # stage/status/qualification_score are untouched by this call.
+        assert updated.stage == "captured"
+
+
+async def test_update_lead_email_verdict_uses_tenant_scoped_positional_sql() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, update_lead_email_verdict
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        lead_id = await create_lead(
+            db,
+            claims,
+            visitor_id="visitor-1",
+            name="Jane",
+            email="jane@example.com",
+            phone=None,
+            consent={"granted": True, "purpose": "contact", "text": "OK"},
+            source="widget",
+        )
+
+        await update_lead_email_verdict(db, claims, lead_id, verdict="qualified", reason="ok")
+
+        update_query, update_args = db.execute_calls[-1]
+        assert "update leads" in update_query.lower()
+        assert "email_verdict" in update_query.lower()
+        assert "email_verdict_at" in update_query.lower()
+        assert "where" in update_query.lower()
+        assert "tenant_id" in update_query.lower()
+        assert ":" not in update_query
+        assert claims.tenant_id in update_args
+        assert lead_id in update_args
+
+
+async def test_update_lead_email_verdict_cross_tenant_returns_none() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import create_lead, update_lead_email_verdict
+
+        db = _StubDatabase()
+        claims_a = _claims(tenant_id="tenant-a")
+        claims_b = _claims(tenant_id="tenant-b")
+
+        lead_id = await create_lead(
+            db,
+            claims_a,
+            visitor_id="visitor-1",
+            name="Jane",
+            email="jane@example.com",
+            phone=None,
+            consent={"granted": True, "purpose": "contact", "text": "OK"},
+            source="widget",
+        )
+
+        result = await update_lead_email_verdict(
+            db, claims_b, lead_id, verdict="qualified", reason="ok",
+        )
+
+        assert result is None
+
+
+async def test_update_lead_email_verdict_missing_lead_returns_none() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from api.leads.repository import update_lead_email_verdict
+
+        db = _StubDatabase()
+        claims = _claims(tenant_id="tenant-abc")
+
+        result = await update_lead_email_verdict(
+            db, claims, "nonexistent-id", verdict="qualified", reason="ok",
+        )
+
+        assert result is None
+
+
+async def test_update_lead_email_verdict_rejects_global_caller() -> None:
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        _reset_settings()
+        from common.errors import ValidationError
+
+        from api.leads.repository import update_lead_email_verdict
+
+        db = _StubDatabase()
+        global_claims = AuthClaims(subject="admin-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with pytest.raises(ValidationError):
+            await update_lead_email_verdict(
+                db, global_claims, "some-lead-id", verdict="qualified", reason="ok",
             )
 
 

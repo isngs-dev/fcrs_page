@@ -7,6 +7,16 @@ where:
   longer than *max_chars* is encountered — it is hard-split, never dropped).
 - The last *overlap* characters of chunk N are prepended to chunk N+1 (trailing
   context window so downstream embedding models see sentence-boundary context).
+- Markdown ATX headings (``#`` through ``######``) are treated as block
+  boundaries: a heading line plus everything under it up to the next heading
+  is one candidate packing unit, kept together WHOLE whenever it fits within
+  *max_chars* — a heading is never separated from its own content just
+  because the sentence-level packer would otherwise split partway through
+  (e.g. an FAQ entry's question variants ending up in one chunk and its
+  answer variants in the next, with no heading text in either to anchor a
+  keyword/vector match back to the topic). A block larger than *max_chars*
+  falls back to the sentence-level packing below, unchanged. Text with no
+  ATX headings at all chunks exactly as before this behavior was added.
 - Splitting prefers sentence boundaries (``re`` sentence-end detection). When a
   sentence fits entirely in the remaining budget, it is packed into the current
   chunk; when it would overflow, the current chunk is emitted first.
@@ -31,6 +41,12 @@ import re
 # inside ONE lookbehind, so we use a compiled alternation at match level instead.
 _SENTENCE_END_RE = re.compile(r'(?<=[.!?])\s+|(?<=[.!?]["\'])\s+')
 
+# Markdown ATX heading line: 1-6 leading '#' then whitespace, anchored to the
+# start of a line (MULTILINE). Matches "### **14\. What is...**" as found in
+# FAQ-style knowledge docs (the backslash before the period is literal
+# escaped-markdown text, not part of this pattern).
+_HEADING_RE = re.compile(r'^#{1,6}\s+.*$', re.MULTILINE)
+
 
 def chunk_text(text: str, *, max_chars: int, overlap: int) -> list[str]:
     """Split *text* into overlapping sentence-aware chunks.
@@ -54,9 +70,13 @@ def chunk_text(text: str, *, max_chars: int, overlap: int) -> list[str]:
     if not text or not text.strip():
         return []
 
-    # Split on sentence boundaries; keep the terminating punctuation in the
-    # preceding segment by using lookbehind assertions.
-    sentences = _split_sentences(text.strip())
+    # Split on markdown heading boundaries first; each block that fits within
+    # max_chars is packed as ONE atomic unit (never split at a sentence
+    # boundary inside it). A block too large for max_chars, or text with no
+    # headings at all (a single "block" = the whole text), falls back to
+    # sentence-level splitting below — identical to this function's behavior
+    # before heading-awareness was added.
+    blocks = _split_heading_blocks(text.strip())
 
     chunks: list[str] = []
     # `current` is the text accumulated into the chunk being built.
@@ -79,57 +99,63 @@ def chunk_text(text: str, *, max_chars: int, overlap: int) -> list[str]:
         else:
             current = ""
 
-    for sentence in sentences:
-        # A single sentence that already exceeds max_chars must be hard-split
-        # into max_chars pieces before we pack them.
-        pieces = _hard_split(sentence, max_chars) if len(sentence) > max_chars else [sentence]
+    for block in blocks:
+        # A block that fits whole is packed as a single atomic "sentence" --
+        # never split at a sentence boundary inside it. A block too large for
+        # max_chars degrades to ordinary sentence-level splitting.
+        sentences = [block] if len(block) <= max_chars else _split_sentences(block)
 
-        for piece in pieces:
-            separator = " " if current else ""
-            candidate = current + separator + piece
+        for sentence in sentences:
+            # A single sentence that already exceeds max_chars must be hard-split
+            # into max_chars pieces before we pack them.
+            pieces = _hard_split(sentence, max_chars) if len(sentence) > max_chars else [sentence]
 
-            if len(candidate) <= max_chars:
-                current = candidate
-            else:
-                # Emit whatever we have so far, then start fresh with overlap.
-                prev = current
-                _emit()
-                _start_next(prev)
+            for piece in pieces:
+                separator = " " if current else ""
+                candidate = current + separator + piece
 
-                # Now try to fit the piece into the new (overlap-seeded) current.
-                separator2 = " " if current else ""
-                candidate2 = current + separator2 + piece
-                if len(candidate2) <= max_chars:
-                    current = candidate2
+                if len(candidate) <= max_chars:
+                    current = candidate
                 else:
-                    # Even with just the overlap prefix + piece it's too long.
-                    # Hard-split the piece into max_chars windows, carrying the
-                    # overlap prefix only for the very first sub-piece.
-                    prefix = current
-                    sub_pieces = _hard_split(piece, max_chars)
-                    for j, sp in enumerate(sub_pieces):
-                        if j == 0 and prefix:
-                            sep = " " if prefix else ""
-                            combined = prefix + sep + sp
-                            if len(combined) <= max_chars:
-                                current = combined
+                    # Emit whatever we have so far, then start fresh with overlap.
+                    prev = current
+                    _emit()
+                    _start_next(prev)
+
+                    # Now try to fit the piece into the new (overlap-seeded) current.
+                    separator2 = " " if current else ""
+                    candidate2 = current + separator2 + piece
+                    if len(candidate2) <= max_chars:
+                        current = candidate2
+                    else:
+                        # Even with just the overlap prefix + piece it's too long.
+                        # Hard-split the piece into max_chars windows, carrying the
+                        # overlap prefix only for the very first sub-piece.
+                        prefix = current
+                        sub_pieces = _hard_split(piece, max_chars)
+                        for j, sp in enumerate(sub_pieces):
+                            if j == 0 and prefix:
+                                sep = " " if prefix else ""
+                                combined = prefix + sep + sp
+                                if len(combined) <= max_chars:
+                                    current = combined
+                                else:
+                                    # prefix alone too long or combined too long → emit prefix first
+                                    prev2 = prefix
+                                    if prev2.strip():
+                                        chunks.append(prev2)
+                                    current = sp
                             else:
-                                # prefix alone too long or combined too long → emit prefix first
-                                prev2 = prefix
-                                if prev2.strip():
-                                    chunks.append(prev2)
-                                current = sp
-                        else:
-                            sep = " " if current else ""
-                            cand = current + sep + sp
-                            if len(cand) <= max_chars:
-                                current = cand
-                            else:
-                                prev3 = current
-                                _emit()
-                                _start_next(prev3)
-                                sep2 = " " if current else ""
-                                current = (current + sep2 + sp).lstrip()
+                                sep = " " if current else ""
+                                cand = current + sep + sp
+                                if len(cand) <= max_chars:
+                                    current = cand
+                                else:
+                                    prev3 = current
+                                    _emit()
+                                    _start_next(prev3)
+                                    sep2 = " " if current else ""
+                                    current = (current + sep2 + sp).lstrip()
 
     if current.strip():
         chunks.append(current)
@@ -146,6 +172,30 @@ def _split_sentences(text: str) -> list[str]:
     """Split *text* on sentence boundaries, returning non-empty sentence strings."""
     parts = _SENTENCE_END_RE.split(text)
     return [p for p in parts if p.strip()]
+
+
+def _split_heading_blocks(text: str) -> list[str]:
+    """Split *text* into blocks at markdown ATX heading boundaries.
+
+    Each block starts at a heading line (``#`` .. ``######``) and runs up to
+    (but not including) the next heading line -- so a heading and everything
+    under it (list items, blockquotes, paragraphs) stays one candidate
+    packing unit in ``chunk_text``. Content before the first heading, if any,
+    is its own leading block with no heading. Text with no ATX headings at
+    all returns ``[text]`` unchanged, so non-markdown/non-headed input is
+    completely unaffected by this function's existence.
+    """
+    matches = list(_HEADING_RE.finditer(text))
+    if not matches:
+        return [text]
+
+    blocks: list[str] = []
+    if matches[0].start() > 0:
+        blocks.append(text[: matches[0].start()])
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        blocks.append(text[m.start() : end])
+    return [b for b in blocks if b.strip()]
 
 
 def _hard_split(text: str, max_chars: int) -> list[str]:

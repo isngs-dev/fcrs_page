@@ -150,6 +150,20 @@ export function PipelineBoard<TCard extends PipelineCard>({
   const boardRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const announcerId = useId();
+  // Mirrors `drag` for reading its LATEST value synchronously inside the
+  // native `pointerup` handler below, without calling anything
+  // side-effecting (commitDrop -> a Server Action, plus setPendingCardId/
+  // announce) from INSIDE a setState updater function -- React can invoke
+  // updaters during its own render/reconciliation pass, and doing so there
+  // produced "Cannot update a component (Router) while rendering a
+  // different component (PipelineBoard)". Updated by the effect below on
+  // every `drag` change, which always lands before the next native pointer
+  // event (pointermove and pointerup are dispatched serially, and each
+  // triggers a full render+effect flush before the next fires).
+  const dragRef = useRef<DragState | null>(null);
+  useEffect(() => {
+    dragRef.current = drag;
+  }, [drag]);
 
   const cardsByColumn = useMemo(() => {
     const map = new Map<string, TCard[]>();
@@ -246,15 +260,18 @@ export function PipelineBoard<TCard extends PipelineCard>({
     }
 
     function handleUp() {
-      setDrag((current) => {
-        if (!current) return current;
-        if (current.focusedTarget) {
-          void commitDrop(current.cardId, current.focusedTarget, current.originStage);
-        } else {
-          announce("Move canceled. Card returned to its original column.");
-        }
-        return null;
-      });
+      // Read the latest drag state from the ref (NOT via a setDrag
+      // updater) so commitDrop/announce -- both side-effecting -- run in
+      // this plain event-handler body, never nested inside a setState
+      // updater function.
+      const current = dragRef.current;
+      setDrag(null);
+      if (!current) return;
+      if (current.focusedTarget) {
+        void commitDrop(current.cardId, current.focusedTarget, current.originStage);
+      } else {
+        announce("Move canceled. Card returned to its original column.");
+      }
     }
 
     function handleCancelKey(event: KeyboardEvent) {

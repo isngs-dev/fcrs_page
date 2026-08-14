@@ -57,6 +57,7 @@ class LLMProvider(Protocol):
         labels: list[str],
         *,
         model: str,
+        label_descriptions: dict[str, str] | None = None,
     ) -> Label: ...
 
     def stream(

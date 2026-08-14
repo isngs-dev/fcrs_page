@@ -115,7 +115,11 @@ async def test_post_leads_consent_granted_returns_201() -> None:
     # Mock create_lead to return a lead_id
     mock_create_lead = AsyncMock(return_value="abc123def456")
 
-    with patch("api.leads.routes.create_lead", new=mock_create_lead):
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -154,7 +158,11 @@ async def test_post_leads_consent_false_returns_422_and_no_call() -> None:
 
     mock_create_lead = AsyncMock(return_value="abc123def456")
 
-    with patch("api.leads.routes.create_lead", new=mock_create_lead):
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -189,7 +197,11 @@ async def test_post_leads_consent_omitted_returns_422_and_no_call() -> None:
 
     mock_create_lead = AsyncMock(return_value="abc123def456")
 
-    with patch("api.leads.routes.create_lead", new=mock_create_lead):
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -219,7 +231,11 @@ async def test_post_leads_calls_create_lead_with_claims_visitor_id() -> None:
     visitor_id = "visitor-456"
     mock_create_lead = AsyncMock(return_value="abc123def456")
 
-    with patch("api.leads.routes.create_lead", new=mock_create_lead):
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -254,7 +270,11 @@ async def test_post_leads_body_tenant_id_ignored() -> None:
 
     mock_create_lead = AsyncMock(return_value="abc123def456")
 
-    with patch("api.leads.routes.create_lead", new=mock_create_lead):
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -480,7 +500,11 @@ async def test_post_leads_pii_not_in_logs(caplog: Any) -> None:
 
     mock_create_lead = AsyncMock(return_value="abc123def456")
 
-    with patch("api.leads.routes.create_lead", new=mock_create_lead):
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
+    ):
         with caplog.at_level(logging.DEBUG):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -517,7 +541,11 @@ async def test_post_leads_no_default_source() -> None:
 
     mock_create_lead = AsyncMock(return_value="abc123def456")
 
-    with patch("api.leads.routes.create_lead", new=mock_create_lead):
+    with (
+        patch("api.leads.routes.create_lead", new=mock_create_lead),
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -561,6 +589,7 @@ async def test_post_leads_enqueues_crm_sync_with_trusted_ids() -> None:
     with (
         patch("api.leads.routes.create_lead", new=mock_create_lead),
         patch("api.leads.routes.sync_lead") as mock_sync_lead,
+        patch("api.leads.routes.classify_lead_email"),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -600,6 +629,7 @@ async def test_post_leads_still_201_when_enqueue_raises() -> None:
     with (
         patch("api.leads.routes.create_lead", new=mock_create_lead),
         patch("api.leads.routes.sync_lead") as mock_sync_lead,
+        patch("api.leads.routes.classify_lead_email"),
     ):
         mock_sync_lead.delay.side_effect = RuntimeError("broker unavailable")
 
@@ -637,6 +667,7 @@ async def test_post_leads_enqueue_failure_logs_crm_enqueue_failed(caplog: Any) -
     with (
         patch("api.leads.routes.create_lead", new=mock_create_lead),
         patch("api.leads.routes.sync_lead") as mock_sync_lead,
+        patch("api.leads.routes.classify_lead_email"),
     ):
         mock_sync_lead.delay.side_effect = RuntimeError("broker unavailable")
 
@@ -680,6 +711,8 @@ async def test_post_leads_emits_lead_captured() -> None:
     with (
         patch("api.leads.routes.create_lead", new=mock_create_lead),
         patch("api.leads.routes.emit_event_safe") as mock_emit,
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
     ):
         mock_emit.return_value = "event-1"
         async with AsyncClient(
@@ -723,6 +756,8 @@ async def test_post_leads_still_201_when_feed_emit_raises() -> None:
             "api.notifications.emit.emit_event",
             new=AsyncMock(side_effect=RuntimeError("feed insert exploded")),
         ),
+        patch("api.leads.routes.sync_lead"),
+        patch("api.leads.routes.classify_lead_email"),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

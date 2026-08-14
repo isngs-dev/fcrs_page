@@ -96,11 +96,18 @@ class ApiSettings(Settings):
     # embedding_dimension: must match the vector(N) column in knowledge_chunks.
     #   Changing this requires a new migration + full re-embed.
     # chunk_max_chars: maximum characters per text chunk before overflow.
+    #   2000 (not the original 1000) so a typical FAQ-style heading block
+    #   (heading + several question variants + several answer variants, often
+    #   1500-1900 chars in practice) fits as ONE chunk via chunker.py's
+    #   heading-aware atomic packing, instead of splitting a question from
+    #   its own answer across two chunks with no shared vocabulary to anchor
+    #   retrieval back to the topic.
     # chunk_overlap_chars: trailing chars of the previous chunk prepended to
-    #   the next chunk as sentence-boundary context.
+    #   the next chunk as sentence-boundary context. Scaled with max_chars to
+    #   keep the same ~15% overlap ratio.
     embedding_dimension: int = 768
-    chunk_max_chars: int = 1000
-    chunk_overlap_chars: int = 150
+    chunk_max_chars: int = 2000
+    chunk_overlap_chars: int = 300
 
     # Embedding batching (S12.6).
     # embedding_batch_size: max number of texts sent per embeddings.create()
@@ -159,6 +166,34 @@ class ApiSettings(Settings):
     # calendar_http_timeout_seconds: per-call httpx timeout for CalendarProvider
     #   free-busy/create-event requests (GoogleCalendarProvider).
     calendar_http_timeout_seconds: float = 10.0
+
+    # Google Calendar OAuth (SR-22) -- ONE platform-level OAuth app (a single
+    # Google Cloud project), shared across every tenant; each tenant's
+    # CLIENT_ADMIN authorizes it individually via
+    # PUT /admin/schedule/calendar/google/authorize, producing a per-tenant
+    # refresh token (api.scheduling.calendar_config_repository). All three
+    # are optional/unset by default -- a deployment with no Google Calendar
+    # tenant never needs them; api.scheduling.calendar.calendar_provider_for_async
+    # raises a deterministic CalendarConfigError (GOOGLE_OAUTH_NOT_CONFIGURED)
+    # if a "google" tenant is hit while these are unset, never a silent
+    # no-op or a fabricated calendar sync.
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    # Must exactly match a redirect URI registered on the Google Cloud OAuth
+    # client -- e.g. https://api.<domain>/admin/schedule/calendar/google/callback.
+    google_oauth_redirect_uri: str | None = None
+    # google_oauth_state_ttl_seconds: how long an issued OAuth `state` token
+    # (google_oauth_state.py) stays valid -- long enough for an admin to
+    # actually complete Google's consent screen, short enough that a stale,
+    # unused state can't be replayed much later.
+    google_oauth_state_ttl_seconds: int = 600
+
+    # admin_web_base_url: where the Google OAuth callback (SR-22, a raw
+    # browser redirect FROM Google, not an API caller) sends the admin's
+    # browser once the connection is stored -- mirrors
+    # password_reset_url_base's same "point this at admin-web in each
+    # deploy" posture and default dev port.
+    admin_web_base_url: str = "http://localhost:3000"
 
     # Reminder jobs (S8.3).
     # reminder_poll_interval_seconds: the Celery Beat "dispatch-due-reminders"
@@ -285,6 +320,19 @@ class ApiSettings(Settings):
     # sweep is more than frequent enough; mirrors reminder_poll_interval_seconds's
     # pattern for the outbound reminder dispatcher).
     notification_events_prune_interval_seconds: int = 86400
+
+    # Lead email qualification (Leads > Board auto-classification).
+    # email_mx_check_timeout_seconds: DNS lookup timeout for
+    #   api.leads.mx_check's MX/A record checks. A generous-but-bounded
+    #   value -- long enough that a normal resolver round-trip never
+    #   spuriously reports "error" (ambiguous, never disqualifying), short
+    #   enough that a genuinely dead resolver doesn't stall the task.
+    email_mx_check_timeout_seconds: float = 3.0
+
+    # Celery Beat "reclassify-captured-leads" isn't scheduled by default
+    # (the backfill runs via services/api/src/api/reclassify_captured_leads.py,
+    # an operator-triggered one-off script, same shape as
+    # seed_sales_call_scheduling.py) -- no interval setting needed here.
 
 
 @lru_cache(maxsize=1)

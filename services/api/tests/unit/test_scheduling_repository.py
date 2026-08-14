@@ -116,6 +116,7 @@ class _StubDatabase:
                 "consent": consent,
                 "created_at": _NOW,
                 "source": source,
+                "meet_url": None,
             }
             return "INSERT 0 1"
 
@@ -172,7 +173,7 @@ class _StubDatabase:
                 "visitor_id": visitor_id, "email": email, "name": name,
                 "starts_at": starts_at, "ends_at": ends_at, "timezone": timezone,
                 "status": status, "calendar_ref": calendar_ref, "consent": consent,
-                "created_at": _NOW, "source": source,
+                "created_at": _NOW, "source": source, "meet_url": None,
             }
             self._events[(tenant_id, event_id)] = new_row
             return dict(new_row)

@@ -91,3 +91,33 @@ def test_booking_confirmation_message_no_calendly_link_falls_back_to_contact_us(
     _subject, body = booking_confirmation_message(starts_at=_STARTS_AT_UTC, timezone=_TZ)
     assert "contact us" in body
     assert "calendly.com" not in body
+
+
+def test_booking_confirmation_message_includes_meet_url_when_given() -> None:
+    join_link = "https://meet.google.com/abc-defg-hij"
+    _subject, body = booking_confirmation_message(
+        starts_at=_STARTS_AT_UTC, timezone=_TZ, meet_url=join_link
+    )
+    assert join_link in body
+    assert "Join the call:" in body
+
+
+def test_booking_confirmation_message_no_meet_url_omits_join_line() -> None:
+    _subject, body = booking_confirmation_message(starts_at=_STARTS_AT_UTC, timezone=_TZ)
+    assert "Join the call:" not in body
+    assert "meet.google.com" not in body
+
+
+def test_reminder_message_includes_meet_url_when_given() -> None:
+    join_link = "https://meet.google.com/abc-defg-hij"
+    _subject, body = reminder_message(
+        offset="1h", starts_at=_STARTS_AT_UTC, timezone=_TZ, meet_url=join_link
+    )
+    assert join_link in body
+    assert "Join the call:" in body
+
+
+def test_reminder_message_no_meet_url_omits_join_line() -> None:
+    _subject, body = reminder_message(offset="1h", starts_at=_STARTS_AT_UTC, timezone=_TZ)
+    assert "Join the call:" not in body
+    assert "meet.google.com" not in body

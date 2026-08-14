@@ -1,0 +1,185 @@
+---
+---
+<section id="services" class="services">
+  <div class="inner">
+    <div data-reveal class="section-head">
+      <span class="eyebrow">// Our Services</span>
+      <h2>Roofing Built for Southern Weather</h2>
+      <p>From homes to businesses, we protect what matters across Alabama &amp; Georgia.</p>
+    </div>
+
+    <div class="cards">
+      <article data-reveal class="reveal-delay-1 card">
+        <div class="photo">
+          <img
+            src="/images/service-residential.jpg"
+            alt="First Class Roofing crew installing a new residential shingle roof"
+            loading="lazy"
+          />
+        </div>
+        <div class="card-body">
+          <span class="icon-tile"><i class="fa-solid fa-house-chimney"></i></span>
+          <h3>Residential Roofing</h3>
+          <p>
+            Protect your home and family against tough Southern storms,
+            humidity, and heat. From complete tear-offs and full roof
+            replacements to fast leak repairs and routine checkups, we
+            deliver flawless residential roofing built to withstand Alabama
+            and Georgia weather.
+          </p>
+          <a href="#top" data-scroll class="cta-link">Get a Free Estimate <i class="fa-solid fa-arrow-right"></i></a>
+        </div>
+      </article>
+
+      <article data-reveal class="reveal-delay-4 card">
+        <div class="photo">
+          <img
+            src="/images/service-commercial.jpg"
+            alt="First Class Roofing commercial crew completing a flat roof retrofit"
+            loading="lazy"
+          />
+        </div>
+        <div class="card-body">
+          <span class="icon-tile"><i class="fa-solid fa-building"></i></span>
+          <h3>Commercial Roofing</h3>
+          <p>
+            Keep your local business running without costly downtime. We
+            provide Alabama and Georgia commercial properties with low-slope
+            and flat roof systems, TPO, EPDM, preventative maintenance, and
+            durable commercial coatings designed for energy efficiency and
+            long-term protection.
+          </p>
+          <a href="#top" data-scroll class="cta-link">Get a Free Estimate <i class="fa-solid fa-arrow-right"></i></a>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<style>
+  .services {
+    background: #fff;
+    padding: var(--section-pad);
+  }
+
+  .inner {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .section-head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto 46px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 1px;
+    color: var(--green);
+  }
+
+  .section-head h2 {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: var(--h2);
+    color: var(--navy);
+    line-height: 1.1;
+    margin-top: 10px;
+    letter-spacing: -0.4px;
+  }
+
+  .section-head p {
+    color: var(--muted);
+    font-size: var(--lead);
+    margin-top: 14px;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 26px;
+  }
+
+  .card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 2px 4px rgba(27, 43, 72, 0.04);
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  }
+
+  .card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 24px 44px -20px rgba(27, 43, 72, 0.3);
+    border-color: var(--card-hover-border);
+  }
+
+  .photo {
+    aspect-ratio: 16 / 10;
+    position: relative;
+    background: var(--placeholder-glyph);
+  }
+
+  .photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .card-body {
+    padding: 26px 26px 28px;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  .icon-tile {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: var(--navy);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    margin-bottom: 16px;
+  }
+
+  .card-body h3 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 1.4rem;
+    color: var(--navy);
+  }
+
+  .card-body p {
+    color: var(--muted);
+    font-size: 15.5px;
+    line-height: 1.6;
+    margin-top: 12px;
+    flex: 1;
+  }
+
+  .cta-link {
+    margin-top: 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--green);
+  }
+
+  .cta-link i {
+    font-size: 12px;
+  }
+</style>

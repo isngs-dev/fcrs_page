@@ -161,11 +161,12 @@ class OpenAICompatibleProvider:
         labels: list[str],
         *,
         model: str,
+        label_descriptions: dict[str, str] | None = None,
     ) -> Label:
         if not labels:
             raise LLMError("LLM request failed.")
 
-        instruction = build_classify_instruction(labels)
+        instruction = build_classify_instruction(labels, label_descriptions)
         chat_messages = [
             ChatMessage("system", instruction),
             ChatMessage("user", text),

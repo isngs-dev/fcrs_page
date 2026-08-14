@@ -6,32 +6,23 @@
  * an `async` server component that loads current settings via `lib/settings`
  * `getBotSettings()` and passes them as props to a thin client form.
  *
- * SR-27 slice 7/8 (D1, LOCKED for this sprint): there is exactly ONE
- * `/settings` route, and the reference has TWO distinct artboards --
- * "Settings" (`Console.dc.html:858-896`: rail General/Members/Billing/API
- * keys/Notifications, General card, Danger zone) and "Bot settings"
- * (`Console.dc.html:500-557`: rail Persona/Behavior/Workspace/Install/
- * Appearance, Persona/Behavior cards, live preview). Splitting into two
- * real routes is an information-architecture change (breaks bookmarks,
- * touches the sidebar nav, the `clients/[tenantId]` platform-admin twin,
- * and every existing settings test) far beyond a fidelity rebuild -- the
- * handoff's decision is to render BOTH reference layouts as two stacked
- * shells in this one route, each with its own 184px `.setnav` rail and its
- * own sticky header. If splitting into two routes is wanted, that is a
- * separate flagged decision for the user, not decided here.
+ * SPLIT (post-SR-27, user-requested): this route used to also render the
+ * workspace/account-level "Settings" shell (General/Members/Billing/API
+ * keys/Notifications/Danger zone) stacked below the Bot-settings shell --
+ * SR-27 slice 7/8's doc comment explicitly deferred that IA change ("If
+ * splitting into two routes is wanted, that is a separate flagged decision
+ * for the user, not decided here"). The user has now asked for exactly that
+ * split, with its own sidebar entry -- see `/workspace` (`workspace/page.tsx`)
+ * for the extracted shell, `components/admin/admin-shell.tsx`'s `toolsItems`
+ * for the new nav entry, and `components/admin/{settings-rail,set-row}.tsx`
+ * for the two primitives that were shared by both shells and are now shared
+ * across the two routes instead. This route now renders ONLY the Bot-settings
+ * shell (`Console.dc.html:500-557`).
  */
-import Link from "next/link";
-import { SoftCard } from "@/components/admin/soft-card";
 import { requireAnyRole } from "@/lib/auth";
 import { getBotSettings, type BotSettings } from "@/lib/settings";
-import { getWorkspace } from "@/lib/workspace";
-import { getApiKeyInfo } from "@/lib/api-keys";
+import { SoftCard } from "@/components/admin/soft-card";
 import { SettingsForm } from "@/app/(protected)/settings/settings-form";
-import { WorkspaceSection } from "@/app/(protected)/settings/workspace-section";
-import { ApiKeysSection } from "@/app/(protected)/settings/api-keys-section";
-import { AvailabilitySection } from "@/app/(protected)/settings/availability-section";
-import { DisabledSections } from "@/app/(protected)/settings/disabled-sections";
-import { SettingsRail, type SettingsRailRow } from "@/app/(protected)/settings/settings-rail";
 
 /** The five read-only fields (decision 3) -- thresholds + provider/model.
  * `PUT /admin/settings` never writes any of these; their write paths (S10.2
@@ -115,28 +106,10 @@ function ReadOnlyQualitativeFields({ settings }: { settings: BotSettings }) {
   );
 }
 
-/** SETTINGS shell rail rows (`Console.dc.html:869-876`). Members and
- * Notifications are real routes -- `link` rows. Billing has no backend
- * module (G20) -- rendered `disabled`. API keys is an in-page anchor within
- * this same shell. */
-const SETTINGS_RAIL_ROWS: readonly SettingsRailRow[] = [
-  { kind: "link", key: "general", label: "General", href: "#settings-workspace", active: true },
-  { kind: "link", key: "members", label: "Members", href: "/members" },
-  { kind: "disabled", key: "billing", label: "Billing" },
-  { kind: "anchor", key: "api-keys", label: "API keys", href: "#settings-api-keys" },
-  { kind: "link", key: "notifications", label: "Notifications", href: "/notifications" },
-];
-
 export default async function SettingsPage() {
   const claims = await requireAnyRole("CLIENT_ADMIN", "CLIENT_AGENT");
 
   const result = await getBotSettings();
-  const isClientAdmin = claims.role === "CLIENT_ADMIN";
-  // Workspace + API-keys are CLIENT_ADMIN-only surfaces (SR-20 D5/D6,
-  // tenant-wide config); only fetched/rendered for that role -- an agent
-  // never sees them (admin-web skill: hide what the API forbids).
-  const workspaceResult = isClientAdmin ? await getWorkspace() : null;
-  const apiKeyResult = isClientAdmin ? await getApiKeyInfo() : null;
 
   if (result.status === "error") {
     return (
@@ -171,67 +144,5 @@ export default async function SettingsPage() {
     );
   }
 
-  return (
-    <div className="flex flex-1 flex-col">
-      {/* ============ SHELL 1: SETTINGS (Console.dc.html:858-896) ============ */}
-      <div className="flex flex-1 flex-col border-b border-[var(--line)]">
-        <div className="flex flex-none items-center justify-between border-b border-[var(--line)] px-[30px] py-4 pb-[16px]">
-          <div>
-            <h1 className="text-[24px] font-semibold text-foreground">Settings</h1>
-            <p className="mt-[3px] text-[12.5px] text-muted-foreground">
-              Manage your workspace, members, and integrations.
-            </p>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <Link
-              href="/"
-              className="flex h-[38px] items-center rounded-[10px] border border-[var(--line)] bg-card px-4 text-[13.5px] font-semibold text-[var(--ink-2)] hover:bg-secondary"
-            >
-              Discard
-            </Link>
-            <button
-              type="submit"
-              form="workspace-form"
-              className="flex h-[38px] items-center rounded-[10px] bg-primary px-4 text-[13.5px] font-semibold text-primary-foreground hover:bg-primary/90"
-            >
-              Save changes
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-1 min-h-0">
-          <SettingsRail eyebrow="Settings" rows={SETTINGS_RAIL_ROWS} />
-
-          <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-[26px] py-6">
-            {workspaceResult?.status === "ok" ? (
-              <WorkspaceSection currentWorkspace={workspaceResult.workspace} />
-            ) : workspaceResult?.status === "error" ? (
-              <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                {workspaceResult.message}
-              </p>
-            ) : null}
-
-            {apiKeyResult?.status === "ok" ? (
-              <ApiKeysSection currentInfo={apiKeyResult.info} />
-            ) : apiKeyResult?.status === "error" ? (
-              <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                {apiKeyResult.message}
-              </p>
-            ) : null}
-
-            {/* Tier 2 (sales-call-booking flow fix): scheduling availability
-                -- timezone/weekly hours/slot length/buffer -- via
-                PUT /admin/schedule/availability. CLIENT_ADMIN-only, same as
-                Workspace/API keys above. */}
-            <AvailabilitySection />
-
-            <DisabledSections />
-          </div>
-        </div>
-      </div>
-
-      {/* ============ SHELL 2: BOT SETTINGS (Console.dc.html:500-557) ============ */}
-      <SettingsForm currentSettings={result.settings} />
-    </div>
-  );
+  return <SettingsForm currentSettings={result.settings} />;
 }

@@ -1,0 +1,16 @@
+/*
+  Single real breakpoint at 900px (CLAUDE.md "Responsive"). Body gets
+  padding-bottom only below 900px, where the #mobile-cta bar is fixed to the
+  bottom and would otherwise cover the footer.
+*/
+@media (max-width: 899px) {
+  body {
+    padding-bottom: 72px;
+  }
+}
+
+@media (min-width: 900px) {
+  body {
+    padding-bottom: 0;
+  }
+}

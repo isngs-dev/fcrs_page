@@ -12,7 +12,8 @@
  * CONFIRMED, not optimistic (same decision as `settings/actions.ts`): on a
  * `200`, the returned state carries the PUT response body's fresh
  * `timezone`/`rules`, never the raw submitted form values.
- * `revalidatePath("/settings")` re-syncs the RSC.
+ * `revalidatePath("/workspace")` re-syncs the RSC (moved from `/settings`
+ * when the workspace-settings screen split into its own route).
  */
 import { revalidatePath } from "next/cache";
 import { AdminApiError, adminApiFetch } from "@/lib/api";
@@ -118,7 +119,7 @@ export async function saveAvailability(
 
   const body = (await response.json()) as AvailabilityResponseBody;
 
-  revalidatePath("/settings");
+  revalidatePath("/workspace");
 
   return { status: "saved", availability: body };
 }

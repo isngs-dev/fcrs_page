@@ -659,6 +659,90 @@ describe("ScheduleCta", () => {
       expect(container.querySelector(".cw-sched-success-card")?.textContent).toMatch(/Sales team/i);
     });
 
+    it("phone: selecting a country code and typing a number sends the combined dial code + number", async () => {
+      fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+      bookSlotMock.mockResolvedValueOnce({
+        ok: true,
+        booking: { eventId: "evt-1", startsAt: SLOT_A.startsAt, endsAt: SLOT_A.endsAt, status: "booked" },
+      });
+
+      act(() => {
+        root.render(<ScheduleCta config={baseConfig} summary={SUMMARY} />);
+      });
+      await flush();
+      act(() => {
+        getEnabledCalendarDayButton().click();
+      });
+      await flush();
+      act(() => {
+        getSlotButton(0).click();
+      });
+      continueFromTimeSelection();
+
+      const phoneCodeSelect = container.querySelector<HTMLSelectElement>(".cw-sched-phone-code");
+      if (!phoneCodeSelect) throw new Error("phone country code select not found");
+      const phoneInput = container.querySelector<HTMLInputElement>(".cw-sched-phone-input");
+      if (!phoneInput) throw new Error("phone input not found");
+
+      act(() => {
+        phoneCodeSelect.value = "GB";
+        phoneCodeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      act(() => {
+        setNativeInputValue(phoneInput, "7911 123456");
+      });
+      act(() => {
+        setNativeInputValue(getEmailInput(), "invite@example.com");
+      });
+      act(() => {
+        getConsentCheckbox().click();
+      });
+      act(() => {
+        getConfirmButton().click();
+      });
+      await flush();
+
+      expect(bookSlotMock).toHaveBeenCalledTimes(1);
+      const [, bookInput] = bookSlotMock.mock.calls[0] as [WidgetConfig, { phone?: string }];
+      expect(bookInput.phone).toBe("+44 7911 123456");
+    });
+
+    it("omits phone entirely when the number field is left blank, regardless of the selected country code", async () => {
+      fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+      bookSlotMock.mockResolvedValueOnce({
+        ok: true,
+        booking: { eventId: "evt-1", startsAt: SLOT_A.startsAt, endsAt: SLOT_A.endsAt, status: "booked" },
+      });
+
+      act(() => {
+        root.render(<ScheduleCta config={baseConfig} summary={SUMMARY} />);
+      });
+      await flush();
+      act(() => {
+        getEnabledCalendarDayButton().click();
+      });
+      await flush();
+      act(() => {
+        getSlotButton(0).click();
+      });
+      continueFromTimeSelection();
+
+      act(() => {
+        setNativeInputValue(getEmailInput(), "invite@example.com");
+      });
+      act(() => {
+        getConsentCheckbox().click();
+      });
+      act(() => {
+        getConfirmButton().click();
+      });
+      await flush();
+
+      expect(bookSlotMock).toHaveBeenCalledTimes(1);
+      const [, bookInput] = bookSlotMock.mock.calls[0] as [WidgetConfig, { phone?: string }];
+      expect(bookInput.phone).toBeUndefined();
+    });
+
     it("the email step gates Confirm behind both consent AND a non-empty email", async () => {
       fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
 

@@ -6,9 +6,16 @@ with a fallback to DATABASE_URL if the direct URL is not set.
 """
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
+
+# Load .env from the repo root so DATABASE_URL_DIRECT/DATABASE_URL are available
+# when alembic is invoked directly (mirrors services/common/src/common/settings.py,
+# which loads the same file via pydantic-settings for the running app).
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 # this is the Alembic Config object, which provides
 # the values of the [alembic] section of the .ini

@@ -1,0 +1,4 @@
+Terminal 1: venv\python.exe -m uvicorn api.app:create_app --factory --host 127.0.0.1 --port 8000 --app-dir services\api\src
+Terminal 2: venv\python.exe -m celery -A api.tasks.celery_app worker --loglevel=info --pool=solo
+Terminal 3: venv\python.exe -m celery -A api.tasks.celery_app beat --loglevel=info
+Terminal 4: npm run dev

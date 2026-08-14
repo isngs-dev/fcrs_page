@@ -27,12 +27,13 @@ from api.config import ApiSettings, get_api_settings
 from api.gateway.dependencies import get_visitor_claims
 from api.leads.assignment import assign_lead_fail_open
 from api.leads.repository import add_activity, create_lead, get_lead_id_by_visitor_id
+from api.leads.tasks import classify_lead_email
 from api.notifications.emit import emit_event_safe
 from api.notifications.recipients import resolve_event_recipient
 from api.notifications.repository import enqueue_notification
 from api.notifications.tasks import send_notification
 from api.notifications.templates import booking_confirmation_message
-from api.scheduling.calendar import CalendarEvent, calendar_provider_for
+from api.scheduling.calendar import CalendarEvent, calendar_provider_for_async
 from api.scheduling.calendar_config_repository import get_calendar_config
 from api.scheduling.handoff_intent_repository import create_handoff_intent
 from api.scheduling.reminder_repository import create_reminder_jobs
@@ -81,6 +82,7 @@ class BookRequest(BaseModel):
     lead_id: str | None = None
     email: str | None = None
     name: str | None = None
+    phone: str | None = None
 
     @field_validator("starts_at")
     @classmethod
@@ -227,11 +229,18 @@ async def _calendar_busy_for_window(
         return []
 
     try:
-        provider = calendar_provider_for(
-            calendar_config, timeout=settings.calendar_http_timeout_seconds
+        provider = await calendar_provider_for_async(
+            calendar_config,
+            timeout_seconds=settings.calendar_http_timeout_seconds,
+            google_client_id=settings.google_oauth_client_id,
+            google_client_secret=settings.google_oauth_client_secret,
         )
         busy = await provider.free_busy(claims, (window_start, window_end))
     except Exception:
+        # Covers a Google token-refresh failure (GoogleOAuthError) exactly
+        # like any other provider/network error (SR-22) -- this path was
+        # already best-effort before the OAuth refresh existed, so no new
+        # failure mode changes its posture.
         _log.warning(
             "calendar free-busy degraded to native slots",
             extra={
@@ -427,11 +436,20 @@ async def book_slot(
         db, claims, event_id=event.event_id, starts_at=event.starts_at, now=datetime.now(UTC)
     )
 
+    # Populated only when a calendar sync below actually creates a Meet
+    # conference (SR-22) -- declared here, outside the try, so it survives
+    # into the confirmation-email block further down regardless of whether
+    # a calendar is even configured for this tenant.
+    meet_url: str | None = None
+
     calendar_config = await get_calendar_config(db, claims)
     if calendar_config is not None and calendar_config.enabled:
         try:
-            provider = calendar_provider_for(
-                calendar_config, timeout=settings.calendar_http_timeout_seconds
+            provider = await calendar_provider_for_async(
+                calendar_config,
+                timeout_seconds=settings.calendar_http_timeout_seconds,
+                google_client_id=settings.google_oauth_client_id,
+                google_client_secret=settings.google_oauth_client_secret,
             )
             ref = await provider.create_event(
                 claims,
@@ -440,9 +458,14 @@ async def book_slot(
                     starts_at=event.starts_at,
                     ends_at=event.ends_at,
                     timezone=event.timezone,
+                    attendee_email=str(body.email) if body.email is not None else None,
+                    attendee_name=body.name,
                 ),
             )
         except Exception as exc:
+            # Covers a Google token-refresh failure (GoogleOAuthError) the
+            # same as any other provider/network error (SR-22) -- the
+            # existing compensate-and-fail-loud posture already covers it.
             # Never leave a booked row without its calendar event when a
             # calendar is enabled (S8.2 decision 4) -- compensate + fail loud.
             await delete_event(db, claims, event.event_id)
@@ -461,7 +484,8 @@ async def book_slot(
             ) from exc
 
         calendar_ref = f"{ref.provider}:{ref.external_id}"
-        await update_event_calendar_ref(db, claims, event.event_id, calendar_ref)
+        meet_url = ref.meet_url
+        await update_event_calendar_ref(db, claims, event.event_id, calendar_ref, meet_url)
 
     # Best-effort booking-lead autolink (SR-9.1 C1). Placed AFTER the
     # calendar-sync block so a CALENDAR_SYNC_FAILED compensation (delete_event
@@ -487,7 +511,7 @@ async def book_slot(
                 visitor_id=claims.subject,
                 name=body.name,
                 email=str(body.email) if body.email is not None else None,
-                phone=None,
+                phone=body.phone,
                 consent=consent_with_timestamp,
                 source="booking",
             )
@@ -513,6 +537,21 @@ async def book_slot(
                 target_id=lead_id,
                 payload={"lead_id": lead_id},
                 actor_id=None,
+            )
+            # -- Enqueue email qualification (fire-and-forget): same
+            # fail-open convention as assign_lead_fail_open/emit_event_safe
+            # above -- covered by this whole block's surrounding try/except,
+            # so an enqueue failure degrades to "booking_lead_link_degraded"
+            # like everything else here, never fails the booking itself.
+            # Only for the genuinely-new-lead branch -- an existing lead
+            # (create-or-link found one) was already classified when it was
+            # first captured.
+            from common.logging import _correlation_id  # noqa: PLC0415, PLC2701
+
+            classify_lead_email.delay(
+                tenant_id=claims.tenant_id,
+                lead_id=lead_id,
+                correlation_id=_correlation_id.get() or "",
             )
         await set_event_lead_id(db, claims, event.event_id, lead_id)
         await add_activity(
@@ -569,7 +608,10 @@ async def book_slot(
                 else None
             )
             confirm_subject, confirm_body = booking_confirmation_message(
-                starts_at=event.starts_at, timezone=event.timezone, calendly_link=calendly_link,
+                starts_at=event.starts_at,
+                timezone=event.timezone,
+                calendly_link=calendly_link,
+                meet_url=meet_url,
             )
             job_id = await enqueue_notification(
                 db,

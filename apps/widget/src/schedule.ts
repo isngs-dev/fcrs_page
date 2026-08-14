@@ -135,6 +135,7 @@ export interface BookSlotInput {
   leadId?: string;
   email?: string;
   name?: string;
+  phone?: string;
 }
 
 interface BackendErrorEnvelope {
@@ -365,7 +366,7 @@ export async function postHandoffIntent(
 /**
  * Perform the single booking attempt:
  * `POST {apiBase}/public/schedule/book` with
- * `{ starts_at, timezone, consent, lead_id? }` — Bearer auth,
+ * `{ starts_at, timezone, consent, lead_id?, email?, name?, phone? }` — Bearer auth,
  * `credentials:'omit'`, **never** a `tenant_id`. `starts_at` must be the
  * exact raw string a prior `fetchSlots` call returned (this function does
  * not re-derive or reformat it). Never throws; every failure path (network,
@@ -393,6 +394,7 @@ export async function bookSlot(config: WidgetConfig, input: BookSlotInput): Prom
         ...(input.leadId ? { lead_id: input.leadId } : {}),
         ...(input.email ? { email: input.email } : {}),
         ...(input.name ? { name: input.name } : {}),
+        ...(input.phone ? { phone: input.phone } : {}),
       }),
     });
   } catch (err) {

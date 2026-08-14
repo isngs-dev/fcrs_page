@@ -20,6 +20,16 @@ That failure mode produces a reply that is not a near-miss of any label, so
 the fix belongs upstream, in a prompt forceful enough to keep a weak model
 on task. Both provider implementations share this builder so the prompt
 stays identical across vendors.
+
+``build_classify_instruction`` also accepts an optional per-label
+``label_descriptions`` map so a caller whose labels are semantically close
+(e.g. the orchestrator's "question" vs "off_topic") can tell the model what
+each label actually MEANS, not just its bare name -- without that, a
+well-formed but off-topic question ("What's the capital of France?" asked
+of a business assistant) has no signal distinguishing it from an on-topic
+"question", and can be misclassified. This stays a pure prompt-shape
+concern: it never injects real business/tenant facts, only caller-supplied
+label semantics.
 """
 from __future__ import annotations
 
@@ -39,16 +49,41 @@ _FEWSHOT_EXAMPLES: tuple[tuple[str, str], ...] = (
 )
 
 
-def build_classify_instruction(labels: list[str]) -> str:
+def build_classify_instruction(
+    labels: list[str],
+    label_descriptions: dict[str, str] | None = None,
+) -> str:
     """Build the strict, non-conversational classify system instruction.
 
     Explicitly frames the model as a classification system (not a chat
     assistant), forbids engaging with the text's content, forbids any
     output beyond the bare label, and includes balanced few-shot examples
     illustrating the expected output shape.
+
+    ``label_descriptions`` is optional and caller-supplied (never a
+    hardcoded assumption here about what any label means): a bare label
+    name alone ("off_topic", "question") is often not enough for a model to
+    correctly distinguish semantically-close labels -- e.g. a grammatically
+    well-formed question about something unrelated to the caller's domain
+    ("What's the capital of France?") can be labeled "question" instead of
+    "off_topic" with no definition of what "off_topic" means for this
+    classification. When given, only labels present in ``label_descriptions``
+    get an explicit one-line meaning; any label omitted (or the parameter
+    itself omitted) falls back to today's bare-label-name-only behavior --
+    this never invents domain/business content of its own, it only relays
+    what the caller passed in.
     """
     labels_str = ", ".join(labels)
     examples = "\n".join(f'Input: "{text}"\nLabel: {label}' for text, label in _FEWSHOT_EXAMPLES)
+    label_meanings = ""
+    if label_descriptions:
+        described = [
+            f"- {label}: {label_descriptions[label]}"
+            for label in labels
+            if label in label_descriptions
+        ]
+        if described:
+            label_meanings = "\nLabel meanings:\n" + "\n".join(described) + "\n"
     return (
         "You are a text classification system, not a conversational assistant. "
         "Your ONLY job is to read the text below and output exactly one label. "
@@ -56,7 +91,8 @@ def build_classify_instruction(labels: list[str]) -> str:
         "Do NOT have a conversation with the user. Do NOT explain your reasoning. "
         "Output ONLY the single label -- no extra words, no punctuation, no preamble, "
         "no quotation marks.\n\n"
-        f"The valid labels are: {labels_str}.\n\n"
+        f"The valid labels are: {labels_str}.\n"
+        f"{label_meanings}\n"
         "Example format (using unrelated sample labels, illustrating output shape only):\n"
         f"{examples}\n\n"
         "Now classify the text that follows into exactly one of the valid labels listed "

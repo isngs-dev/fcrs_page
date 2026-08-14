@@ -11,9 +11,11 @@
  *       staged flow: existing-booking ask (if any, decision 7a) -> a real
  *       month calendar with a Sun-Sat day-of-week grid (only days the
  *       server's day map marks available are enabled, decision 2) -> a
- *       timezone selector (defaults to the visitor's resolved zone,
- *       overridable for display only — the booking always sends an
- *       explicit IANA timezone, open-question 2) -> the 3-column time grid
+ *       timezone selector (defaults to a fixed US zone -- America/New_York,
+ *       see DEFAULT_TIME_ZONE below -- unless the server-provided `summary`
+ *       carries its own `timezone`; either way it's overridable for display
+ *       only — the booking always sends an explicit IANA timezone, open-
+ *       question 2) -> the 3-column time grid
  *       for the chosen day -> in-flow "where should we send the invite?"
  *       email/name capture + consent -> gray recap -> confirm.
  * Confirm calls bookSlot echoing the exact server-returned UTC starts_at +
@@ -37,6 +39,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { WidgetConfig } from "../config";
 import { SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT, bookSlot, fetchSlots, type AvailabilitySummary, type Slot } from "../schedule";
+import { COUNTRY_CALLING_CODES, dialCodeForIso, guessCountryIso } from "../countryCodes";
 
 const LOG_PREFIX = "[chatbot-widget]";
 
@@ -86,14 +89,16 @@ type Step =
   | { name: "booked"; slot: Slot }
   | { name: "book-error"; slot: Slot; message: string };
 
-function resolveVisitorTimeZone(): string {
-  try {
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return zone || "UTC";
-  } catch {
-    return "UTC";
-  }
-}
+/**
+ * Fixed default (business decision: every visitor is in the USA) rather
+ * than the visitor's browser-detected zone -- auto-detection previously
+ * produced a confusing "GMT+0" whenever a visitor's OS/browser reported
+ * UTC. The timezone dropdown (`timeZoneOptions` below) still lets a
+ * visitor switch to any other zone for DISPLAY purposes only; the booking
+ * itself always sends whichever explicit IANA timezone is currently
+ * selected, unaffected by this default.
+ */
+const DEFAULT_TIME_ZONE = "America/New_York";
 
 function formatLocalSlotLabel(startsAtIso: string): string {
   const date = new Date(startsAtIso);
@@ -244,6 +249,8 @@ export function ScheduleCta({ config, leadId, summary }: ScheduleCtaProps) {
   const [consentChecked, setConsentChecked] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [phoneCountryIso, setPhoneCountryIso] = useState(() => guessCountryIso());
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [lastLoadedSlots, setLastLoadedSlots] = useState<Slot[]>([]);
@@ -255,7 +262,7 @@ export function ScheduleCta({ config, leadId, summary }: ScheduleCtaProps) {
    * booking anything new — a pure no-op end state, not a fall-through into
    * the calendar. */
   const [dismissed, setDismissed] = useState(false);
-  const resolvedZone = useRef(resolveVisitorTimeZone()).current;
+  const resolvedZone = useRef(DEFAULT_TIME_ZONE).current;
   const [timeZone, setTimeZone] = useState(() => summary?.timezone ?? resolvedZone);
   const firstSlotButtonRef = useRef<HTMLButtonElement | null>(null);
   const confirmHeadingRef = useRef<HTMLDivElement | null>(null);
@@ -330,6 +337,7 @@ export function ScheduleCta({ config, leadId, summary }: ScheduleCtaProps) {
       ...(leadId ? { leadId } : {}),
       ...(email.trim() ? { email: email.trim() } : {}),
       ...(name.trim() ? { name: name.trim() } : {}),
+      ...(phone.trim() ? { phone: `${dialCodeForIso(phoneCountryIso)} ${phone.trim()}` } : {}),
     });
 
     if (!result.ok) {
@@ -567,8 +575,31 @@ export function ScheduleCta({ config, leadId, summary }: ScheduleCtaProps) {
           </div>
 
           <label className="cw-sched-email-label" htmlFor="cw-sched-email">Where should we send the invite?</label>
-          <input id="cw-sched-email" className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" autoComplete="email" />
+          <input id="cw-sched-email" className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
           <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} aria-label="Name, optional" placeholder="Name (optional)" autoComplete="name" />
+          <div className="cw-sched-phone-group">
+            <select
+              className="cw-sched-phone-code"
+              value={phoneCountryIso}
+              onChange={(e) => setPhoneCountryIso(e.target.value)}
+              disabled={submitting}
+              aria-label="Phone country code"
+            >
+              {COUNTRY_CALLING_CODES.map((c) => (
+                <option key={c.iso} value={c.iso}>{c.dial} {c.iso}</option>
+              ))}
+            </select>
+            <input
+              className="cw-input cw-sched-phone-input"
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              disabled={submitting}
+              aria-label="Phone, optional"
+              placeholder="Phone (optional)"
+              autoComplete="tel"
+            />
+          </div>
 
           <div className="cw-sched-consent-row">
             <input

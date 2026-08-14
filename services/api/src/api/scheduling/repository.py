@@ -46,7 +46,11 @@ class EventContact:
 
     Used by ``api.notifications.recipients.resolve_event_recipient`` --
     intentionally narrow (no consent/calendar_ref) since it exists only to
-    resolve an outbound recipient.
+    resolve an outbound recipient. ``meet_url`` (SR-22) IS included, unlike
+    ``calendar_ref``/``consent`` -- both the booking-confirmation and
+    3d/24h/1h reminder emails need it to give the visitor a working join
+    link, which is exactly what this struct exists to carry to those
+    templates (``api.notifications.templates``).
     """
 
     lead_id: str | None
@@ -55,6 +59,7 @@ class EventContact:
     starts_at: datetime
     status: str
     email: str | None = None
+    meet_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,11 @@ class ScheduleEvent:
     consent: dict[str, Any]
     created_at: datetime
     source: str = "native"
+    # SR-22. Defaults None for every construction site that doesn't SELECT
+    # it (a fresh booking never has one yet; list_events_for_timeline/
+    # get_upcoming_booking don't select it -- deliberately out of scope for
+    # this change, see the migration's docstring) -- never fabricated.
+    meet_url: str | None = None
 
 
 def _reject_global(claims: AuthClaims) -> None:
@@ -227,21 +237,26 @@ async def update_event_calendar_ref(
     claims: AuthClaims,
     event_id: str,
     calendar_ref: str,
+    meet_url: str | None = None,
 ) -> None:
     """Persist a ``CalendarProvider.create_event`` result onto a booked event.
 
-    Called after a successful calendar sync (S8.2 decision 4). Tenant-scoped
-    -- the ``WHERE`` clause filters by ``tenant_id`` so this can never touch
-    another tenant's row even if ``event_id`` were guessed.
+    Called after a successful calendar sync (S8.2 decision 4). ``meet_url``
+    (SR-22) defaults ``None`` -- unchanged behavior for any provider/config
+    that doesn't create a Google Meet conference (``StubCalendarProvider``
+    with no fake link, a future provider that doesn't support conferences).
+    Tenant-scoped -- the ``WHERE`` clause filters by ``tenant_id`` so this
+    can never touch another tenant's row even if ``event_id`` were guessed.
     """
     _reject_global(claims)
 
     await db.execute(
-        "UPDATE schedule_events SET calendar_ref = $3 "
+        "UPDATE schedule_events SET calendar_ref = $3, meet_url = $4 "
         "WHERE tenant_id = $1 AND event_id = $2",
         claims.tenant_id,
         event_id,
         calendar_ref,
+        meet_url,
     )
 
 
@@ -297,7 +312,7 @@ async def get_event_contact(
     _reject_global(claims)
 
     row = await db.fetchrow(
-        "SELECT lead_id, visitor_id, email, timezone, starts_at, status "
+        "SELECT lead_id, visitor_id, email, timezone, starts_at, status, meet_url "
         "FROM schedule_events WHERE tenant_id = $1 AND event_id = $2",
         claims.tenant_id,
         event_id,
@@ -311,6 +326,7 @@ async def get_event_contact(
         starts_at=row["starts_at"],
         status=str(row["status"]),
         email=row["email"],
+        meet_url=row["meet_url"],
     )
 
 

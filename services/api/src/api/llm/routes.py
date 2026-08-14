@@ -26,7 +26,19 @@ router = APIRouter(prefix="/debug/llm", tags=["llm"])
 
 
 class LLMConfigRequest(BaseModel):
-    """Body for POST /debug/llm/config."""
+    """Body for POST /debug/llm/config.
+
+    For Ollama-backed OpenAI-compatible endpoints, use:
+    {
+        "provider": "openai",
+        "model": "gpt-oss:20b",
+        "api_key": "ollama",
+        "base_url": "http://localhost:11434/v1"
+    }
+    Ollama does not require a real API key; the key is only sent in the HTTP
+    header for compatibility with OpenAI-style clients and is stored encrypted
+    in the tenant_llm_configs table.
+    """
 
     provider: str
     model: str

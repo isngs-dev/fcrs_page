@@ -29,7 +29,9 @@ from api.scheduling.calendar import (
     CalendarRef,
     GoogleCalendarProvider,
     StubCalendarProvider,
+    _extract_meet_url,
     calendar_provider_for,
+    calendar_provider_for_async,
 )
 from api.scheduling.calendar_config_repository import CalendarConfig
 
@@ -121,6 +123,7 @@ async def test_stub_create_event_returns_deterministic_calendar_ref() -> None:
     assert isinstance(ref, CalendarRef)
     assert ref.provider == "stub"
     assert ref.external_id == "stub-evt-1"
+    assert ref.meet_url == "https://meet.google.com/stub-evt-1"
 
 
 async def test_stub_update_event_raises_not_implemented() -> None:
@@ -210,11 +213,86 @@ async def test_google_create_event_posts_and_maps_id(monkeypatch: pytest.MonkeyP
 
     ref = await provider.create_event(None, event)  # type: ignore[arg-type]
 
-    assert ref == CalendarRef(provider="google", external_id="google-evt-999")
+    assert ref == CalendarRef(provider="google", external_id="google-evt-999", meet_url=None)
     assert transport.captured_request is not None
     auth_header = transport.captured_request.headers.get("authorization")
     assert auth_header == "Bearer tok-xyz"
     assert "/calendars/primary/events" in str(transport.captured_request.url)
+
+
+async def test_google_create_event_requests_meet_conference_and_extracts_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SR-22: create_event must ask for a Meet conference (conferenceData
+    createRequest + conferenceDataVersion=1), suppress Google's own invite
+    email (sendUpdates=none), add the attendee when given, and pull the
+    join URL out of the response onto CalendarRef.meet_url."""
+    transport = _StubTransport(
+        status_code=200,
+        json_body={
+            "id": "google-evt-999",
+            "conferenceData": {
+                "entryPoints": [
+                    {"entryPointType": "video", "uri": "https://meet.google.com/abc-defg-hij"},
+                ]
+            },
+        },
+    )
+    await _post_via_stub(monkeypatch, transport)
+
+    provider = GoogleCalendarProvider(
+        calendar_id="primary", access_token="tok-xyz", timeout=5.0
+    )
+    event = CalendarEvent(
+        event_id="evt-1",
+        starts_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC),
+        ends_at=datetime(2026, 7, 15, 14, 30, tzinfo=UTC),
+        timezone="UTC",
+        attendee_email="visitor@example.com",
+        attendee_name="Jordan Visitor",
+    )
+
+    ref = await provider.create_event(None, event)  # type: ignore[arg-type]
+
+    assert ref.meet_url == "https://meet.google.com/abc-defg-hij"
+    assert transport.captured_request is not None
+
+    url = transport.captured_request.url
+    assert url.params.get("conferenceDataVersion") == "1"
+    assert url.params.get("sendUpdates") == "none"
+
+    import json as _json
+
+    body = _json.loads(transport.captured_request.content.decode())
+    assert body["conferenceData"]["createRequest"]["requestId"] == "evt-1"
+    assert body["attendees"] == [{"email": "visitor@example.com"}]
+    assert body["summary"] == "Call with Jordan Visitor"
+
+
+async def test_google_create_event_without_attendee_omits_attendees_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _StubTransport(status_code=200, json_body={"id": "google-evt-999"})
+    await _post_via_stub(monkeypatch, transport)
+
+    provider = GoogleCalendarProvider(
+        calendar_id="primary", access_token="tok-xyz", timeout=5.0
+    )
+    event = CalendarEvent(
+        event_id="evt-1",
+        starts_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC),
+        ends_at=datetime(2026, 7, 15, 14, 30, tzinfo=UTC),
+        timezone="UTC",
+    )
+
+    await provider.create_event(None, event)  # type: ignore[arg-type]
+
+    import json as _json
+
+    assert transport.captured_request is not None
+    body = _json.loads(transport.captured_request.content.decode())
+    assert "attendees" not in body
+    assert body["summary"] == "Scheduled call"
 
 
 async def test_google_create_event_non_2xx_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -277,3 +355,133 @@ def test_calendar_provider_for_unknown_provider_raises_deterministic_error() -> 
 
     with pytest.raises(CalendarConfigError):
         calendar_provider_for(config, timeout=5.0)
+
+
+# ==============================================================================
+# _extract_meet_url
+# ==============================================================================
+
+
+def test_extract_meet_url_returns_video_entry_point_uri() -> None:
+    response = {
+        "conferenceData": {
+            "entryPoints": [
+                {"entryPointType": "phone", "uri": "tel:+1-555-0100"},
+                {"entryPointType": "video", "uri": "https://meet.google.com/abc-defg-hij"},
+            ]
+        }
+    }
+    assert _extract_meet_url(response) == "https://meet.google.com/abc-defg-hij"
+
+
+def test_extract_meet_url_missing_conference_data_returns_none() -> None:
+    assert _extract_meet_url({"id": "evt-1"}) is None
+
+
+def test_extract_meet_url_conference_data_not_a_dict_returns_none() -> None:
+    assert _extract_meet_url({"conferenceData": "pending"}) is None
+
+
+def test_extract_meet_url_missing_entry_points_returns_none() -> None:
+    assert _extract_meet_url({"conferenceData": {}}) is None
+
+
+def test_extract_meet_url_entry_points_not_a_list_returns_none() -> None:
+    assert _extract_meet_url({"conferenceData": {"entryPoints": "oops"}}) is None
+
+
+def test_extract_meet_url_no_video_entry_returns_none() -> None:
+    response = {
+        "conferenceData": {"entryPoints": [{"entryPointType": "phone", "uri": "tel:+1-555-0100"}]}
+    }
+    assert _extract_meet_url(response) is None
+
+
+def test_extract_meet_url_video_entry_missing_uri_returns_none() -> None:
+    response = {"conferenceData": {"entryPoints": [{"entryPointType": "video"}]}}
+    assert _extract_meet_url(response) is None
+
+
+# ==============================================================================
+# calendar_provider_for_async
+# ==============================================================================
+
+
+async def test_calendar_provider_for_async_stub_delegates_without_refresh() -> None:
+    """Non-google providers must never touch google_oauth at all."""
+    config = CalendarConfig(
+        provider="stub", calendar_id="dev", credentials="tok", busy=[], enabled=True
+    )
+    provider = await calendar_provider_for_async(
+        config, timeout_seconds=5.0, google_client_id=None, google_client_secret=None
+    )
+    assert isinstance(provider, StubCalendarProvider)
+
+
+async def test_calendar_provider_for_async_google_refreshes_access_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import api.scheduling.calendar as calendar_mod
+
+    captured: dict[str, object] = {}
+
+    async def _fake_refresh(
+        *, client_id: str, client_secret: str, refresh_token: str, timeout_seconds: float
+    ) -> str:
+        captured["client_id"] = client_id
+        captured["client_secret"] = client_secret
+        captured["refresh_token"] = refresh_token
+        captured["timeout_seconds"] = timeout_seconds
+        return "freshly-minted-access-token"
+
+    monkeypatch.setattr(calendar_mod, "refresh_google_access_token", _fake_refresh)
+
+    # Fixture values kept out of a bare `google_client_secret="..."` kwarg
+    # so they read clearly as test data, not a real credential.
+    stored_refresh_value = "stored-refresh-token-value"
+    platform_client_id_value = "platform-client-id"
+    platform_secret_value = "platform-client-secret"
+
+    config = CalendarConfig(
+        provider="google",
+        calendar_id="primary",
+        credentials=stored_refresh_value,
+        busy=[],
+        enabled=True,
+    )
+
+    provider = await calendar_provider_for_async(
+        config,
+        timeout_seconds=7.5,
+        google_client_id=platform_client_id_value,
+        google_client_secret=platform_secret_value,
+    )
+
+    assert isinstance(provider, GoogleCalendarProvider)
+    assert captured["refresh_token"] == stored_refresh_value
+    assert captured["client_id"] == platform_client_id_value
+    assert captured["client_secret"] == platform_secret_value
+    assert captured["timeout_seconds"] == 7.5
+    # The provider must be constructed with the FRESH access token, never
+    # the long-lived refresh token that was stored.
+    assert provider._access_token == "freshly-minted-access-token"  # noqa: SLF001
+
+
+async def test_calendar_provider_for_async_google_missing_client_id_raises() -> None:
+    config = CalendarConfig(
+        provider="google", calendar_id="primary", credentials="tok", busy=[], enabled=True
+    )
+    with pytest.raises(CalendarConfigError):
+        await calendar_provider_for_async(
+            config, timeout_seconds=5.0, google_client_id=None, google_client_secret="secret"
+        )
+
+
+async def test_calendar_provider_for_async_google_missing_client_secret_raises() -> None:
+    config = CalendarConfig(
+        provider="google", calendar_id="primary", credentials="tok", busy=[], enabled=True
+    )
+    with pytest.raises(CalendarConfigError):
+        await calendar_provider_for_async(
+            config, timeout_seconds=5.0, google_client_id="client-id", google_client_secret=None
+        )

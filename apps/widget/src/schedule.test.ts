@@ -260,6 +260,51 @@ describe("bookSlot", () => {
     expect(parsedBody.lead_id).toBe("lead-42");
   });
 
+  it("includes phone when provided, omits it when absent", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(201, {
+        event_id: "evt-1",
+        starts_at: "2026-07-20T09:00:00+00:00",
+        ends_at: "2026-07-20T09:30:00+00:00",
+        status: "booked",
+      }),
+    );
+    const { bookSlot, SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT } = await import("./schedule");
+
+    await bookSlot(baseConfig, {
+      startsAt: "2026-07-20T09:00:00+00:00",
+      timezone: "UTC",
+      consent: { granted: true, purpose: SCHEDULE_CONSENT_PURPOSE, text: SCHEDULE_CONSENT_TEXT },
+      phone: "+1 555-0100",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsedBody = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(parsedBody.phone).toBe("+1 555-0100");
+  });
+
+  it("omits phone entirely when not provided (never sends an empty/undefined phone field)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(201, {
+        event_id: "evt-1",
+        starts_at: "2026-07-20T09:00:00+00:00",
+        ends_at: "2026-07-20T09:30:00+00:00",
+        status: "booked",
+      }),
+    );
+    const { bookSlot, SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT } = await import("./schedule");
+
+    await bookSlot(baseConfig, {
+      startsAt: "2026-07-20T09:00:00+00:00",
+      timezone: "UTC",
+      consent: { granted: true, purpose: SCHEDULE_CONSENT_PURPOSE, text: SCHEDULE_CONSENT_TEXT },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsedBody = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(parsedBody).not.toHaveProperty("phone");
+  });
+
   it.each(["SLOT_UNAVAILABLE", "CONSENT_REQUIRED", "CALENDAR_SYNC_FAILED"])(
     "returns a typed ScheduleError on a mocked 422 %s (no throw, no fabricated booking)",
     async (errorCode) => {

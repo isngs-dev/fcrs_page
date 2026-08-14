@@ -9,6 +9,24 @@
  * indicator -> sendTurn -> bot bubble (or error line, decision 7) -> store
  * the returned conversation_id.
  *
+ * Opens automatically on mount (user request, post-S14.6): the panel is
+ * visible immediately, no launcher click required. The TTS greeting is
+ * ALSO attempted on that same mount (user request, superseding the
+ * original "gate behind a real click" stance -- see the S14.5 note below
+ * and the mount effect above `handleLauncherClick`) so it is audible on page load in
+ * browsers that allow it. Chrome does not: it requires prior user
+ * activation on the frame before `speechSynthesis.speak()` will actually
+ * produce audio, and mount time genuinely has none yet -- no application
+ * code can force it to be heard at that point. `tts.speakGreeting()`
+ * reports this back via its `onBlocked` callback (see tts.ts), which resets
+ * `hasGreetedRef` so a second, document-level effect below can retry on the
+ * visitor's first interaction ANYWHERE on the page (click/keydown/
+ * touchstart, not necessarily on the widget itself) -- that interaction
+ * grants the frame activation Chrome requires, making this the earliest
+ * point real audio is achievable there. This is still best-effort, not a
+ * guarantee: a visitor who never interacts with the page at all will never
+ * hear it, by design of the browser policy, not a bug here.
+ *
  * S14.5 adds: panel focus management (focus-in on open, a hand-rolled focus
  * trap while open, Escape-to-close, focus-restore to the launcher on close
  * — decision 1), `aria-labelledby` tying the dialog to its header, and the
@@ -40,6 +58,29 @@
  * reply in a new thread -- no error bubble, no fabricated history. A
  * `CONVERSATION_NOT_FOUND` with no resumed id in play keeps S14.2's honest
  * error line unchanged (this is a NEW branch, not a replacement).
+ *
+ * Exit-confirm adds: EVERY path that used to close the panel directly --
+ * the header's close (X) button, the launcher acting as an X while open
+ * (CSS-hidden while open, `.cw-placeholder[aria-expanded="true"]` in
+ * widgetCss.ts, but still wired defensively), and Escape -- now routes
+ * through `requestClose()`, which shows an in-panel exit-confirmation view
+ * (`confirmingClose` state) instead of closing immediately. "Yes"
+ * (`confirmCloseYes`) is the ONLY function that actually sets `open` to
+ * false, and it also clears every piece of CLIENT-SIDE chat state (this
+ * component's in-memory `messages`/refs + the SR-3 `resume.ts` sessionStorage
+ * mirror) so the next reopen starts a genuinely fresh chat with a brand-new
+ * `conversation_id` server-side. "No" (`confirmCloseNo`), or dismissing via
+ * Escape while the confirmation itself is showing, changes nothing and
+ * returns to the normal panel view. This NEVER touches server-side data:
+ * nothing here writes to or deletes from the `conversation_store` the admin
+ * dashboard reads from (see `conversation-store` skill) -- clearing is
+ * 100% client-side (this component's state + one sessionStorage key), so
+ * admin history for this same conversation remains fully intact. Because
+ * `resume.ts`'s sessionStorage record is inherently tab-scoped (the Web
+ * Storage API never shares `sessionStorage` across tabs/windows, even for
+ * the same site), exiting in one tab can never clear or otherwise affect
+ * chat state the visitor has open in a different tab -- each tab's widget
+ * instance owns only its own in-memory state and its own sessionStorage.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -56,6 +97,7 @@ import { ConnectionStatus, type ConnectionState } from "./ConnectionStatus";
 
 const LOG_PREFIX = "[chatbot-widget]";
 const PANEL_HEADER_ID = "cw-panel-header";
+const CONFIRM_CLOSE_TITLE_ID = "cw-confirm-close-title";
 const SUPPORT_STAY_REPLY = "No problem, I'm right here. Can you tell me a bit more about what stopped working?";
 
 /** Max attempts for the bounded auto-retry of a transient turn failure (decision 1/2). */
@@ -168,7 +210,14 @@ export function ChatWidget({
   launcherLabel,
   resumeConversationId = null,
 }: ChatWidgetProps) {
-  const [open, setOpen] = useState(false);
+  // Opens automatically on mount (no launcher click required).
+  const [open, setOpen] = useState(true);
+  // Exit-confirm: true while the "Are you sure you want to exit?" view is
+  // showing in place of the normal panel body (see requestClose/
+  // confirmCloseYes/confirmCloseNo below). Separate from `open` -- the
+  // panel stays open (mounted) throughout the confirmation; only a genuine
+  // "Yes" flips `open` to false.
+  const [confirmingClose, setConfirmingClose] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [pending, setPending] = useState(false);
@@ -217,32 +266,150 @@ export function ChatWidget({
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   // TTS: opt-in, in-memory-only mute preference (decision 5/6). Speaks only
-  // once, on the first panel-open gesture in this page session.
+  // once per page session, attempted from three possible triggers, in order
+  // — mount (the panel auto-opens with no click required, see the effect
+  // below), the visitor's first interaction ANYWHERE on the page (the
+  // document-level effect further below — Chrome requires this before
+  // `speechSynthesis.speak()` will actually produce audio, see tts.ts), or a
+  // manual open, whichever happens first. `hasGreetedRef` gates all three so
+  // only one genuinely fires; `tts.speakGreeting`'s `onBlocked` callback
+  // resets it when an attempt was silently blocked, so a later trigger still
+  // gets a real chance.
   const [muted, setMuted] = useState(false);
   const hasGreetedRef = useRef(false);
 
-  const toggleOpen = useCallback(() => {
-    setOpen((prev) => {
-      const next = !prev;
-      if (next && !hasGreetedRef.current) {
-        // First open in this page session is the user gesture that
-        // satisfies the browser autoplay policy (load-bearing constraint
-        // 2) — never speak before this.
-        hasGreetedRef.current = true;
-        if (!muted) {
-          tts.speakGreeting();
-        }
-      }
-      if (!next) {
-        // Closing (whether via toggle or Escape) stops any in-flight
-        // greeting speech so it doesn't keep talking into a closed panel.
-        tts.cancel();
-        voiceRecognitionRef.current?.stop();
-        setListening(false);
-      }
-      return next;
+  const attemptGreeting = useCallback(() => {
+    if (hasGreetedRef.current || muted) return;
+    hasGreetedRef.current = true;
+    tts.speakGreeting(() => {
+      // Blocked (most commonly Chrome's "no speak() without prior user
+      // activation on this frame" policy) — allow the next trigger (the
+      // first-interaction listener below, or a manual open) to retry.
+      hasGreetedRef.current = false;
     });
   }, [muted]);
+
+  useEffect(() => {
+    if (open) {
+      attemptGreeting();
+    }
+    // Mount-only: a later `open`/`muted` change must never retroactively
+    // speak or re-trigger this effect — attemptGreeting's own callers
+    // (handleLauncherClick, the interaction listener below) own everything
+    // after mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fallback for browsers (Chrome) that block the mount-time attempt above
+  // for lack of prior user activation: the visitor's first click, keypress,
+  // or tap anywhere on the page — not necessarily on the widget — grants
+  // that activation, so retry at that moment. `attemptGreeting` itself
+  // no-ops if a prior attempt already genuinely spoke, so this is a no-op
+  // in browsers where the mount-time attempt already worked. Capture phase
+  // so this fires even if some other handler stops bubble-phase propagation.
+  useEffect(() => {
+    const events: Array<keyof DocumentEventMap> = ["click", "keydown", "touchstart"];
+    const handleFirstInteraction = () => attemptGreeting();
+    events.forEach((type) =>
+      document.addEventListener(type, handleFirstInteraction, { once: true, capture: true }),
+    );
+    return () => {
+      events.forEach((type) =>
+        document.removeEventListener(type, handleFirstInteraction, { capture: true }),
+      );
+    };
+  }, [attemptGreeting]);
+
+  /**
+   * Show the exit confirmation instead of closing immediately. Every
+   * close-intent trigger (header X, the launcher-as-X, Escape) calls this,
+   * never `setOpen(false)` directly -- see confirmCloseYes, the only place
+   * that actually closes. Stops voice input + any in-flight greeting speech
+   * right away (not deferred to Yes/No): the confirmation view replaces the
+   * whole panel body below, so the mic button and greeting audio are gone
+   * from the screen the instant this fires regardless of what the visitor
+   * decides next. Idempotent: calling this while already confirming is a
+   * harmless no-op (React bails out of a `setState` to an unchanged value),
+   * which is what makes repeated close-button clicks safe -- there is only
+   * ever one confirmation showing, never a stack of them.
+   */
+  const requestClose = useCallback(() => {
+    tts.cancel();
+    voiceRecognitionRef.current?.stop();
+    setListening(false);
+    setConfirmingClose(true);
+  }, []);
+
+  /**
+   * "Yes" on the exit confirmation -- the ONLY function that actually closes
+   * the panel. Clears every piece of CLIENT-SIDE chat history/state a
+   * visitor could otherwise see again on reopen:
+   *  - this component's in-memory `messages` (the visible bubbles) and the
+   *    turn-related refs/state (`conversationIdRef`, pending/schedule
+   *    state, the last-failed-send + pending-identity-question refs) --
+   *    all gone the instant this returns, since none of it is persisted
+   *    beyond the component's own lifetime except...
+   *  - ...the SR-3 `resume.ts` sessionStorage mirror (`RESUME_KEY`),
+   *    cleared via `clearResumeRecord()` so a reload/reopen in THIS tab
+   *    can't silently resume the old `conversation_id` either.
+   * `conversationIdRef.current = null` is what actually guarantees "starts
+   * a completely fresh chat" on reopen: the next message sent (if any)
+   * asks the backend for a brand-new `conversation_id`, entirely decoupled
+   * from the one just exited -- it does not continue, edit, or delete that
+   * old thread.
+   *
+   * This NEVER touches server-side data: nothing in this file (or
+   * resume.ts, which only ever stores `{token, expiresAt, conversationId,
+   * lastActive}` -- never message content) calls any endpoint that writes
+   * to or deletes from the backend `conversation_store`. That old
+   * conversation's rows are untouched and remain fully visible to
+   * CLIENT_ADMIN/CLIENT_AGENT in the admin dashboard -- this is a purely
+   * client-side "forget my local view of this chat", the same guarantee
+   * the existing "New chat" reset button already gives (this is that same
+   * clearing, plus actually closing the panel).
+   */
+  const confirmCloseYes = useCallback(() => {
+    setMessages([]);
+    setInputValue("");
+    setPending(false);
+    setSchedulePending(false);
+    setScheduleError(false);
+    conversationIdRef.current = null;
+    resumedConversationInPlayRef.current = false;
+    lastFailedSendRef.current = null;
+    pendingIdentityQuestionRef.current = null;
+    // Client-side (this tab's sessionStorage) only -- see the doc comment
+    // above and resume.ts's own header for why this can never affect the
+    // admin dashboard or any other browser tab.
+    if (isResumeEnabled()) clearResumeRecord();
+    setConfirmingClose(false);
+    setOpen(false);
+  }, []);
+
+  /** "No", or dismissing the confirmation (Escape while it's showing) --
+   * changes nothing about the chat; just hides the dialog and returns to
+   * the normal panel view (the focus-in effect below re-focuses the input,
+   * chat history stays exactly as it was). */
+  const confirmCloseNo = useCallback(() => {
+    setConfirmingClose(false);
+  }, []);
+
+  /** Launcher click: opens when closed (unaffected by exit-confirm), or
+   * requests a close when open -- in practice unreachable via a real
+   * pointer while open (the launcher is CSS-hidden + `pointer-events: none`
+   * then, widgetCss.ts's `.cw-placeholder[aria-expanded="true"]`), but
+   * wired correctly regardless (e.g. a synthetic `.click()`, as this
+   * suite's test helpers use). */
+  const handleLauncherClick = useCallback(() => {
+    if (open) {
+      requestClose();
+      return;
+    }
+    setOpen(true);
+    // No-ops if a prior trigger already genuinely spoke — kept as a
+    // fallback so a manual open still greets when nothing else has yet.
+    attemptGreeting();
+  }, [open, requestClose, attemptGreeting]);
 
   const toggleMuted = useCallback(() => {
     setMuted((prev) => {
@@ -278,12 +445,26 @@ export function ChatWidget({
   }, [listening]);
 
   // Focus-in on open (decision 1): move focus to the message input, the
-  // first sensible target, once the panel mounts.
+  // first sensible target, once the panel mounts -- also fires when
+  // returning to the normal panel view after "No"/dismissing the exit
+  // confirmation (confirmingClose: true -> false), since that view swaps
+  // the input out of the DOM entirely while showing.
   useEffect(() => {
-    if (open) {
+    if (open && !confirmingClose) {
       inputRef.current?.focus();
     }
-  }, [open]);
+  }, [open, confirmingClose]);
+
+  // Focus-into the exit confirmation when it appears: the "No" (safe/
+  // non-destructive) button, not "Yes" -- a defensive default so a stray
+  // Enter keypress right after the dialog opens can't accidentally confirm
+  // the exit.
+  const confirmNoRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (confirmingClose) {
+      confirmNoRef.current?.focus();
+    }
+  }, [confirmingClose]);
 
   // Focus-restore on close (decision 1): return focus to the launcher.
   const wasOpenRef = useRef(false);
@@ -294,14 +475,24 @@ export function ChatWidget({
     wasOpenRef.current = open;
   }, [open]);
 
-  // Focus trap + Escape-to-close (decision 1): while open, Tab/Shift+Tab
-  // cycle within the panel's focusable elements so keyboard focus can't
-  // wander into the untrusted host page; Escape closes.
+  // Focus trap + Escape (decision 1): while open, Tab/Shift+Tab cycle
+  // within the panel's CURRENTLY RENDERED focusable elements -- which is
+  // just the two exit-confirm buttons while confirmingClose is true, since
+  // that view replaces the rest of the panel body entirely (see the JSX
+  // below), so the trap naturally confines itself with no extra logic
+  // here. Escape's meaning depends on which view is showing: while
+  // confirming, Escape is a "dismiss" gesture (same as "No" -- keep the
+  // chat open, unchanged); otherwise it REQUESTS a close, same as the
+  // header X (never closes directly -- see requestClose's doc comment).
   const handlePanelKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        toggleOpen();
+        if (confirmingClose) {
+          confirmCloseNo();
+        } else {
+          requestClose();
+        }
         return;
       }
 
@@ -328,7 +519,7 @@ export function ChatWidget({
         }
       }
     },
-    [toggleOpen],
+    [confirmingClose, confirmCloseNo, requestClose],
   );
 
   /**
@@ -676,116 +867,139 @@ export function ChatWidget({
       {open && (
         <div
           className="cw-panel"
-          role="dialog"
+          role={confirmingClose ? "alertdialog" : "dialog"}
           aria-modal="true"
-          aria-labelledby={PANEL_HEADER_ID}
+          aria-labelledby={confirmingClose ? CONFIRM_CLOSE_TITLE_ID : PANEL_HEADER_ID}
           ref={panelRef}
           onKeyDown={handlePanelKeyDown}
         >
-          <div className="cw-panel-header">
-            <span className="cw-assistant-mark" aria-hidden="true" />
-            <span className="cw-panel-title">
-              <span id={PANEL_HEADER_ID}>Rebecca <span className="cw-panel-role">&middot; AI assistant</span></span>
-              <span className={`cw-panel-presence cw-panel-presence-${connectionState.kind}`}>
-                <span className="cw-presence-dot" aria-hidden="true" />
-                {connectionPresence(connectionState)}
-              </span>
-            </span>
-            <span className="cw-header-actions">
-              <button
-                type="button"
-                className="cw-header-button cw-reset-button"
-                onClick={resetChat}
-                disabled={pending || schedulePending}
-                aria-label="Start a new chat"
-                title="New chat"
-              >
-                <ChatGlyph name="reset" />
-              </button>
-              <button
-                type="button"
-                className="cw-header-button cw-mute-toggle"
-                onClick={toggleMuted}
-                aria-pressed={muted}
-                aria-label={muted ? "Turn greeting sound on" : "Turn greeting sound off"}
-              >
-                <ChatGlyph name={muted ? "muted" : "sound"} />
-              </button>
-              <button type="button" className="cw-header-button cw-close-button" onClick={toggleOpen} aria-label="Close chat">
-                <ChatGlyph name="close" />
-              </button>
-            </span>
-          </div>
-          <ConnectionStatus state={connectionState} onRetry={() => void handleManualRetry()} />
-          <MessageList
-            messages={messages}
-            pending={pending}
-            config={config}
-            onSuggestion={(message) => void handleSuggestion(message)}
-            onIdentityCaptured={handleIdentityCaptured}
-            onHandoffTalk={() => void startScheduling("Talk to a rep")}
-            onHandoffStay={stayWithRebecca}
-          />
-          {scheduleError && (
-            <div className="cw-sched-error" role="alert">
-              We couldn&rsquo;t check appointment availability. <button type="button" className="cw-sched-retry" onClick={() => void startScheduling()}>Retry</button>
-            </div>
-          )}
-          <button
-            type="button"
-            className="cw-connect-sales-button"
-            disabled={pending || schedulePending}
-            onClick={() => void startScheduling()}
-          >
-            {schedulePending ? "Connecting…" : "Connect with a sales rep"}
-          </button>
-          <div className="cw-input-row">
-            <div className="cw-composer">
-              <input
-              ref={inputRef}
-              type="text"
-              className="cw-input"
-                placeholder={listening ? "Listening…" : "Message Rebecca…"}
-              value={inputValue}
-              disabled={pending}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-                aria-label="Message"
-              />
-              {voiceSupported && (
+          {confirmingClose ? (
+            <div className="cw-confirm-close">
+              <p id={CONFIRM_CLOSE_TITLE_ID} className="cw-confirm-close-message">
+                Are you sure you want to exit?
+              </p>
+              <div className="cw-confirm-close-actions">
                 <button
                   type="button"
-                  className={`cw-voice-button${listening ? " cw-voice-button-active" : ""}`}
-                  onClick={toggleVoiceInput}
-                  aria-pressed={listening}
-                  aria-label={listening ? "Stop voice input" : "Start voice input"}
-                  title="Voice input"
+                  className="cw-confirm-close-no"
+                  ref={confirmNoRef}
+                  onClick={confirmCloseNo}
                 >
-                  <ChatGlyph name="mic" />
+                  No
                 </button>
-              )}
-            <button
-              type="button"
-              className="cw-send-button"
-              disabled={pending || inputValue.trim().length === 0}
-              onClick={() => void handleSend()}
-              aria-label="Send message"
-            >
-              <ChatGlyph name="send" />
-            </button>
+                <button type="button" className="cw-confirm-close-yes" onClick={confirmCloseYes}>
+                  Yes
+                </button>
+              </div>
             </div>
-            <p className="cw-disclaimer">
-              Rebecca is AI and can make mistakes <span aria-hidden="true">&middot;</span>{" "}
-              <a className="cw-privacy-link" href="/privacy">Privacy policy</a>
-            </p>
-          </div>
+          ) : (
+            <>
+              <div className="cw-panel-header">
+                <span className="cw-assistant-mark" aria-hidden="true" />
+                <span className="cw-panel-title">
+                  <span id={PANEL_HEADER_ID}>Rebecca <span className="cw-panel-role">&middot; AI assistant</span></span>
+                  <span className={`cw-panel-presence cw-panel-presence-${connectionState.kind}`}>
+                    <span className="cw-presence-dot" aria-hidden="true" />
+                    {connectionPresence(connectionState)}
+                  </span>
+                </span>
+                <span className="cw-header-actions">
+                  <button
+                    type="button"
+                    className="cw-header-button cw-reset-button"
+                    onClick={resetChat}
+                    disabled={pending || schedulePending}
+                    aria-label="Start a new chat"
+                    title="New chat"
+                  >
+                    <ChatGlyph name="reset" />
+                  </button>
+                  <button
+                    type="button"
+                    className="cw-header-button cw-mute-toggle"
+                    onClick={toggleMuted}
+                    aria-pressed={muted}
+                    aria-label={muted ? "Turn greeting sound on" : "Turn greeting sound off"}
+                  >
+                    <ChatGlyph name={muted ? "muted" : "sound"} />
+                  </button>
+                  <button type="button" className="cw-header-button cw-close-button" onClick={requestClose} aria-label="Close chat">
+                    <ChatGlyph name="close" />
+                  </button>
+                </span>
+              </div>
+              <ConnectionStatus state={connectionState} onRetry={() => void handleManualRetry()} />
+              <MessageList
+                messages={messages}
+                pending={pending}
+                config={config}
+                onSuggestion={(message) => void handleSuggestion(message)}
+                onIdentityCaptured={handleIdentityCaptured}
+                onHandoffTalk={() => void startScheduling("Talk to a rep")}
+                onHandoffStay={stayWithRebecca}
+              />
+              {scheduleError && (
+                <div className="cw-sched-error" role="alert">
+                  We couldn&rsquo;t check appointment availability. <button type="button" className="cw-sched-retry" onClick={() => void startScheduling()}>Retry</button>
+                </div>
+              )}
+              <button
+                type="button"
+                className="cw-connect-sales-button"
+                disabled={pending || schedulePending}
+                onClick={() => void startScheduling()}
+              >
+                {schedulePending ? "Connecting…" : "Connect with a sales rep"}
+              </button>
+              <div className="cw-input-row">
+                <div className="cw-composer">
+                  <input
+                  ref={inputRef}
+                  type="text"
+                  className="cw-input"
+                    placeholder={listening ? "Listening…" : "Message Rebecca…"}
+                  value={inputValue}
+                  disabled={pending}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                    aria-label="Message"
+                  />
+                  {voiceSupported && (
+                    <button
+                      type="button"
+                      className={`cw-voice-button${listening ? " cw-voice-button-active" : ""}`}
+                      onClick={toggleVoiceInput}
+                      aria-pressed={listening}
+                      aria-label={listening ? "Stop voice input" : "Start voice input"}
+                      title="Voice input"
+                    >
+                      <ChatGlyph name="mic" />
+                    </button>
+                  )}
+                <button
+                  type="button"
+                  className="cw-send-button"
+                  disabled={pending || inputValue.trim().length === 0}
+                  onClick={() => void handleSend()}
+                  aria-label="Send message"
+                >
+                  <ChatGlyph name="send" />
+                </button>
+                </div>
+                <p className="cw-disclaimer">
+                  Rebecca is AI and can make mistakes <span aria-hidden="true">&middot;</span>{" "}
+                  <a className="cw-privacy-link" href="/privacy">Privacy policy</a>
+                </p>
+              </div>
+            </>
+          )}
         </div>
       )}
       <button
         type="button"
         className="cw-placeholder cw-launcher"
         ref={launcherRef}
-        onClick={toggleOpen}
+        onClick={handleLauncherClick}
         aria-label={open ? "Close chat" : "Open chat"}
         aria-expanded={open}
         data-expires-at={expiresAt}

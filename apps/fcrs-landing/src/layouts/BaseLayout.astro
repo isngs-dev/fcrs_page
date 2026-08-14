@@ -1,0 +1,76 @@
+---
+import "../styles/tokens.css";
+
+export interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- Google Tag Manager -->
+    <script is:inline>
+      (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+      new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+      j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+      'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+      })(window,document,'script','dataLayer','GTM-K99VSPCL');
+    </script>
+    <!-- End Google Tag Manager -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="First Class Roofing & Solar | Trusted AL & GA Roofing" />
+    <meta
+      property="og:description"
+      content="Fast, honest roofing built for Southern weather. Free, zero-obligation inspection for Alabama & Georgia homeowners and businesses."
+    />
+    <meta property="og:site_name" content="First Class Roofing & Solar" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    />
+  </head>
+  <body>
+    <!-- Google Tag Manager (noscript) -->
+    <noscript>
+      <iframe
+        src="https://www.googletagmanager.com/ns.html?id=GTM-K99VSPCL"
+        height="0" width="0" style="display:none;visibility:hidden"
+      ></iframe>
+    </noscript>
+    <!-- End Google Tag Manager (noscript) -->
+    <slot />
+    <script src="../scripts/main.js"></script>
+
+    <!--
+      Chatbot widget embed (self-contained IIFE bundle, React bundled in --
+      see apps/widget/vite.config.ts in the marketing_chatbot repo). Renders
+      into its own closed Shadow DOM root, fixed bottom-right, z-index
+      2147483000 -- isolated from this page's styles/scripts by construction,
+      so this single script tag is the entire integration surface.
+        - data-client-key: the tenant's PUBLIC client key (not a secret).
+        - data-api-base:   the chatbot platform's local API origin.
+      To update the bundle: `npm run build` in the widget's own repo, then
+      copy the resulting dist/widget.js over public/widget.js here.
+    -->
+    <script
+      src="/widget.js"
+      data-client-key="pk_S-yrsFkM77K_PpMKLCkvjl7lnY6Ay6oX"
+      data-api-base="http://localhost:8000"
+    ></script>
+  </body>
+</html>
