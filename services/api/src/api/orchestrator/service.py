@@ -637,7 +637,45 @@ async def _resolve_turn(
             tokens=None,
         )
 
-    # "question" | "other" -- the grounded path.
+    # "question" | "other" -- the grounded path, or its ungrounded fallback
+    # (SR-23) when the tenant has no embedding_model configured. RAG is
+    # otherwise a hard requirement of this branch (retrieve_hybrid raises
+    # RAG_EMBEDDING_NOT_CONFIGURED), which would make EVERY turn fail for a
+    # tenant that has an LLM configured but hasn't set up embeddings yet --
+    # never a graceful "answer without documents" path. Skipping retrieval
+    # entirely here (rather than letting the exception propagate) reuses
+    # _build_chitchat_prompt rather than _build_prompt(wm, []): the grounded
+    # prompt's system message instructs the model to reply with the literal
+    # NO_ANSWER_FOUND sentinel whenever context doesn't contain the answer,
+    # and that instruction is unconditional -- it fires just as reliably on
+    # an empty context block as on a real one, so re-using it here would
+    # leak the raw sentinel string to the visitor on almost every real
+    # question (the no-answer interception in finalize_generation only
+    # runs for grounded=True). Chit-chat's prompt has no such constraint and
+    # no sentinel instruction, which is exactly the shape an ungrounded,
+    # general-knowledge answer needs. Mirrors chitchat's outcome shape too:
+    # grounded=False, confidence=None, sources=[].
+    if not config.embedding_model:
+        prev_decision = await get_last_assistant_decision(db, claims, conversation_id)
+        wm = await get_working_memory(
+            db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
+        )
+        prompt = _build_chitchat_prompt(wm)
+        return _GeneratePlan(
+            conversation_id=conversation_id,
+            assistant_id=assistant_id,
+            prompt=prompt,
+            grounded=False,
+            decision="answer",
+            confidence=None,
+            sources=[],
+            intent=intent,
+            model=config.model,
+            provider=provider,
+            turns=turns,
+            prev_decision=prev_decision,
+        )
+
     result = await retrieve_hybrid(db, claims, message, k=settings.orchestrator_rag_k)
     confidence = result.confidence
     decision = _decide(confidence, cfg)

@@ -453,6 +453,67 @@ async def test_question_empty_retrieval_zero_confidence_escalates() -> None:
     assert result.sources == []
 
 
+# -- question -> answer without RAG (no embedding model configured) ------------------
+
+
+async def test_question_no_embedding_model_answers_without_rag() -> None:
+    """SR-23: a tenant with an LLM config but no ``embedding_model`` must
+    still be able to converse -- classify -> "question" -> retrieve_hybrid
+    is SKIPPED ENTIRELY (never raises RAG_EMBEDDING_NOT_CONFIGURED); generate
+    is called with _CHITCHAT_SYSTEM_PROMPT (NOT _build_prompt(wm, [])) --
+    the grounded prompt's system message unconditionally instructs the model
+    to reply with the literal NO_ANSWER_FOUND sentinel whenever context
+    lacks the answer, and that fires just as reliably on an empty context
+    block, leaking the raw sentinel to the visitor since the no-answer
+    interception only runs for grounded=True; stored decision="answer",
+    grounded=False, sources=[], confidence=None -- the same "ungrounded
+    answer" shape as chitchat, just for intent="question"."""
+    p = _Patched(
+        config=_config(embedding_model=None),
+        classify_return="question",
+        completion=Completion(
+            text="A general answer, no documents needed.", model="claude-opus-4-8",
+            input_tokens=8, output_tokens=6,
+        ),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="What can you do?")
+
+    p.retrieve_hybrid.assert_not_awaited()
+    p.provider.generate.assert_awaited_once()
+    prompt_messages: list[ChatMessage] = p.provider.generate.await_args.args[0]
+    assert prompt_messages[0].role == "system"
+    assert prompt_messages[0].content == _CHITCHAT_SYSTEM_PROMPT
+
+    assert len(p._append_calls) == 2
+    assistant_call = p._append_calls[1]
+    assert assistant_call["intent"] == "question"
+    assert assistant_call["decision"] == "answer"
+    assert assistant_call["grounded"] is False
+    assert assistant_call["sources"] == []
+    assert assistant_call["confidence"] is None
+
+    assert result.decision == "answer"
+    assert result.confidence is None
+    assert result.sources == []
+    assert result.reply == "A general answer, no documents needed."
+
+    p.provider.aclose.assert_awaited_once()
+
+
+async def test_other_intent_no_embedding_model_answers_without_rag() -> None:
+    """Same skip applies to intent="other", not just "question" -- both
+    share the grounded/ungrounded-fallback branch in _resolve_turn."""
+    p = _Patched(config=_config(embedding_model=None), classify_return="other")
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="hmm")
+
+    p.retrieve_hybrid.assert_not_awaited()
+    p.provider.generate.assert_awaited_once()
+    assert result.decision == "answer"
+    assert result.confidence is None
+
+
 # -- chitchat -> answer (no RAG) -----------------------------------------------------
 
 
@@ -1883,6 +1944,32 @@ async def test_stream_chitchat_emits_deltas_then_done() -> None:
     assert done.data["confidence"] is None
     assert done.data["sources"] == []
     assert done.data["action"] is None
+
+
+async def test_stream_question_no_embedding_model_answers_without_rag() -> None:
+    """Streaming twin of test_question_no_embedding_model_answers_without_rag
+    -- SR-23's skip applies identically to answer_turn_stream, since both
+    delivery modes share _resolve_turn."""
+    p = _Patched(
+        config=_config(embedding_model=None),
+        classify_return="question",
+        stream_chunks=["A general ", "answer."],
+    )
+    with p:
+        events = await _collect(
+            answer_turn_stream(db=object(), claims=_claims(), message="What can you do?"),
+        )
+
+    p.retrieve_hybrid.assert_not_awaited()
+    deltas = [e for e in events if e.type == "delta"]
+    assert [d.data["text"] for d in deltas] == ["A general ", "answer."]
+
+    done = events[-1]
+    assert done.type == "done"
+    assert done.data["reply"] == "A general answer."
+    assert done.data["decision"] == "answer"
+    assert done.data["confidence"] is None
+    assert done.data["sources"] == []
 
 
 # -- stream: guardrail block after the stream ends (THE key test) -----------------------
