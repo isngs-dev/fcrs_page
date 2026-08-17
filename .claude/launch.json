@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fcrs-landing",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "apps/fcrs-landing", "run", "dev"],
+      "port": 4321
+    }
+  ]
+}
