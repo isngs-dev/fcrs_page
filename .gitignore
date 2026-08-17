@@ -221,6 +221,7 @@ __marimo__/
 first_phase_chatbot/
 dev_plan/
 rough.txt
+passwords.txt
 celerybeat-schedule.bak
 celerybeat-schedule.dat
 celerybeat-schedule.dir

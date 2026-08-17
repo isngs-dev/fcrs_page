@@ -173,4 +173,17 @@ describe("WorkspacePage -- Settings shell (split from the combined route)", () =
 
     expect(html).toMatch(/expired or was already used/i);
   });
+
+  it("renders the Calendly section with its scheduling-link and signing-secret fields", async () => {
+    getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
+    mockWorkspaceFetch();
+
+    const element = await WorkspacePage({ searchParams: Promise.resolve({}) });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toMatch(/>Calendly</);
+    expect(html).toMatch(/Scheduling link/);
+    expect(html).toMatch(/Webhook signing secret/);
+    expect(html).toMatch(/Save Calendly settings/);
+  });
 });

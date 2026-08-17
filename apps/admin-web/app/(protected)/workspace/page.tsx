@@ -24,6 +24,7 @@ import { WorkspaceSection } from "@/app/(protected)/workspace/workspace-section"
 import { ApiKeysSection } from "@/app/(protected)/workspace/api-keys-section";
 import { AvailabilitySection } from "@/app/(protected)/workspace/availability-section";
 import { GoogleCalendarSection } from "@/app/(protected)/workspace/google-calendar-section";
+import { CalendlySection } from "@/app/(protected)/workspace/calendly-section";
 import { DisabledSections } from "@/app/(protected)/workspace/disabled-sections";
 import { SettingsRail, type SettingsRailRow } from "@/components/admin/settings-rail";
 
@@ -112,6 +113,8 @@ export default async function WorkspacePage({ searchParams }: WorkspacePageProps
               availability since a connected calendar is what turns a booked
               slot into a real event with a Meet link. */}
           <GoogleCalendarSection justConnected={justConnected} callbackError={callbackError} />
+
+          <CalendlySection />
 
           <DisabledSections />
         </div>
