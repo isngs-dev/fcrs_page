@@ -88,6 +88,22 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # SR-24: self-hosted companion embedding container (sentence-transformers/
+  # all-MiniLM-L6-v2) -- see deploy/embeddings-service/app.py's docstring
+  # for why this exists. Internal-network-only by construction: no `ports:`
+  # published, same trust model as postgres/redis/pgbouncer above. A
+  # tenant opts in by setting embedding_base_url=http://embeddings:8080/v1
+  # in its LLM config (POST /debug/llm/config) -- every tenant that leaves
+  # it unset is entirely unaffected, so this service is decoupled from
+  # api_1's own startup (no depends_on either direction).
+  embeddings:
+    build:
+      context: ./embeddings-service
+      dockerfile: Dockerfile
+    image: chatbot-embeddings:latest
+    container_name: chatbot-embeddings
+    restart: unless-stopped
+
   api_1: &api_service
     build:
       context: ..
@@ -119,6 +135,17 @@ services:
       # service, so it must be overridden the same way DATABASE_URL is.
       DATABASE_URL_DIRECT: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-chatbot}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    # STORAGE_BACKEND=local (../.env) writes uploaded documents to
+    # STORAGE_LOCAL_ROOT (/app/storage) on whichever container's own
+    # filesystem handled the upload request. Without a shared volume here,
+    # api_1 (upload) and celery-worker (ingestion) each see a DIFFERENT,
+    # container-local /app/storage -- the worker's ingest_document task
+    # fails with FileNotFoundError trying to read a file that only exists
+    # inside api_1. Named volume + the SAME mount path on every service
+    # sharing this anchor (api_1/api_2/celery-worker/celery-beat) makes
+    # /app/storage one real shared filesystem across all of them.
+    volumes:
+      - chatbot_storage:/app/storage
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -168,4 +195,6 @@ services:
 
 volumes:
   pgdata:
+    driver: local
+  chatbot_storage:
     driver: local

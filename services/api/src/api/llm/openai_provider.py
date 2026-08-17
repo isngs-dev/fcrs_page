@@ -46,6 +46,8 @@ class OpenAICompatibleProvider:
         timeout: float = 30.0,
         embedding_batch_size: int = 5,
         client: Any | None = None,
+        embedding_base_url: str | None = None,
+        embed_client: Any | None = None,
     ) -> None:
         self._embedding_batch_size = embedding_batch_size
         if client is not None:
@@ -58,6 +60,25 @@ class OpenAICompatibleProvider:
                 max_retries=max_retries,
                 timeout=timeout,
             )
+
+        # SR-24: embeddings can target a different OpenAI-wire endpoint than
+        # chat/classify/stream (e.g. a self-hosted companion container for a
+        # model with no hosted API). A separate AsyncOpenAI client is built
+        # only when embedding_base_url is actually set -- every existing
+        # tenant (embedding_base_url unset) keeps using the SAME client
+        # object for embed as for everything else, unchanged.
+        if embed_client is not None:
+            self._embed_client = embed_client
+        elif embedding_base_url is not None:
+            from openai import AsyncOpenAI
+            self._embed_client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=embedding_base_url,
+                max_retries=max_retries,
+                timeout=timeout,
+            )
+        else:
+            self._embed_client = self._client
 
     async def generate(
         self,
@@ -123,7 +144,7 @@ class OpenAICompatibleProvider:
             batch = texts[start : start + batch_size]
             batch_t0 = time.monotonic()
             try:
-                resp = await self._client.embeddings.create(
+                resp = await self._embed_client.embeddings.create(
                     model=model,
                     input=batch,
                 )
@@ -255,12 +276,17 @@ class OpenAICompatibleProvider:
             raise LLMError("LLM request failed.") from exc
 
     async def aclose(self) -> None:
-        """Close the underlying ``AsyncOpenAI``/``AsyncAzureOpenAI`` client.
+        """Close the underlying ``AsyncOpenAI``/``AsyncAzureOpenAI`` client(s).
 
         Verified against the installed SDK: ``AsyncOpenAI`` (and its
         subclass ``AsyncAzureOpenAI``) expose ``async def close(self) ->
         None`` at ``openai/_base_client.py`` (``AsyncAPIClient.close``),
         which calls ``await self._client.aclose()`` on the wrapped
-        ``httpx.AsyncClient``.
+        ``httpx.AsyncClient``. When ``embedding_base_url`` was set,
+        ``_embed_client`` is a DISTINCT client instance and must be closed
+        too; when it wasn't, ``_embed_client is self._client`` (the common
+        case for every existing tenant) so this closes it exactly once.
         """
         await self._client.close()
+        if self._embed_client is not self._client:
+            await self._embed_client.close()

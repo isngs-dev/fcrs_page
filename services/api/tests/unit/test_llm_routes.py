@@ -703,3 +703,51 @@ async def test_llm_config_api_key_never_echoed_even_with_embedding_model() -> No
     body = resp.json()
     assert "api_key" not in body
     assert "sk-very-secret" not in str(body)
+
+
+# ==============================================================================
+# SR-24: POST /debug/llm/config — embedding_base_url stored and echoed
+# ==============================================================================
+
+
+async def test_llm_config_stores_and_echoes_embedding_base_url() -> None:
+    """embedding_base_url is stored (8th param) and echoed in the response."""
+    db = _StubDatabase()
+    app = _build_app(db=db)
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/debug/llm/config",
+            json={
+                "provider": "openai",
+                "base_url": "https://ollama.com/v1",
+                "model": "gpt-oss:20b",
+                "api_key": "ollama",
+                "embedding_model": "all-MiniLM-L6-v2",
+                "embedding_base_url": "http://embeddings:8080/v1",
+            },
+            cookies={"access_token": token},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["embedding_base_url"] == "http://embeddings:8080/v1"
+    assert "api_key" not in body
+
+    # 8th SQL param must be embedding_base_url.
+    assert db.last_params[7] == "http://embeddings:8080/v1"
+
+
+async def test_llm_config_without_embedding_base_url_no_field_in_response() -> None:
+    """When embedding_base_url is omitted, the response does not echo it."""
+    db = _StubDatabase()
+    app = _build_app(db=db)
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/debug/llm/config",
+            json={"provider": "anthropic", "model": "claude-opus-4-8", "api_key": "sk-key"},
+            cookies={"access_token": token},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "embedding_base_url" not in body

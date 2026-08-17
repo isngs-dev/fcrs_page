@@ -39,6 +39,7 @@ def provider_for(config: LLMConfig) -> LLMProvider:
             max_retries=settings.llm_max_retries,
             timeout=settings.llm_timeout_seconds,
             embedding_batch_size=settings.embedding_batch_size,
+            embedding_base_url=config.embedding_base_url,
         )
     elif config.provider == "azure":
         if not config.base_url or not config.api_version:

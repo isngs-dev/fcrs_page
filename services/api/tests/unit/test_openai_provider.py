@@ -410,6 +410,108 @@ async def test_embed_batching_defaults_to_single_call_when_unspecified() -> None
     assert stub.last_kwargs["input"] == ["hello", "world"]
 
 
+# -- embedding_base_url tests (SR-24: companion embedding container) -----------
+
+
+async def test_embed_uses_embed_client_when_injected() -> None:
+    """embed() calls embed_client.embeddings.create, NOT client.embeddings.create --
+    proves embed can be routed to a distinct endpoint from generate/classify/stream."""
+    chat_client = MagicMock()
+    chat_stub = _StubEmbeddings(vectors=[[9.9]])
+    chat_client.embeddings = chat_stub  # would be wrong if ever called
+
+    embed_client = MagicMock()
+    embed_stub = _StubEmbeddings(vectors=[[0.1, 0.2]])
+    embed_client.embeddings = embed_stub
+
+    provider = OpenAICompatibleProvider(client=chat_client, embed_client=embed_client)
+
+    result = await provider.embed(["hello"], model="all-MiniLM-L6-v2")
+
+    assert result == [[0.1, 0.2]]
+    assert embed_stub.last_kwargs["input"] == ["hello"]
+    assert chat_stub.last_kwargs == {}, "embed must never call the chat client's embeddings"
+
+
+async def test_embedding_base_url_builds_a_separate_client() -> None:
+    """When embedding_base_url is set (no client=/embed_client= injected), a
+    SECOND AsyncOpenAI is constructed with that base_url -- the chat client
+    keeps the original base_url unchanged."""
+    with patch("openai.AsyncOpenAI") as MockOpenAI:
+        chat_mock = MagicMock()
+        embed_mock = MagicMock()
+        MockOpenAI.side_effect = [chat_mock, embed_mock]
+
+        provider = OpenAICompatibleProvider(
+            api_key="ollama",
+            base_url="https://ollama.com/v1",
+            embedding_base_url="http://embeddings:8080/v1",
+            max_retries=2,
+            timeout=30.0,
+        )
+
+        assert MockOpenAI.call_count == 2
+        MockOpenAI.assert_any_call(
+            api_key="ollama", base_url="https://ollama.com/v1", max_retries=2, timeout=30.0,
+        )
+        MockOpenAI.assert_any_call(
+            api_key="ollama", base_url="http://embeddings:8080/v1", max_retries=2, timeout=30.0,
+        )
+        assert provider._client is chat_mock
+        assert provider._embed_client is embed_mock
+
+
+async def test_no_embedding_base_url_reuses_the_same_client() -> None:
+    """Unset embedding_base_url (every existing tenant) -> _embed_client IS
+    _client, the same object -- no second AsyncOpenAI constructed."""
+    with patch("openai.AsyncOpenAI") as MockOpenAI:
+        MockOpenAI.return_value = MagicMock()
+        provider = OpenAICompatibleProvider(api_key="sk-key", base_url="https://api.openai.com/v1")
+
+        assert MockOpenAI.call_count == 1
+        assert provider._embed_client is provider._client
+
+
+async def test_generate_ignores_embedding_base_url() -> None:
+    """generate() always uses the chat client, even when embedding_base_url is set."""
+    chat_client = MagicMock()
+    chat_stub = _StubCompletions(text="chat reply")
+    chat_client.chat.completions = chat_stub
+    embed_client = MagicMock()
+
+    provider = OpenAICompatibleProvider(client=chat_client, embed_client=embed_client)
+
+    result = await provider.generate([ChatMessage("user", "hi")], model="gpt-oss:20b", max_tokens=50)
+
+    assert result.text == "chat reply"
+
+
+async def test_aclose_closes_both_clients_when_distinct() -> None:
+    """aclose() closes BOTH the chat client and a distinct embed client."""
+    chat_client = MagicMock()
+    chat_client.close = AsyncMock()
+    embed_client = MagicMock()
+    embed_client.close = AsyncMock()
+
+    provider = OpenAICompatibleProvider(client=chat_client, embed_client=embed_client)
+    await provider.aclose()
+
+    chat_client.close.assert_awaited_once_with()
+    embed_client.close.assert_awaited_once_with()
+
+
+async def test_aclose_closes_shared_client_exactly_once() -> None:
+    """When _embed_client IS _client (unset embedding_base_url), aclose()
+    must not double-close the single shared client."""
+    client = MagicMock()
+    client.close = AsyncMock()
+
+    provider = OpenAICompatibleProvider(client=client)
+    await provider.aclose()
+
+    client.close.assert_awaited_once_with()
+
+
 # -- upstream-error logging tests ----------------------------------------------
 
 

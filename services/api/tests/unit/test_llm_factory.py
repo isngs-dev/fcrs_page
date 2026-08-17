@@ -157,6 +157,7 @@ def test_factory_threads_retries_and_timeout_to_openai() -> None:
                 max_retries=5,
                 timeout=45.0,
                 embedding_batch_size=5,
+                embedding_base_url=None,
             )
 
 

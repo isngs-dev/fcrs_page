@@ -23,6 +23,7 @@ class LLMConfig:
     base_url: str | None = None
     api_version: str | None = None
     embedding_model: str | None = None
+    embedding_base_url: str | None = None
 
 
 async def get_llm_config(db: Database, claims: AuthClaims) -> LLMConfig | None:
@@ -36,7 +37,7 @@ async def get_llm_config(db: Database, claims: AuthClaims) -> LLMConfig | None:
 
     row = await db.fetchrow(
         "SELECT provider, model, api_key_ciphertext, base_url, api_version, "
-        "embedding_model "
+        "embedding_model, embedding_base_url "
         "FROM tenant_llm_configs WHERE tenant_id = $1",
         claims.tenant_id,
     )
@@ -54,6 +55,11 @@ async def get_llm_config(db: Database, claims: AuthClaims) -> LLMConfig | None:
         embedding_model=(
             str(row["embedding_model"]) if row.get("embedding_model") is not None else None
         ),
+        embedding_base_url=(
+            str(row["embedding_base_url"])
+            if row.get("embedding_base_url") is not None
+            else None
+        ),
     )
 
 
@@ -67,6 +73,7 @@ async def upsert_llm_config(
     base_url: str | None = None,
     api_version: str | None = None,
     embedding_model: str | None = None,
+    embedding_base_url: str | None = None,
 ) -> None:
     """Insert or update the tenant's LLM config, encrypting the API key.
 
@@ -81,12 +88,12 @@ async def upsert_llm_config(
     await db.execute(
         "INSERT INTO tenant_llm_configs "
         "(tenant_id, provider, model, api_key_ciphertext, base_url, api_version, "
-        "embedding_model) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+        "embedding_model, embedding_base_url) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
         "ON CONFLICT (tenant_id) DO UPDATE SET "
         "provider = $2, model = $3, api_key_ciphertext = $4, "
         "base_url = $5, api_version = $6, embedding_model = $7, "
-        "updated_at = now()",
+        "embedding_base_url = $8, updated_at = now()",
         claims.tenant_id,
         provider,
         model,
@@ -94,4 +101,5 @@ async def upsert_llm_config(
         base_url,
         api_version,
         embedding_model,
+        embedding_base_url,
     )

@@ -356,6 +356,87 @@ async def test_get_llm_config_embedding_model_none_when_null() -> None:
     assert config.embedding_model is None
 
 
+# ==============================================================================
+# SR-24: embedding_base_url stored and echoed (companion embedding container)
+# ==============================================================================
+
+
+async def test_upsert_stores_embedding_base_url() -> None:
+    """embedding_base_url is passed as the 8th bound param to upsert."""
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await upsert_llm_config(
+        db,
+        claims,
+        provider="openai",
+        model="gpt-oss:20b",
+        api_key="ollama",
+        embedding_model="all-MiniLM-L6-v2",
+        embedding_base_url="http://embeddings:8080/v1",
+    )
+
+    # 8th param (index 7) is embedding_base_url.
+    assert db.last_params[7] == "http://embeddings:8080/v1"
+
+
+async def test_upsert_embedding_base_url_none_when_omitted() -> None:
+    """Omitted embedding_base_url → None in params (unchanged behavior for
+    every existing tenant, where chat and embed share one base_url)."""
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await upsert_llm_config(
+        db,
+        claims,
+        provider="openai",
+        model="gpt-4o",
+        api_key="sk-key",
+    )
+
+    assert db.last_params[7] is None
+
+
+async def test_get_llm_config_returns_embedding_base_url() -> None:
+    """get_llm_config returns embedding_base_url when present."""
+    row = {
+        "provider": "openai",
+        "model": "gpt-oss:20b",
+        "api_key_ciphertext": SecretBox(get_api_settings().secret_encryption_key).encrypt("ollama"),
+        "base_url": "https://ollama.com/v1",
+        "api_version": None,
+        "embedding_model": "all-MiniLM-L6-v2",
+        "embedding_base_url": "http://embeddings:8080/v1",
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    config = await get_llm_config(db, claims)
+
+    assert config is not None
+    assert config.embedding_base_url == "http://embeddings:8080/v1"
+
+
+async def test_get_llm_config_embedding_base_url_none_when_null() -> None:
+    """get_llm_config returns embedding_base_url=None when column is NULL."""
+    row = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "api_key_ciphertext": SecretBox(get_api_settings().secret_encryption_key).encrypt("sk-key"),
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": None,
+        "embedding_base_url": None,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    config = await get_llm_config(db, claims)
+
+    assert config is not None
+    assert config.embedding_base_url is None
+
+
 async def test_api_key_never_echoed_in_config() -> None:
     """api_key is decrypted internally but must not appear in the LLMConfig fields that
     would be echoed to callers (provider, model, embedding_model, base_url, api_version)."""

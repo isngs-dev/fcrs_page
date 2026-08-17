@@ -222,7 +222,7 @@ def _make_llm_config_row(
 class _StubEmbeddingProvider:
     """Stub LLM provider that returns fixed-dimension vectors."""
 
-    def __init__(self, dim: int = 768) -> None:
+    def __init__(self, dim: int = 384) -> None:
         self._dim = dim
         self.called_texts: list[list[str]] = []
         self.called_model: list[str] = []
@@ -278,7 +278,7 @@ async def test_ingest_document_success_path() -> None:
         with (
             patch("api.ingestion.tasks.get_storage", return_value=storage),
             patch("api.ingestion.tasks.Database.connect", return_value=db),
-            patch("api.ingestion.tasks.provider_for", return_value=_StubEmbeddingProvider(dim=768)),
+            patch("api.ingestion.tasks.provider_for", return_value=_StubEmbeddingProvider(dim=384)),
             patch("api.ingestion.tasks.repo.replace_chunks"),
         ):
             from common.auth import AuthClaims, Role  # noqa: PLC0415

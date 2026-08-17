@@ -42,3 +42,8 @@ class AzureOpenAIProvider(OpenAICompatibleProvider):
                 max_retries=max_retries,
                 timeout=timeout,
             )
+        # SR-24's embedding_base_url override is openai-provider-only (the
+        # factory never passes it here) -- Azure always embeds through the
+        # same client it chats through, same as every OpenAICompatibleProvider
+        # tenant that leaves embedding_base_url unset.
+        self._embed_client = self._client

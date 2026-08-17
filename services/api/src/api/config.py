@@ -105,7 +105,9 @@ class ApiSettings(Settings):
     # chunk_overlap_chars: trailing chars of the previous chunk prepended to
     #   the next chunk as sentence-boundary context. Scaled with max_chars to
     #   keep the same ~15% overlap ratio.
-    embedding_dimension: int = 768
+    # SR-24: 384 to match the companion embedding container's sentence-
+    # transformers/all-MiniLM-L6-v2 model (migration 0051). Was 768.
+    embedding_dimension: int = 384
     chunk_max_chars: int = 2000
     chunk_overlap_chars: int = 300
 

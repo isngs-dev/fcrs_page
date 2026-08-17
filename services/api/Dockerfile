@@ -56,7 +56,12 @@ ENV PATH="/venv/bin:${PATH}" \
 COPY services/api/alembic.ini services/api/alembic.ini
 COPY services/api/migrations services/api/migrations
 
-RUN chown -R app:app /app
+# Pre-created (not left for the app to mkdir at runtime) so a named volume
+# mounted at /app/storage (deploy/docker-compose.prod.yml, shared between
+# api_1/api_2/celery-worker so an upload written by one container is
+# readable by the ingestion task in another) inherits app:app ownership on
+# first mount instead of Docker's default root:root for a fresh volume.
+RUN mkdir -p /app/storage && chown -R app:app /app
 USER app
 
 EXPOSE 8000

@@ -46,6 +46,7 @@ class LLMConfigRequest(BaseModel):
     base_url: str | None = None
     api_version: str | None = None
     embedding_model: str | None = None
+    embedding_base_url: str | None = None
 
 
 class GenerateRequest(BaseModel):
@@ -93,6 +94,7 @@ async def set_llm_config(
         base_url=body.base_url,
         api_version=body.api_version,
         embedding_model=body.embedding_model,
+        embedding_base_url=body.embedding_base_url,
     )
     _log.info(
         "LLM config updated",
@@ -108,6 +110,8 @@ async def set_llm_config(
     }
     if body.embedding_model is not None:
         response["embedding_model"] = body.embedding_model
+    if body.embedding_base_url is not None:
+        response["embedding_base_url"] = body.embedding_base_url
     return response
 
 
