@@ -123,7 +123,7 @@ function formatSlotTime(startsAtIso: string, timeZone: string): string {
     return new Intl.DateTimeFormat(undefined, {
       hour: "numeric",
       minute: "2-digit",
-      timeZoneName: "shortOffset",
+      timeZoneName: "short",
       timeZone,
     }).format(date);
   } catch {
