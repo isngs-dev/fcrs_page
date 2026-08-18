@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Docker deployment (deploy/docker-compose.prod.yml's admin-web service):
+  // traces only the files each route actually needs into .next/standalone,
+  // so the runtime image doesn't need node_modules installed at all. See
+  // apps/admin-web/Dockerfile.
+  output: "standalone",
   experimental: {
     serverActions: {
       // Backend's ingestion upload cap is 10 MiB (config.py's

@@ -104,6 +104,28 @@ services:
     container_name: chatbot-embeddings
     restart: unless-stopped
 
+  # admin-web: the Next.js admin console (apps/admin-web). Server-side only
+  # -- ADMIN_API_BASE_URL/JWT_SECRET are read at runtime by lib/env.ts and
+  # never bundled into client JS (server-only). JWT_SECRET comes from the
+  # SAME ../.env value api_1 uses below -- it verifies JWTs api_1 minted, it
+  # never mints its own, so the two secrets are the same secret by
+  # necessity, not coincidence. ADMIN_API_BASE_URL points at api_1 over the
+  # internal Docker network (no TLS hop, no public round-trip for
+  # server-to-server calls) rather than the public nip.io hostname.
+  admin-web:
+    build:
+      context: ../apps/admin-web
+      dockerfile: Dockerfile
+    image: chatbot-admin-web:latest
+    container_name: chatbot-admin-web
+    env_file:
+      - ../.env
+    environment:
+      ADMIN_API_BASE_URL: http://api_1:8000
+    depends_on:
+      - api_1
+    restart: unless-stopped
+
   api_1: &api_service
     build:
       context: ..
