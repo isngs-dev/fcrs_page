@@ -76,6 +76,7 @@ celery_app = Celery(
         "api.notifications.tasks",
         "api.notifications.events_tasks",
         "api.leads.tasks",
+        "api.conversation_store.tasks",
     ],
 )
 
@@ -108,6 +109,15 @@ celery_app.conf.update(
         "prune-notification-events": {
             "task": "notifications.prune_notification_events",
             "schedule": get_api_settings().notification_events_prune_interval_seconds,
+        },
+        # SR-25: nothing else in the codebase ever transitions a conversation
+        # out of status='active' -- without this periodic sweep, the admin
+        # console's "Ended" tab is permanently empty. The task's own single
+        # UPDATE...RETURNING is the exactly-once gate (see
+        # conversation_store.repository.close_idle_conversations).
+        "close-idle-conversations": {
+            "task": "conversation_store.close_idle_conversations",
+            "schedule": get_api_settings().conversation_idle_sweep_interval_seconds,
         },
     },
 )

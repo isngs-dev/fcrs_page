@@ -209,6 +209,20 @@ class ApiSettings(Settings):
     reminder_dispatch_batch_size: int = 100
     reminder_sink: str = "log"
 
+    # Conversation idle-timeout sweep (SR-25). Nothing else in the codebase
+    # ever transitions a conversation out of status='active' -- without this,
+    # the admin console's "Ended" tab is permanently empty. Mirrors the
+    # reminder poll-interval pair above.
+    # conversation_idle_timeout_minutes: how long since the last message (or
+    #   started_at, for a conversation with none yet) before a conversation
+    #   counts as idle and gets closed.
+    # conversation_idle_sweep_interval_seconds: the Celery Beat
+    #   "close-idle-conversations" periodic task's fixed poll interval --
+    #   looser than the reminder poll (5 min vs 60s) since "ended" status
+    #   has no downstream time-sensitive side effect the way a reminder does.
+    conversation_idle_timeout_minutes: int = 30
+    conversation_idle_sweep_interval_seconds: int = 300
+
     # Notifications (S9.1).
     # notification_smtp_timeout_seconds: the smtplib.SMTP connect/send timeout
     #   used by SmtpEmailProvider. No default provider setting -- provider is

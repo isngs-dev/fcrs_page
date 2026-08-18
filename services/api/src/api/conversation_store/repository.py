@@ -876,3 +876,52 @@ async def purge_expired(
     if len(parts) == 2 and parts[0].upper() == "DELETE":
         return int(parts[1])
     return 0
+
+
+@dataclass(frozen=True)
+class ClosedConversation:
+    """A single row flipped active -> ended by ``close_idle_conversations``."""
+
+    conversation_id: str
+    tenant_id: str
+
+
+async def close_idle_conversations(db: Database, *, idle_minutes: int) -> list[ClosedConversation]:
+    """Beat-driven idle-timeout sweep (SR-25): flip every ``active``
+    conversation whose most recent message -- or, for a conversation with no
+    messages yet, its ``started_at`` -- is older than ``idle_minutes`` to
+    ``status='ended'`` + ``ended_at=now()``.
+
+    System-scoped -- no ``claims`` argument, mirroring
+    ``scheduling.claim_due_reminders``: Celery Beat has no tenant context,
+    and a single tick sweeps every tenant at once. The one
+    ``UPDATE ... WHERE status = 'active' ... RETURNING`` statement IS the
+    exactly-once gate; unlike ``claim_due_reminders`` there is no separate
+    claim-then-dispatch step to guard against double-processing (this
+    function is the whole unit of work), so no ``FOR UPDATE SKIP LOCKED`` +
+    ``LIMIT`` batching is needed -- Postgres re-evaluates ``WHERE status =
+    'active'`` after acquiring each row's lock, so a second concurrent run
+    (there should never be one; Beat is a singleton) would simply see
+    already-``ended`` rows and update nothing.
+
+    Before this existed, NOTHING in the codebase ever transitioned a
+    conversation out of ``active`` -- the admin console's "Ended" tab was
+    permanently empty and "Active" never shrank, no matter how old a
+    conversation was.
+    """
+    rows = await db.fetch(
+        "UPDATE conversations SET status = 'ended', ended_at = now() "
+        "WHERE status = 'active' "
+        "AND COALESCE("
+        "  (SELECT MAX(m.created_at) FROM messages m "
+        "   WHERE m.tenant_id = conversations.tenant_id "
+        "   AND m.conversation_id = conversations.conversation_id), "
+        "  started_at"
+        ") <= now() - make_interval(mins => $1) "
+        "RETURNING conversation_id, tenant_id",
+        idle_minutes,
+    )
+    return [
+        ClosedConversation(conversation_id=str(r["conversation_id"]), tenant_id=str(r["tenant_id"]))
+        for r in rows
+    ]

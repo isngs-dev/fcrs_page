@@ -347,13 +347,14 @@ def test_notifications_tasks_module_is_in_include() -> None:
     assert "api.notifications.tasks" in app.conf.include
 
 
-def test_beat_schedule_unchanged_by_notifications() -> None:
-    """beat_schedule must still contain ONLY dispatch-due-reminders plus
-    SR-21's prune-notification-events -- S9.1's OUTBOUND notifications
-    (notification_jobs) are still enqueued on demand, not polled by Beat;
-    the only Beat addition since S9.1 is SR-21 D7's IN-CONSOLE feed
-    retention sweep (notification_events), a completely separate table
-    (D1) with its own periodic maintenance need."""
+def test_beat_schedule_contains_exactly_the_known_periodic_tasks() -> None:
+    """beat_schedule must contain exactly: dispatch-due-reminders,
+    SR-21's prune-notification-events, and SR-25's close-idle-conversations
+    -- S9.1's OUTBOUND notifications (notification_jobs) are still enqueued
+    on demand, not polled by Beat. close-idle-conversations exists because
+    nothing else in the codebase ever transitions a conversation out of
+    status='active' -- without it, the admin console's "Ended" tab is
+    permanently empty regardless of how old a conversation is."""
     import sys
     from unittest.mock import patch
 
@@ -374,6 +375,7 @@ def test_beat_schedule_unchanged_by_notifications() -> None:
     assert list(app.conf.beat_schedule.keys()) == [
         "dispatch-due-reminders",
         "prune-notification-events",
+        "close-idle-conversations",
     ]
 
 
@@ -400,3 +402,61 @@ def test_notification_events_tasks_module_is_in_include() -> None:
         app = mod.celery_app
 
     assert "api.notifications.events_tasks" in app.conf.include
+
+
+# ==============================================================================
+# Conversation idle-timeout sweep (SR-25)
+# ==============================================================================
+
+
+def test_beat_schedule_contains_close_idle_conversations() -> None:
+    """beat_schedule has the idle-conversation sweep at the configured interval."""
+    import sys
+    from unittest.mock import patch
+
+    for key in list(sys.modules.keys()):
+        if key.startswith("api.tasks") or key == "api.config":
+            del sys.modules[key]
+
+    from common.settings import get_settings
+
+    get_settings.cache_clear()
+
+    sweep_interval = "120"
+    env = {
+        **_BASE_ENV,
+        "REDIS_URL": "redis://stub-host:6379",
+        "CONVERSATION_IDLE_SWEEP_INTERVAL_SECONDS": sweep_interval,
+    }
+    with patch.dict("os.environ", env, clear=True):
+        import api.tasks.celery_app as mod  # noqa: PLC0415
+
+        app = mod.celery_app
+
+    entry = app.conf.beat_schedule.get("close-idle-conversations")
+    assert entry is not None, "beat_schedule must contain 'close-idle-conversations'"
+    assert entry["task"] == "conversation_store.close_idle_conversations"
+    assert entry["schedule"] == 120
+
+
+def test_conversation_store_tasks_module_is_in_include() -> None:
+    """api.conversation_store.tasks must be in the Celery app's include list
+    so the worker discovers conversation_store.close_idle_conversations."""
+    import sys
+    from unittest.mock import patch
+
+    for key in list(sys.modules.keys()):
+        if key.startswith("api.tasks") or key == "api.config":
+            del sys.modules[key]
+
+    from common.settings import get_settings
+
+    get_settings.cache_clear()
+
+    env = {**_BASE_ENV, "REDIS_URL": "redis://stub-host:6379"}
+    with patch.dict("os.environ", env, clear=True):
+        import api.tasks.celery_app as mod  # noqa: PLC0415
+
+        app = mod.celery_app
+
+    assert "api.conversation_store.tasks" in app.conf.include
