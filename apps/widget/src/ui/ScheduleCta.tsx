@@ -584,7 +584,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaPr
 
           <label className="cw-sched-email-label" htmlFor="cw-sched-email">Where should we send the invite?</label>
           <input id="cw-sched-email" className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
-          <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} aria-label="Name, optional" placeholder="Name (optional)" autoComplete="name" />
+          <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} required aria-label="Name" placeholder="Name" autoComplete="name" />
           <input
             className="cw-input cw-sched-phone-input"
             type="tel"
@@ -625,7 +625,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaPr
             <button
               type="button"
               className="cw-sched-confirm-button"
-              disabled={!consentChecked || !email.trim() || submitting}
+              disabled={!consentChecked || !email.trim() || !name.trim() || submitting}
               onClick={() => void confirmBooking(step.slot)}
             >
               {submitting ? "Booking…" : "Confirm booking"}

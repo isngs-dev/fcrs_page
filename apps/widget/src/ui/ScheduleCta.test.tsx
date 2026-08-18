@@ -522,6 +522,12 @@ describe("ScheduleCta", () => {
       return input;
     }
 
+    function getNameInput(): HTMLInputElement {
+      const input = container.querySelector<HTMLInputElement>(".cw-sched-name-input");
+      if (!input) throw new Error("name input not found");
+      return input;
+    }
+
     function continueFromTimeSelection(): void {
       const button = container.querySelector<HTMLButtonElement>(".cw-sched-continue-button");
       if (!button) throw new Error("continue button not found");
@@ -644,6 +650,9 @@ describe("ScheduleCta", () => {
         setNativeInputValue(getEmailInput(), "invite@example.com");
       });
       act(() => {
+        setNativeInputValue(getNameInput(), "Visitor Name");
+      });
+      act(() => {
         getConsentCheckbox().click();
       });
       act(() => {
@@ -694,6 +703,9 @@ describe("ScheduleCta", () => {
         setNativeInputValue(getEmailInput(), "invite@example.com");
       });
       act(() => {
+        setNativeInputValue(getNameInput(), "Visitor Name");
+      });
+      act(() => {
         getConsentCheckbox().click();
       });
       act(() => {
@@ -730,6 +742,9 @@ describe("ScheduleCta", () => {
         setNativeInputValue(getEmailInput(), "invite@example.com");
       });
       act(() => {
+        setNativeInputValue(getNameInput(), "Visitor Name");
+      });
+      act(() => {
         getConsentCheckbox().click();
       });
       act(() => {
@@ -742,7 +757,7 @@ describe("ScheduleCta", () => {
       expect(bookInput.phone).toBeUndefined();
     });
 
-    it("the email step gates Confirm behind both consent AND a non-empty email", async () => {
+    it("the invite step gates Confirm behind consent AND a non-empty email AND a non-empty name", async () => {
       fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
 
       act(() => {
@@ -758,14 +773,21 @@ describe("ScheduleCta", () => {
       });
       continueFromTimeSelection();
 
-      // Consent alone, no email -> still disabled.
+      // Consent alone, no email, no name -> still disabled.
       act(() => {
         getConsentCheckbox().click();
       });
       expect(getConfirmButton().disabled).toBe(true);
 
+      // Consent + email, no name -> still disabled.
       act(() => {
         setNativeInputValue(getEmailInput(), "invite@example.com");
+      });
+      expect(getConfirmButton().disabled).toBe(true);
+
+      // Consent + email + name -> enabled.
+      act(() => {
+        setNativeInputValue(getNameInput(), "Visitor Name");
       });
       expect(getConfirmButton().disabled).toBe(false);
     });
@@ -895,6 +917,9 @@ describe("ScheduleCta", () => {
       continueFromTimeSelection();
       act(() => {
         setNativeInputValue(getEmailInput(), "invite@example.com");
+      });
+      act(() => {
+        setNativeInputValue(getNameInput(), "Visitor Name");
       });
       act(() => {
         getConsentCheckbox().click();
