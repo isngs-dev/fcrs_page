@@ -35,6 +35,7 @@ import { useState } from "react";
 
 import type { WidgetConfig } from "../config";
 import { submitLead } from "../lead";
+import { formatUsPhoneInput } from "../phoneFormat";
 import { SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT, postHandoffIntent, type AvailabilitySummary } from "../schedule";
 
 const LOG_PREFIX = "[chatbot-widget]";
@@ -170,8 +171,9 @@ export function CalendlyHandoff({ config, summary }: CalendlyHandoffProps) {
         id="cw-sched-handoff-phone"
         className="cw-lead-input"
         type="tel"
+        inputMode="numeric"
         value={phone}
-        onChange={(e) => setPhone(e.target.value)}
+        onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))}
         disabled={submitting}
         placeholder="(555) 123-4567"
         autoComplete="tel"

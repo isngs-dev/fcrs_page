@@ -152,7 +152,9 @@ describe("LeadForm", () => {
 
     fillRequiredFields();
     act(() => {
-      setNativeInputValue(container.querySelector<HTMLInputElement>("#cw-lead-phone")!, "555-1234");
+      // The phone field live-formats as a US number (formatUsPhoneInput) --
+      // typed digits, submitted formatted.
+      setNativeInputValue(container.querySelector<HTMLInputElement>("#cw-lead-phone")!, "5551234567");
     });
     checkConsent();
 
@@ -166,7 +168,7 @@ describe("LeadForm", () => {
       expect.objectContaining({
         name: "Ada Lovelace",
         email: "ada@example.com",
-        phone: "555-1234",
+        phone: "(555) 123-4567",
         consent: { granted: true, purpose: CONSENT_PURPOSE, text: CONSENT_TEXT },
       }),
     );
@@ -178,6 +180,24 @@ describe("LeadForm", () => {
       resolveSubmit({ ok: true, lead: { leadId: "lead-1", status: "new" } });
       await Promise.resolve();
     });
+  });
+
+  it("the phone field strips letters/symbols as typed and caps at 10 digits", () => {
+    act(() => {
+      root.render(<LeadForm config={baseConfig} />);
+    });
+
+    const phoneInput = container.querySelector<HTMLInputElement>("#cw-lead-phone")!;
+
+    act(() => {
+      setNativeInputValue(phoneInput, "call me maybe");
+    });
+    expect(phoneInput.value).toBe("");
+
+    act(() => {
+      setNativeInputValue(phoneInput, "78677567689999");
+    });
+    expect(phoneInput.value).toBe("(786) 775-6768");
   });
 
   it("on success, replaces the form with an honest confirmation and removes the resubmit affordance", async () => {

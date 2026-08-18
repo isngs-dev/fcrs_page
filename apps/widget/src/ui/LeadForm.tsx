@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { WidgetConfig } from "../config";
 import { CONSENT_PURPOSE, CONSENT_TEXT, submitLead } from "../lead";
+import { formatUsPhoneInput } from "../phoneFormat";
 
 const LOG_PREFIX = "[chatbot-widget]";
 
@@ -135,9 +136,11 @@ export function LeadForm({ config }: LeadFormProps) {
           id="cw-lead-phone"
           className="cw-lead-input"
           type="tel"
+          inputMode="numeric"
           value={phone}
           disabled={submitting}
-          onChange={(e) => setPhone(e.target.value)}
+          placeholder="(555) 123-4567"
+          onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))}
         />
       </div>
 

@@ -176,7 +176,9 @@ describe("CalendlyHandoff", () => {
 
     fillRequiredFields();
     act(() => {
-      setNativeInputValue(getPhoneInput(), "555-1234");
+      // The phone field live-formats as a US number (formatUsPhoneInput) --
+      // typed digits, submitted formatted.
+      setNativeInputValue(getPhoneInput(), "5551234567");
     });
 
     act(() => {
@@ -193,10 +195,28 @@ describe("CalendlyHandoff", () => {
       expect.objectContaining({
         name: "Ada Lovelace",
         email: "ada@example.com",
-        phone: "555-1234",
+        phone: "(555) 123-4567",
         consent: { granted: true, purpose: SCHEDULE_CONSENT_PURPOSE, text: SCHEDULE_CONSENT_TEXT },
       }),
     );
+  });
+
+  it("the phone field strips letters/symbols as typed and caps at 10 digits", () => {
+    act(() => {
+      root.render(<CalendlyHandoff config={baseConfig} summary={baseSummary} />);
+    });
+
+    const phoneInput = getPhoneInput();
+
+    act(() => {
+      setNativeInputValue(phoneInput, "call me maybe");
+    });
+    expect(phoneInput.value).toBe("");
+
+    act(() => {
+      setNativeInputValue(phoneInput, "78677567689999");
+    });
+    expect(phoneInput.value).toBe("(786) 775-6768");
   });
 
   it("omitted phone -> submitLead is called WITHOUT a phone key", async () => {
