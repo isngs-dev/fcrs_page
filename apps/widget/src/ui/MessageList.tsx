@@ -37,15 +37,19 @@ export interface MessageListProps {
  * the orchestrator turn, without duplicating the literal string). */
 export const BOOK_CALL_SUGGESTION_MESSAGE = "Book a call with sales";
 
-// FCRS deployment: replaced the generic SaaS placeholder chips ("How does
-// the Pro plan compare?" / "I need help with a problem") with roofing/
-// solar-relevant equivalents -- same icon/intent pairing (an informational
-// "chat" question, an unchanged "calendar" booking chip, and an urgent
-// "support" question), just on-topic for this business.
+// FCRS deployment: chips pitch the marketing-chatbot product itself to a
+// prospective roofing/solar company owner evaluating this demo (not a
+// homeowner's roofing questions) -- lead-gen/growth pain points plus a
+// direct booking chip. The booking chip's message MUST stay exactly
+// BOOK_CALL_SUGGESTION_MESSAGE (label may read differently) since
+// ChatWidget.tsx#handleSuggestion matches on it by strict equality to route
+// straight to scheduling, bypassing the orchestrator turn.
 const SUGGESTIONS = [
-  { message: "Do you offer free roof inspections?", label: "Do you offer free roof inspections?", icon: "chat" },
-  { message: BOOK_CALL_SUGGESTION_MESSAGE, label: BOOK_CALL_SUGGESTION_MESSAGE, icon: "calendar" },
-  { message: "I have a roof leak, can you help?", label: "I have a roof leak, can you help?", icon: "support" },
+  { message: "I want more qualified roofing leads", label: "I want more qualified roofing leads", icon: "chat" },
+  { message: "I want more roof inspections booked", label: "I want more roof inspections booked", icon: "calendar" },
+  { message: "I want to generate leads with Google Ads", label: "I want to generate leads with Google Ads", icon: "chat" },
+  { message: "I want to generate leads with Meta Ads", label: "I want to generate leads with Meta Ads", icon: "chat" },
+  { message: BOOK_CALL_SUGGESTION_MESSAGE, label: "Book a call with Sales", icon: "calendar" },
 ] as const;
 
 function SuggestionGlyph({ name }: { name: (typeof SUGGESTIONS)[number]["icon"] }) {
@@ -62,9 +66,6 @@ function SuggestionGlyph({ name }: { name: (typeof SUGGESTIONS)[number]["icon"] 
 
   if (name === "calendar") {
     return <svg aria-hidden="true" {...common}><path d="M6 2v4M18 2v4M3 9h18" /><rect x="3" y="4" width="18" height="17" rx="3" /></svg>;
-  }
-  if (name === "support") {
-    return <svg aria-hidden="true" {...common}><path d="M4.9 4.9a10 10 0 0 1 14.2 0M4.9 19.1a10 10 0 0 0 14.2 0M2 12h4m12 0h4" /><circle cx="12" cy="12" r="4" /></svg>;
   }
   return <svg aria-hidden="true" {...common}><path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.7 9.7 0 0 1-4.1-.9L3 21l1.9-4.1A8.4 8.4 0 0 1 3 11.5a8.5 8.5 0 0 1 18 0Z" /></svg>;
 }

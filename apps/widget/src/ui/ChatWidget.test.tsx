@@ -775,7 +775,7 @@ describe("ChatWidget", () => {
 
       expect(container.querySelector(".cw-welcome")?.textContent).toMatch(/Rebecca/i);
       const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
-        (button) => button.textContent?.includes("Do you offer free roof inspections?"),
+        (button) => button.textContent?.includes("I want more qualified roofing leads"),
       );
       expect(suggestion).toBeDefined();
 
@@ -786,11 +786,11 @@ describe("ChatWidget", () => {
 
       expect(sendTurnMock).toHaveBeenCalledWith(
         baseConfig,
-        expect.objectContaining({ message: "Do you offer free roof inspections?", conversationId: null }),
+        expect.objectContaining({ message: "I want more qualified roofing leads", conversationId: null }),
       );
       expect(container.querySelector(".cw-welcome")).not.toBeNull();
-      expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain("Do you offer free roof inspections?");
-      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Do you offer free roof inspections?");
+      expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain("I want more qualified roofing leads");
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("I want more qualified roofing leads");
     });
 
     it("uses browser speech recognition when available and stops it when the panel closes", () => {
@@ -1928,7 +1928,7 @@ describe("ChatWidget", () => {
       openPanel();
 
       const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
-        (button) => button.textContent?.includes("Book a call with sales"),
+        (button) => button.textContent?.includes("Book a call with Sales"),
       );
       expect(suggestion).toBeDefined();
 
@@ -1970,7 +1970,7 @@ describe("ChatWidget", () => {
       openPanel();
 
       const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
-        (button) => button.textContent?.includes("I have a roof leak, can you help?"),
+        (button) => button.textContent?.includes("I want to generate leads with Google Ads"),
       );
       act(() => {
         suggestion?.click();
@@ -1979,7 +1979,7 @@ describe("ChatWidget", () => {
 
       expect(sendTurnMock).toHaveBeenCalledWith(
         baseConfig,
-        expect.objectContaining({ message: "I have a roof leak, can you help?", conversationId: null }),
+        expect.objectContaining({ message: "I want to generate leads with Google Ads", conversationId: null }),
       );
       // The only call is the eager mount-time existingBooking re-check --
       // an ordinary suggestion chip must not trigger a second one.
