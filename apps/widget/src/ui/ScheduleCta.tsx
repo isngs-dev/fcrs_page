@@ -78,6 +78,14 @@ export interface ScheduleCtaProps {
   leadId?: string;
   /** Server-authoritative day map when launched from the persistent CTA. */
   summary?: AvailabilitySummary;
+  /** Called exactly once, right after a real `201` booking confirmation --
+   * the ONE fully-reliable "this visitor now has a booking" signal this
+   * widget has (unlike Calendly's hosted handoff, there is no external tab/
+   * async webhook involved; the server has just confirmed the event
+   * synchronously). Lets the caller hide the persistent "Connect with a
+   * sales rep" CTA immediately instead of waiting for a future page-open's
+   * existingBooking re-check. */
+  onBooked?: () => void;
 }
 
 type Step =
@@ -244,7 +252,7 @@ function buildCalendarMonths(days: AvailabilitySummary["days"]): CalendarMonth[]
   return months;
 }
 
-export function ScheduleCta({ config, leadId, summary }: ScheduleCtaProps) {
+export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaProps) {
   const [step, setStep] = useState<Step>({ name: "loading" });
   const [consentChecked, setConsentChecked] = useState(false);
   const [email, setEmail] = useState("");
@@ -365,6 +373,7 @@ export function ScheduleCta({ config, leadId, summary }: ScheduleCtaProps) {
     }
 
     setStep({ name: "booked", slot });
+    onBooked?.();
   }
 
   if (closed) return null;

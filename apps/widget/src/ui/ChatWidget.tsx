@@ -223,6 +223,21 @@ export function ChatWidget({
   const [pending, setPending] = useState(false);
   const [schedulePending, setSchedulePending] = useState(false);
   const [scheduleError, setScheduleError] = useState(false);
+  // SR-27: hides the persistent "Connect with a sales rep" CTA once this
+  // visitor already has a booking -- showing it afterward reads as "did my
+  // booking not go through?" Two ways this becomes true, covering both
+  // scheduling backends:
+  //   1. handleBooked (below) -- ScheduleCta's own real, synchronous `201`
+  //      confirmation. Fires immediately, same session.
+  //   2. The one-time existingBooking re-check effect below -- the ONLY
+  //      signal available for Calendly's hosted handoff (an external tab,
+  //      no callback into this widget; the real booking is only knowable
+  //      once Calendly's webhook has ingested it server-side) and also
+  //      what correctly reflects a booking made in a PRIOR session on
+  //      reopen/reload for either backend.
+  const [hasBooking, setHasBooking] = useState(false);
+  const handleBooked = useCallback(() => setHasBooking(true), []);
+  const bookingCheckedRef = useRef(false);
   // In-memory only (S14.2 decision 4) — never persisted here (SR-3's
   // sessionStorage mirror, when opted in, lives in resume.ts, not this
   // ref). Seeded from resumeConversationId when a resume is in play (SR-3
@@ -260,6 +275,26 @@ export function ChatWidget({
       unmountedRef.current = true;
       voiceRecognitionRef.current?.abort();
     };
+  }, []);
+
+  // SR-27: one-time existingBooking check on mount (the panel opens
+  // automatically, see `open`'s own comment above -- there is no separate
+  // "first real open" moment to gate this on). Read-only, best-effort: a
+  // failure here just leaves the CTA visible (the safe default) rather than
+  // surfacing an error for a non-essential background check. Guarded by a
+  // ref, not state, so it fires exactly once even if `config` identity
+  // happens to change.
+  useEffect(() => {
+    if (bookingCheckedRef.current) return;
+    bookingCheckedRef.current = true;
+    void (async () => {
+      const result = await fetchAvailabilitySummary(config);
+      if (unmountedRef.current) return;
+      if (result.ok && result.summary.existingBooking !== null) {
+        setHasBooking(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -937,20 +972,23 @@ export function ChatWidget({
                 onIdentityCaptured={handleIdentityCaptured}
                 onHandoffTalk={() => void startScheduling("Talk to a rep")}
                 onHandoffStay={stayWithRebecca}
+                onBooked={handleBooked}
               />
               {scheduleError && (
                 <div className="cw-sched-error" role="alert">
                   We couldn&rsquo;t check appointment availability. <button type="button" className="cw-sched-retry" onClick={() => void startScheduling()}>Retry</button>
                 </div>
               )}
-              <button
-                type="button"
-                className="cw-connect-sales-button"
-                disabled={pending || schedulePending}
-                onClick={() => void startScheduling()}
-              >
-                {schedulePending ? "Connecting…" : "Connect with a sales rep"}
-              </button>
+              {!hasBooking && (
+                <button
+                  type="button"
+                  className="cw-connect-sales-button"
+                  disabled={pending || schedulePending}
+                  onClick={() => void startScheduling()}
+                >
+                  {schedulePending ? "Connecting…" : "Connect with a sales rep"}
+                </button>
+              )}
               <div className="cw-input-row">
                 <div className="cw-composer">
                   <input

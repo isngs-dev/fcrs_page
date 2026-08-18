@@ -52,6 +52,7 @@ export function Bubble({
   onIdentityCaptured,
   onHandoffTalk,
   onHandoffStay,
+  onBooked,
 }: {
   message: ChatMessage;
   config: WidgetConfig;
@@ -60,6 +61,12 @@ export function Bubble({
   onIdentityCaptured?: () => void;
   onHandoffTalk?: () => void;
   onHandoffStay?: () => void;
+  /** Called on a real, confirmed <ScheduleCta> booking (see its own prop
+   * doc) so the caller can hide the persistent "Connect with a sales rep"
+   * CTA. Not wired to <CalendlyHandoff> -- that flow has no reliable
+   * "booking confirmed" signal to report (see ChatWidget.tsx's own
+   * existingBooking re-check, the only honest signal for that path). */
+  onBooked?: () => void;
 }) {
   if (message.role === "system-error") {
     return (
@@ -84,7 +91,11 @@ export function Bubble({
             <SupportHandoff onTalk={onHandoffTalk} onStay={onHandoffStay} />
           ) : null}
           {message.action === "schedule_cta" ? (
-            <ScheduleCta config={config} {...(message.scheduleSummary ? { summary: message.scheduleSummary } : {})} />
+            <ScheduleCta
+              config={config}
+              {...(message.scheduleSummary ? { summary: message.scheduleSummary } : {})}
+              {...(onBooked ? { onBooked } : {})}
+            />
           ) : null}
           {message.action === "calendly_handoff" && message.scheduleSummary ? (
             <CalendlyHandoff config={config} summary={message.scheduleSummary} />

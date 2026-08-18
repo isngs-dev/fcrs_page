@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { WidgetConfig } from "../config";
 import type { TurnResult } from "../turn";
-import type { FetchSlotsResult, FetchAvailabilitySummaryResult, PostHandoffIntentResult } from "../schedule";
+import type { FetchSlotsResult, FetchAvailabilitySummaryResult, PostHandoffIntentResult, BookSlotResult } from "../schedule";
 import type { AdmissionResult } from "../session";
 import type { IdentityResult } from "../identity";
 import type { LeadResult } from "../lead";
@@ -19,6 +19,7 @@ const sendTurnMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<Tur
 const submitIdentityMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<IdentityResult>>();
 const fetchSlotsMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<FetchSlotsResult>>();
 const fetchAvailabilitySummaryMock = vi.fn<(config: WidgetConfig) => Promise<FetchAvailabilitySummaryResult>>();
+const bookSlotMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<BookSlotResult>>();
 const postHandoffIntentMock = vi.fn<(config: WidgetConfig, input: { email: string }) => Promise<PostHandoffIntentResult>>();
 const submitLeadMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<LeadResult>>();
 const mintVisitorSessionMock = vi.fn<(config: WidgetConfig) => Promise<AdmissionResult>>();
@@ -86,6 +87,7 @@ vi.mock("../schedule", async () => {
     fetchSlots: (config: WidgetConfig, input: unknown) => fetchSlotsMock(config, input),
     fetchAvailabilitySummary: (config: WidgetConfig) => fetchAvailabilitySummaryMock(config),
     postHandoffIntent: (config: WidgetConfig, input: { email: string }) => postHandoffIntentMock(config, input),
+    bookSlot: (config: WidgetConfig, input: unknown) => bookSlotMock(config, input),
   };
 });
 
@@ -112,6 +114,23 @@ const baseConfig: WidgetConfig = {
   debug: false,
 };
 
+// SR-27: ChatWidget now issues an EXTRA fetchAvailabilitySummary call on
+// every mount (the one-time existingBooking re-check) -- this default (no
+// existing booking) lets that eager call resolve harmlessly for every test
+// that doesn't care about it, and is also what tests that DO care push an
+// extra mockResolvedValueOnce copy of ahead of their own real target value
+// (the eager mount call always consumes the FIRST queued value).
+const NO_EXISTING_BOOKING_RESULT = {
+  ok: true as const,
+  summary: {
+    action: "lead_form" as const,
+    timezone: "UTC",
+    days: [],
+    transitionMessage: "Happy to connect you with a sales rep.",
+    existingBooking: null,
+  },
+};
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -131,6 +150,8 @@ beforeEach(() => {
   fetchSlotsMock.mockReset();
   fetchSlotsMock.mockResolvedValue({ ok: true, slots: [] });
   fetchAvailabilitySummaryMock.mockReset();
+  fetchAvailabilitySummaryMock.mockResolvedValue(NO_EXISTING_BOOKING_RESULT);
+  bookSlotMock.mockReset();
   postHandoffIntentMock.mockReset();
   postHandoffIntentMock.mockResolvedValue({ ok: true, recorded: true });
   submitLeadMock.mockReset();
@@ -451,7 +472,7 @@ describe("ChatWidget", () => {
     act(() => container.querySelector<HTMLButtonElement>(".cw-handoff-talk")?.click());
     await flush();
 
-    expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
+    expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(2);
     expect(container.querySelector("form.cw-lead-form")).not.toBeNull();
     expect(container.querySelector("input[type=email]")).not.toBeNull();
   });
@@ -521,7 +542,9 @@ describe("ChatWidget", () => {
     act(() => container.querySelector<HTMLButtonElement>(".cw-handoff-stay")?.click());
     await flush();
 
-    expect(fetchAvailabilitySummaryMock).not.toHaveBeenCalled();
+    // The only call is the eager mount-time existingBooking re-check --
+    // "Stay here" itself must not trigger a second one.
+    expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
     expect(container.querySelector(".cw-sched")).toBeNull();
     expect(container.textContent).toContain("Stay with Rebecca");
     expect(container.textContent).toContain("Can you tell me a bit more about what stopped working?");
@@ -1887,6 +1910,7 @@ describe("ChatWidget", () => {
 
   describe("booking chip routes directly to scheduling (bypasses the orchestrator escalate copy)", () => {
     it("clicking the 'Book a call with sales' suggestion chip calls fetchAvailabilitySummary (NOT sendTurn) and renders the scheduling card, not a handoff/support interstitial", async () => {
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
       fetchAvailabilitySummaryMock.mockResolvedValueOnce({
         ok: true,
         summary: {
@@ -1915,7 +1939,7 @@ describe("ChatWidget", () => {
 
       // Went through the same explicit-booking path as the persistent CTA
       // button -- no /public/chat/message turn, no classify/generate/cost.
-      expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
+      expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(2);
       expect(sendTurnMock).not.toHaveBeenCalled();
 
       expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Book a call with sales");
@@ -1957,7 +1981,9 @@ describe("ChatWidget", () => {
         baseConfig,
         expect.objectContaining({ message: "I have a roof leak, can you help?", conversationId: null }),
       );
-      expect(fetchAvailabilitySummaryMock).not.toHaveBeenCalled();
+      // The only call is the eager mount-time existingBooking re-check --
+      // an ordinary suggestion chip must not trigger a second one.
+      expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -2013,6 +2039,7 @@ describe("ChatWidget", () => {
     });
 
     it("clicking the CTA calls fetchAvailabilitySummary (NOT sendTurn) and renders a user bubble + the fixed transition bot bubble + the in-thread staged picker", async () => {
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
       fetchAvailabilitySummaryMock.mockResolvedValueOnce({
         ok: true,
         summary: {
@@ -2035,7 +2062,7 @@ describe("ChatWidget", () => {
       });
       await flush();
 
-      expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
+      expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(2);
       expect(sendTurnMock).not.toHaveBeenCalled();
 
       expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Connect with a sales rep");
@@ -2073,6 +2100,7 @@ describe("ChatWidget", () => {
     });
 
     it("existingBooking non-null shows the keep-vs-book-another ask before the picker", async () => {
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
       fetchAvailabilitySummaryMock.mockResolvedValueOnce({
         ok: true,
         summary: {
@@ -2101,6 +2129,7 @@ describe("ChatWidget", () => {
     });
 
     it("a fetchAvailabilitySummary failure shows an honest error with manual retry, never a fabricated picker", async () => {
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
       fetchAvailabilitySummaryMock.mockResolvedValueOnce({
         ok: false,
         error: {
@@ -2133,6 +2162,7 @@ describe("ChatWidget", () => {
     });
 
     it("a 401 on the CTA click triggers the bounded session-reconnect + retry (mirrors runSend's decision 5), succeeding on a valid re-mint", async () => {
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
       fetchAvailabilitySummaryMock.mockResolvedValueOnce({
         ok: false,
         error: {
@@ -2173,7 +2203,7 @@ describe("ChatWidget", () => {
       await flush();
 
       expect(mintVisitorSessionMock).toHaveBeenCalledTimes(1);
-      expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(2);
+      expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(3);
       const botBubbles = container.querySelectorAll(".cw-bubble-row-bot .cw-bubble-bot");
       expect(botBubbles.length).toBe(1);
       expect(botBubbles[0]?.textContent).toContain("I'd be happy to help you find a time with our sales team.");
@@ -2181,6 +2211,7 @@ describe("ChatWidget", () => {
     });
 
     it("a 401 on the CTA click that fails to reconnect shows an honest error, never a fabricated picker", async () => {
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
       fetchAvailabilitySummaryMock.mockResolvedValueOnce({
         ok: false,
         error: {
@@ -2233,6 +2264,7 @@ describe("ChatWidget", () => {
       };
 
       it("renders the fixed transition message + the email step, NOT the native ScheduleCta picker", async () => {
+        fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
         fetchAvailabilitySummaryMock.mockResolvedValueOnce({ ok: true, summary: calendlySummary });
 
         act(() => {
@@ -2252,6 +2284,7 @@ describe("ChatWidget", () => {
       });
 
       it("submitting the email calls postHandoffIntent, then reveals the link-out button", async () => {
+        fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
         fetchAvailabilitySummaryMock.mockResolvedValueOnce({ ok: true, summary: calendlySummary });
 
         act(() => {
@@ -2291,6 +2324,7 @@ describe("ChatWidget", () => {
       });
 
       it("clicking the link-out button calls window.open(schedulingUrl, '_blank', 'noopener,noreferrer') and never injects a script/iframe", async () => {
+        fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
         fetchAvailabilitySummaryMock.mockResolvedValueOnce({ ok: true, summary: calendlySummary });
         const windowOpenSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
@@ -2337,6 +2371,7 @@ describe("ChatWidget", () => {
       });
 
       it("a postHandoffIntent failure shows an honest error + retry and does NOT reveal the link-out button", async () => {
+        fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
         fetchAvailabilitySummaryMock.mockResolvedValueOnce({ ok: true, summary: calendlySummary });
         postHandoffIntentMock.mockResolvedValueOnce({
           ok: false,
@@ -2385,6 +2420,7 @@ describe("ChatWidget", () => {
       });
 
       it("the link-out button is a focusable <button> with an accessible 'opens in a new tab' label", async () => {
+        fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
         fetchAvailabilitySummaryMock.mockResolvedValueOnce({ ok: true, summary: calendlySummary });
 
         act(() => {
@@ -2416,6 +2452,136 @@ describe("ChatWidget", () => {
         const linkButton = container.querySelector<HTMLButtonElement>(".cw-sched-handoff-link-button");
         expect(linkButton?.tagName).toBe("BUTTON");
         expect(linkButton?.getAttribute("aria-label")?.toLowerCase()).toContain("new tab");
+      });
+    });
+
+    describe("SR-27: hides the persistent CTA once this visitor has a booking", () => {
+      it("a real ScheduleCta booking (201) hides the persistent CTA immediately, without a reload", async () => {
+        sendTurnMock.mockResolvedValueOnce({
+          ok: true,
+          turn: {
+            conversationId: "conv-1",
+            messageId: "msg-1",
+            reply: "Let's find a time.",
+            decision: "answer",
+            confidence: 0.9,
+            sources: [],
+            action: "schedule_cta",
+          },
+        });
+        fetchSlotsMock.mockResolvedValueOnce({
+          ok: true,
+          slots: [{ startsAt: "2026-07-22T14:00:00Z", endsAt: "2026-07-22T14:30:00Z" }],
+        });
+        bookSlotMock.mockResolvedValueOnce({
+          ok: true,
+          booking: { eventId: "evt-1", startsAt: "2026-07-22T14:00:00Z", endsAt: "2026-07-22T14:30:00Z", status: "booked" },
+        });
+
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+
+        expect(getConnectButton()).not.toBeNull();
+
+        typeAndSend("Can we book a call?");
+        await flush();
+
+        expect(container.querySelector(".cw-sched-slot")).not.toBeNull();
+        act(() => {
+          container.querySelector<HTMLButtonElement>(".cw-sched-slot")?.click();
+        });
+        await flush();
+
+        act(() => {
+          container.querySelector<HTMLInputElement>("#cw-sched-consent")?.click();
+        });
+
+        act(() => {
+          container.querySelector<HTMLButtonElement>(".cw-sched-confirm-button")?.click();
+        });
+        await flush();
+        await flush();
+
+        expect(bookSlotMock).toHaveBeenCalledTimes(1);
+        expect(container.querySelector(".cw-sched-confirmation")).not.toBeNull();
+        expect(container.querySelector(".cw-connect-sales-button")).toBeNull();
+      });
+
+      it("the eager mount-time existingBooking re-check hides the CTA before any interaction (covers Calendly + a prior-session booking)", async () => {
+        fetchAvailabilitySummaryMock.mockReset();
+        fetchAvailabilitySummaryMock.mockResolvedValueOnce({
+          ok: true,
+          summary: {
+            action: "lead_form",
+            timezone: "UTC",
+            days: [],
+            transitionMessage: "Happy to connect you with a sales rep.",
+            existingBooking: { startsAt: "2026-07-22T09:00:00+00:00", endsAt: "2026-07-22T09:30:00+00:00", timezone: "UTC" },
+          },
+        });
+
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        await flush();
+
+        expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
+        expect(container.querySelector(".cw-connect-sales-button")).toBeNull();
+      });
+
+      it("the CTA stays visible when there is no booking (neither signal fires)", async () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        await flush();
+
+        expect(getConnectButton()).not.toBeNull();
+      });
+
+      it("a Calendly hosted-handoff completion does NOT itself hide the CTA (no onBooked wired to CalendlyHandoff -- only the existingBooking re-check can)", async () => {
+        const calendlySummary = {
+          action: "calendly_handoff" as const,
+          timezone: "UTC",
+          days: [],
+          transitionMessage: "I'd be happy to help you find a time with our sales team.",
+          existingBooking: null,
+          schedulingUrl: "https://calendly.com/acme/intro",
+        };
+        fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
+        fetchAvailabilitySummaryMock.mockResolvedValueOnce({ ok: true, summary: calendlySummary });
+
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        act(() => {
+          getConnectButton().click();
+        });
+        await flush();
+
+        const emailInput = container.querySelector<HTMLInputElement>("#cw-sched-handoff-email");
+        if (!emailInput) throw new Error("email input not found");
+        act(() => {
+          setNativeInputValue(emailInput, "visitor@example.com");
+          emailInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        const nameInput = container.querySelector<HTMLInputElement>("#cw-sched-handoff-name");
+        if (!nameInput) throw new Error("name input not found");
+        act(() => {
+          setNativeInputValue(nameInput, "Visitor Name");
+          nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        act(() => {
+          container.querySelector<HTMLButtonElement>(".cw-sched-handoff-continue-button")?.click();
+        });
+        await flush();
+
+        expect(container.querySelector(".cw-sched-handoff-link-button")).not.toBeNull();
+        expect(container.querySelector(".cw-connect-sales-button")).not.toBeNull();
       });
     });
   });
