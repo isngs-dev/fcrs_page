@@ -6,10 +6,21 @@
  *   1. A still-required "where should we send the invite?" email step
  *      (decision 8 -- the double-ask is accepted; it exists ONLY to write
  *      the server-side correlation intent that lets the later webhook
- *      backfill visitor_id onto the Calendly booking). Submitting calls
- *      `postHandoffIntent`; the link-out button is NEVER revealed before a
- *      successful (`ok: true`) response -- never open the link without
- *      recording the intent.
+ *      backfill visitor_id onto the Calendly booking), plus name (required)
+ *      and phone (optional) so this visitor becomes a real Lead the admin
+ *      console can see -- scheduling's own `calendly_handoff_intents` row
+ *      is a short-lived, email-only correlation record, never visible in
+ *      any admin UI, so capturing a Lead is a SEPARATE write via the same
+ *      `submitLead` call `LeadForm` uses (lead-capture-crm owns Lead
+ *      records; scheduling never creates one itself). Submitting fires
+ *      both calls concurrently: `postHandoffIntent` is still the
+ *      LOAD-BEARING one -- the link-out button is NEVER revealed before
+ *      its `ok: true` response, never open the link without recording the
+ *      intent. `submitLead` is best-effort alongside it (mirrors the
+ *      Calendly webhook's own best-effort reminder/confirmation writes):
+ *      its failure is logged (PII-safe) but never blocks the booking
+ *      hand-off, since a secondary CRM write must not break the primary
+ *      "get the visitor to Calendly" flow.
  *   2. A link-out button that does exactly
  *      `window.open(schedulingUrl, "_blank", "noopener,noreferrer")`
  *      (decision 1, LOAD-BEARING) -- never an injected Calendly
@@ -18,12 +29,13 @@
  *
  * Honest error + manual retry on a `postHandoffIntent` failure -- never a
  * fabricated "recorded" state. PII-safe console logging (error_code/status/
- * correlation_id only, never the typed email).
+ * correlation_id only, never the typed email/name/phone).
  */
 import { useState } from "react";
 
 import type { WidgetConfig } from "../config";
-import { SCHEDULE_CONSENT_TEXT, postHandoffIntent, type AvailabilitySummary } from "../schedule";
+import { submitLead } from "../lead";
+import { SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT, postHandoffIntent, type AvailabilitySummary } from "../schedule";
 
 const LOG_PREFIX = "[chatbot-widget]";
 
@@ -41,14 +53,37 @@ type Step =
 export function CalendlyHandoff({ config, summary }: CalendlyHandoffProps) {
   const [step, setStep] = useState<Step>({ name: "email" });
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const schedulingUrl = summary.schedulingUrl;
 
-  async function submitEmail() {
-    if (!email.trim()) return;
+  async function submitDetails() {
+    if (!email.trim() || !name.trim()) return;
     setStep({ name: "submitting" });
-    const result = await postHandoffIntent(config, { email: email.trim() });
-    if (!result.ok) {
-      const { errorCode, correlationId, status } = result.error;
+
+    const consent = { granted: true as const, purpose: SCHEDULE_CONSENT_PURPOSE, text: SCHEDULE_CONSENT_TEXT };
+    const [handoffResult, leadResult] = await Promise.all([
+      postHandoffIntent(config, { email: email.trim() }),
+      submitLead(config, {
+        name: name.trim(),
+        email: email.trim(),
+        ...(phone.trim() ? { phone: phone.trim() } : {}),
+        consent,
+      }),
+    ]);
+
+    if (!leadResult.ok) {
+      // Best-effort (mirrors the Calendly webhook's own best-effort
+      // reminder/confirmation writes): a failed CRM write must never block
+      // the primary "get the visitor to Calendly" flow below.
+      const { errorCode, correlationId, status } = leadResult.error;
+      console.error(
+        `${LOG_PREFIX} submitLead failed: ${errorCode} (status=${status ?? "n/a"}, correlation_id=${correlationId ?? "n/a"})`,
+      );
+    }
+
+    if (!handoffResult.ok) {
+      const { errorCode, correlationId, status } = handoffResult.error;
       console.error(
         `${LOG_PREFIX} postHandoffIntent failed: ${errorCode} (status=${status ?? "n/a"}, correlation_id=${correlationId ?? "n/a"})`,
       );
@@ -101,14 +136,48 @@ export function CalendlyHandoff({ config, summary }: CalendlyHandoffProps) {
       </label>
       <input
         id="cw-sched-handoff-email"
-        className="cw-input"
+        className="cw-lead-input"
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         disabled={submitting}
         required
+        placeholder="you@example.com"
+        autoComplete="email"
         aria-label="Invite email"
       />
+
+      <label className="cw-sched-email-label" htmlFor="cw-sched-handoff-name">
+        Your name
+      </label>
+      <input
+        id="cw-sched-handoff-name"
+        className="cw-lead-input"
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        disabled={submitting}
+        required
+        placeholder="Jane Doe"
+        autoComplete="name"
+        aria-label="Your name"
+      />
+
+      <label className="cw-sched-email-label" htmlFor="cw-sched-handoff-phone">
+        Phone number (optional)
+      </label>
+      <input
+        id="cw-sched-handoff-phone"
+        className="cw-lead-input"
+        type="tel"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        disabled={submitting}
+        placeholder="(555) 123-4567"
+        autoComplete="tel"
+        aria-label="Phone number, optional"
+      />
+
       <p className="cw-sched-handoff-consent-note">{SCHEDULE_CONSENT_TEXT}</p>
 
       {step.name === "error" && (
@@ -120,8 +189,8 @@ export function CalendlyHandoff({ config, summary }: CalendlyHandoffProps) {
       <button
         type="button"
         className="cw-sched-handoff-continue-button"
-        disabled={!email.trim() || submitting}
-        onClick={() => void submitEmail()}
+        disabled={!email.trim() || !name.trim() || submitting}
+        onClick={() => void submitDetails()}
       >
         {submitting ? "Continuing…" : "Continue"}
       </button>

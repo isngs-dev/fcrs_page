@@ -7,6 +7,7 @@ import type { TurnResult } from "../turn";
 import type { FetchSlotsResult, FetchAvailabilitySummaryResult, PostHandoffIntentResult } from "../schedule";
 import type { AdmissionResult } from "../session";
 import type { IdentityResult } from "../identity";
+import type { LeadResult } from "../lead";
 
 // React 19's `act()` only batches/flushes updates when this flag is set —
 // unlike mount.test.tsx's synchronous-only assertions, this suite drives
@@ -19,6 +20,7 @@ const submitIdentityMock = vi.fn<(config: WidgetConfig, input: unknown) => Promi
 const fetchSlotsMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<FetchSlotsResult>>();
 const fetchAvailabilitySummaryMock = vi.fn<(config: WidgetConfig) => Promise<FetchAvailabilitySummaryResult>>();
 const postHandoffIntentMock = vi.fn<(config: WidgetConfig, input: { email: string }) => Promise<PostHandoffIntentResult>>();
+const submitLeadMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<LeadResult>>();
 const mintVisitorSessionMock = vi.fn<(config: WidgetConfig) => Promise<AdmissionResult>>();
 const speakGreetingMock = vi.fn<(onBlocked?: () => void) => void>();
 const ttsCancelMock = vi.fn<() => void>();
@@ -87,6 +89,19 @@ vi.mock("../schedule", async () => {
   };
 });
 
+// CalendlyHandoff (rendered for action=calendly_handoff, SR-6/SR-24) now
+// also calls submitLead alongside postHandoffIntent so the visitor becomes
+// a real Lead -- mock it here too so this suite's calendly_handoff tests
+// don't issue a real network call; submitLead's own behavior is covered by
+// lead.test.ts / LeadForm.test.tsx / CalendlyHandoff.test.tsx.
+vi.mock("../lead", async () => {
+  const actual = await vi.importActual<typeof import("../lead")>("../lead");
+  return {
+    ...actual,
+    submitLead: (config: WidgetConfig, input: unknown) => submitLeadMock(config, input),
+  };
+});
+
 import { ChatWidget } from "./ChatWidget";
 import { widgetCss } from "./widgetCss";
 
@@ -118,6 +133,8 @@ beforeEach(() => {
   fetchAvailabilitySummaryMock.mockReset();
   postHandoffIntentMock.mockReset();
   postHandoffIntentMock.mockResolvedValue({ ok: true, recorded: true });
+  submitLeadMock.mockReset();
+  submitLeadMock.mockResolvedValue({ ok: true, lead: { leadId: "lead-1", status: "new" } });
   mintVisitorSessionMock.mockReset();
   speakGreetingMock.mockReset();
   ttsCancelMock.mockReset();
@@ -2252,6 +2269,12 @@ describe("ChatWidget", () => {
           setNativeInputValue(emailInput, "visitor@example.com");
           emailInput.dispatchEvent(new Event("input", { bubbles: true }));
         });
+        const nameInput = container.querySelector<HTMLInputElement>("#cw-sched-handoff-name");
+        if (!nameInput) throw new Error("name input not found");
+        act(() => {
+          setNativeInputValue(nameInput, "Visitor Name");
+          nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
 
         const continueButton = container.querySelector<HTMLButtonElement>(".cw-sched-handoff-continue-button");
         if (!continueButton) throw new Error("continue button not found");
@@ -2285,6 +2308,12 @@ describe("ChatWidget", () => {
         act(() => {
           setNativeInputValue(emailInput, "visitor@example.com");
           emailInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        const nameInput = container.querySelector<HTMLInputElement>("#cw-sched-handoff-name");
+        if (!nameInput) throw new Error("name input not found");
+        act(() => {
+          setNativeInputValue(nameInput, "Visitor Name");
+          nameInput.dispatchEvent(new Event("input", { bubbles: true }));
         });
         act(() => {
           container.querySelector<HTMLButtonElement>(".cw-sched-handoff-continue-button")?.click();
@@ -2338,6 +2367,12 @@ describe("ChatWidget", () => {
           setNativeInputValue(emailInput, "visitor@example.com");
           emailInput.dispatchEvent(new Event("input", { bubbles: true }));
         });
+        const nameInput = container.querySelector<HTMLInputElement>("#cw-sched-handoff-name");
+        if (!nameInput) throw new Error("name input not found");
+        act(() => {
+          setNativeInputValue(nameInput, "Visitor Name");
+          nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
         act(() => {
           container.querySelector<HTMLButtonElement>(".cw-sched-handoff-continue-button")?.click();
         });
@@ -2366,6 +2401,12 @@ describe("ChatWidget", () => {
         act(() => {
           setNativeInputValue(emailInput, "visitor@example.com");
           emailInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        const nameInput = container.querySelector<HTMLInputElement>("#cw-sched-handoff-name");
+        if (!nameInput) throw new Error("name input not found");
+        act(() => {
+          setNativeInputValue(nameInput, "Visitor Name");
+          nameInput.dispatchEvent(new Event("input", { bubbles: true }));
         });
         act(() => {
           container.querySelector<HTMLButtonElement>(".cw-sched-handoff-continue-button")?.click();
