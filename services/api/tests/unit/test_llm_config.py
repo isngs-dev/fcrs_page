@@ -437,6 +437,176 @@ async def test_get_llm_config_embedding_base_url_none_when_null() -> None:
     assert config.embedding_base_url is None
 
 
+# ==============================================================================
+# SR-26: embedding_api_key stored encrypted, distinct from the chat api_key
+# ==============================================================================
+
+
+async def test_upsert_stores_embedding_api_key_as_ciphertext_not_plaintext() -> None:
+    """embedding_api_key is the 9th bound param (index 8), stored encrypted --
+    a REAL hosted provider (unlike the companion container) needs a real,
+    validated credential, and it may differ from the tenant's chat api_key
+    (e.g. Ollama for chat, real OpenAI for embeddings)."""
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+    chat_key = "ollama-key-unrelated"
+    plaintext_embedding_key = "sk-openai-embedding-secret-key"
+
+    await upsert_llm_config(
+        db,
+        claims,
+        provider="openai",
+        model="gpt-oss:20b",
+        api_key=chat_key,
+        embedding_model="text-embedding-3-small",
+        embedding_base_url="https://api.openai.com/v1",
+        embedding_api_key=plaintext_embedding_key,
+    )
+
+    ciphertext = db.last_params[8]
+    assert isinstance(ciphertext, str)
+    assert ciphertext != plaintext_embedding_key
+
+    box = SecretBox(get_api_settings().secret_encryption_key)
+    assert box.decrypt_str(ciphertext) == plaintext_embedding_key
+
+
+async def test_upsert_embedding_api_key_none_when_omitted() -> None:
+    """Omitted embedding_api_key -> None in params (every existing tenant,
+    where the companion container needed no real auth, or where embed and
+    chat legitimately share one provider/key)."""
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await upsert_llm_config(
+        db, claims, provider="openai", model="gpt-4o", api_key="sk-key",
+    )
+
+    assert db.last_params[8] is None
+
+
+async def test_get_llm_config_decrypts_embedding_api_key() -> None:
+    """get_llm_config returns embedding_api_key DECRYPTED, distinct from api_key."""
+    box = SecretBox(get_api_settings().secret_encryption_key)
+    chat_key = "ollama-key-unrelated"
+    embedding_key = "sk-openai-embedding-secret-key"
+    row = {
+        "provider": "openai",
+        "model": "gpt-oss:20b",
+        "api_key_ciphertext": box.encrypt(chat_key),
+        "base_url": "https://ollama.com/v1",
+        "api_version": None,
+        "embedding_model": "text-embedding-3-small",
+        "embedding_base_url": "https://api.openai.com/v1",
+        "embedding_api_key_ciphertext": box.encrypt(embedding_key),
+        "embedding_dimensions": None,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    config = await get_llm_config(db, claims)
+
+    assert config is not None
+    assert config.embedding_api_key == embedding_key
+    assert config.api_key == chat_key
+    assert config.embedding_api_key != config.api_key
+
+
+async def test_get_llm_config_embedding_api_key_none_when_null() -> None:
+    """get_llm_config returns embedding_api_key=None when column is NULL --
+    every existing tenant before this migration."""
+    row = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "api_key_ciphertext": SecretBox(get_api_settings().secret_encryption_key).encrypt("sk-key"),
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": None,
+        "embedding_base_url": None,
+        "embedding_api_key_ciphertext": None,
+        "embedding_dimensions": None,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    config = await get_llm_config(db, claims)
+
+    assert config is not None
+    assert config.embedding_api_key is None
+
+
+# ==============================================================================
+# SR-26: embedding_dimensions (plain int, NOT encrypted -- not a secret)
+# ==============================================================================
+
+
+async def test_upsert_stores_embedding_dimensions() -> None:
+    """embedding_dimensions is the 10th bound param (index 9)."""
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+    chat_key = "ollama-key-unrelated"
+
+    await upsert_llm_config(
+        db, claims, provider="openai", model="gpt-oss:20b", api_key=chat_key,
+        embedding_model="text-embedding-3-small", embedding_dimensions=768,
+    )
+
+    assert db.last_params[9] == 768
+
+
+async def test_upsert_embedding_dimensions_none_when_omitted() -> None:
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await upsert_llm_config(
+        db, claims, provider="openai", model="gpt-4o", api_key="sk-key",
+    )
+
+    assert db.last_params[9] is None
+
+
+async def test_get_llm_config_returns_embedding_dimensions() -> None:
+    row = {
+        "provider": "openai",
+        "model": "gpt-oss:20b",
+        "api_key_ciphertext": SecretBox(get_api_settings().secret_encryption_key).encrypt("sk-key"),
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": "text-embedding-3-small",
+        "embedding_base_url": "https://api.openai.com/v1",
+        "embedding_api_key_ciphertext": None,
+        "embedding_dimensions": 768,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    config = await get_llm_config(db, claims)
+
+    assert config is not None
+    assert config.embedding_dimensions == 768
+
+
+async def test_get_llm_config_embedding_dimensions_none_when_null() -> None:
+    row = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "api_key_ciphertext": SecretBox(get_api_settings().secret_encryption_key).encrypt("sk-key"),
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": None,
+        "embedding_base_url": None,
+        "embedding_api_key_ciphertext": None,
+        "embedding_dimensions": None,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    config = await get_llm_config(db, claims)
+
+    assert config is not None
+    assert config.embedding_dimensions is None
+
+
 async def test_api_key_never_echoed_in_config() -> None:
     """api_key is decrypted internally but must not appear in the LLMConfig fields that
     would be echoed to callers (provider, model, embedding_model, base_url, api_version)."""

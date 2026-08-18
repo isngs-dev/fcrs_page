@@ -32,10 +32,16 @@ _CLASSIFY_REPLY_LOG_LIMIT = 120
 class OpenAICompatibleProvider:
     """OpenAI-wire backend for ``LLMProvider.generate``, ``embed``, ``classify``, and ``stream``."""
 
-    # Class-level default so subclasses that override __init__ without calling
-    # super().__init__() (e.g. AzureOpenAIProvider) still have this attribute
-    # set -- see api/llm/azure_provider.py. Overridden per-instance below.
+    # Class-level defaults so subclasses that override __init__ without
+    # calling super().__init__() (e.g. AzureOpenAIProvider) still have these
+    # attributes set -- see api/llm/azure_provider.py. Overridden per-instance
+    # below. _embedding_dimensions defaulting to None here matters: Azure
+    # doesn't get an embedding_dimensions override from the factory (SR-26,
+    # same as embedding_base_url before it), and without this class-level
+    # default embed() would AttributeError instead of just omitting the
+    # dimensions kwarg.
     _embedding_batch_size: int = 5
+    _embedding_dimensions: int | None = None
 
     def __init__(
         self,
@@ -48,8 +54,11 @@ class OpenAICompatibleProvider:
         client: Any | None = None,
         embedding_base_url: str | None = None,
         embed_client: Any | None = None,
+        embedding_api_key: str | None = None,
+        embedding_dimensions: int | None = None,
     ) -> None:
         self._embedding_batch_size = embedding_batch_size
+        self._embedding_dimensions = embedding_dimensions
         if client is not None:
             self._client = client
         else:
@@ -67,12 +76,20 @@ class OpenAICompatibleProvider:
         # only when embedding_base_url is actually set -- every existing
         # tenant (embedding_base_url unset) keeps using the SAME client
         # object for embed as for everything else, unchanged.
+        #
+        # SR-26: that separate client uses embedding_api_key when set, NOT
+        # the chat api_key -- a REAL hosted provider (e.g. OpenAI) validates
+        # its key strictly, unlike the companion container (no auth at all),
+        # so reusing the chat key would 401 on every embed call whenever
+        # chat and embeddings are genuinely different providers (e.g. Ollama
+        # for chat, OpenAI for embeddings). embedding_api_key unset falls
+        # back to api_key, unchanged from SR-24's behavior.
         if embed_client is not None:
             self._embed_client = embed_client
         elif embedding_base_url is not None:
             from openai import AsyncOpenAI
             self._embed_client = AsyncOpenAI(
-                api_key=api_key,
+                api_key=embedding_api_key if embedding_api_key is not None else api_key,
                 base_url=embedding_base_url,
                 max_retries=max_retries,
                 timeout=timeout,
@@ -144,10 +161,15 @@ class OpenAICompatibleProvider:
             batch = texts[start : start + batch_size]
             batch_t0 = time.monotonic()
             try:
-                resp = await self._embed_client.embeddings.create(
-                    model=model,
-                    input=batch,
-                )
+                # dimensions is OMITTED entirely (not sent as None) unless
+                # configured -- every existing tenant/model that doesn't
+                # support OpenAI's Matryoshka truncation param must never
+                # see it on the wire (regression guard: kwargs stay exactly
+                # {model, input} when unset).
+                create_kwargs: dict[str, object] = {"model": model, "input": batch}
+                if self._embedding_dimensions is not None:
+                    create_kwargs["dimensions"] = self._embedding_dimensions
+                resp = await self._embed_client.embeddings.create(**create_kwargs)
             except APIError as exc:
                 _log.warning(
                     "LLM upstream call failed: provider=openai op=embed model=%s"

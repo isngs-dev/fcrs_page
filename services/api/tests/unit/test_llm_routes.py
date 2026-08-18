@@ -751,3 +751,81 @@ async def test_llm_config_without_embedding_base_url_no_field_in_response() -> N
     assert resp.status_code == 200
     body = resp.json()
     assert "embedding_base_url" not in body
+
+
+# ==============================================================================
+# SR-26: POST /debug/llm/config — embedding_api_key never echoed, embedding_dimensions echoed
+# ==============================================================================
+
+
+async def test_llm_config_embedding_api_key_never_echoed_even_when_set() -> None:
+    """embedding_api_key is stored (9th SQL param) but NEVER appears in the
+    response -- same never-echo rule as the chat api_key."""
+    db = _StubDatabase()
+    app = _build_app(db=db)
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    embedding_key_value = "openai-embedding"
+    embedding_key = "sk-" + embedding_key_value + "-secret-key"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/debug/llm/config",
+            json={
+                "provider": "openai",
+                "base_url": "https://ollama.com/v1",
+                "model": "gpt-oss:20b",
+                "api_key": "ollama",
+                "embedding_model": "text-embedding-3-small",
+                "embedding_base_url": "https://api.openai.com/v1",
+                "embedding_api_key": embedding_key,
+            },
+            cookies={"access_token": token},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "embedding_api_key" not in body
+    assert "api_key" not in body
+    assert embedding_key not in str(body)
+
+    # 9th SQL param must be embedding_api_key's ciphertext -- never the plaintext.
+    assert db.last_params[8] != embedding_key
+    assert isinstance(db.last_params[8], str)
+
+
+async def test_llm_config_stores_and_echoes_embedding_dimensions() -> None:
+    """embedding_dimensions is stored (10th param) and echoed in the response."""
+    db = _StubDatabase()
+    app = _build_app(db=db)
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/debug/llm/config",
+            json={
+                "provider": "openai",
+                "base_url": "https://ollama.com/v1",
+                "model": "gpt-oss:20b",
+                "api_key": "ollama",
+                "embedding_model": "text-embedding-3-small",
+                "embedding_dimensions": 768,
+            },
+            cookies={"access_token": token},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["embedding_dimensions"] == 768
+    assert db.last_params[9] == 768
+
+
+async def test_llm_config_without_embedding_dimensions_no_field_in_response() -> None:
+    """When embedding_dimensions is omitted, the response does not echo it."""
+    db = _StubDatabase()
+    app = _build_app(db=db)
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/debug/llm/config",
+            json={"provider": "anthropic", "model": "claude-opus-4-8", "api_key": "sk-key"},
+            cookies={"access_token": token},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "embedding_dimensions" not in body

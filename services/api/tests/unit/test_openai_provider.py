@@ -512,6 +512,91 @@ async def test_aclose_closes_shared_client_exactly_once() -> None:
     client.close.assert_awaited_once_with()
 
 
+# -- embedding_api_key + embedding_dimensions tests (SR-26: real hosted -------
+# embedding provider, e.g. OpenAI, distinct credential + dimensions request) --
+
+
+async def test_embedding_base_url_with_embedding_api_key_uses_the_distinct_key() -> None:
+    """When both embedding_base_url AND embedding_api_key are set (no client=/
+    embed_client= injected), the SECOND AsyncOpenAI is built with the
+    embedding-specific key -- NOT the chat client's api_key. A real hosted
+    provider (unlike the companion container) validates the key strictly, so
+    reusing the wrong one would 401 on every embed call."""
+    with patch("openai.AsyncOpenAI") as MockOpenAI:
+        chat_mock = MagicMock()
+        embed_mock = MagicMock()
+        MockOpenAI.side_effect = [chat_mock, embed_mock]
+
+        chat_key = "ollama-key-unrelated"
+        embedding_key = "sk-openai-embedding-secret-key"
+
+        OpenAICompatibleProvider(
+            api_key=chat_key,
+            base_url="https://ollama.com/v1",
+            embedding_base_url="https://api.openai.com/v1",
+            embedding_api_key=embedding_key,
+            max_retries=2,
+            timeout=30.0,
+        )
+
+        MockOpenAI.assert_any_call(
+            api_key=chat_key, base_url="https://ollama.com/v1", max_retries=2, timeout=30.0,
+        )
+        MockOpenAI.assert_any_call(
+            api_key=embedding_key, base_url="https://api.openai.com/v1", max_retries=2, timeout=30.0,
+        )
+
+
+async def test_embedding_base_url_without_embedding_api_key_falls_back_to_chat_key() -> None:
+    """embedding_base_url set, embedding_api_key NOT set -> the embed client
+    still uses the chat api_key (unchanged behavior -- the companion
+    container case, which needs no real auth so this never mattered)."""
+    with patch("openai.AsyncOpenAI") as MockOpenAI:
+        chat_mock = MagicMock()
+        embed_mock = MagicMock()
+        MockOpenAI.side_effect = [chat_mock, embed_mock]
+
+        chat_key = "ollama-key-unrelated"
+
+        OpenAICompatibleProvider(
+            api_key=chat_key,
+            base_url="https://ollama.com/v1",
+            embedding_base_url="http://embeddings:8080/v1",
+            max_retries=2,
+            timeout=30.0,
+        )
+
+        MockOpenAI.assert_any_call(
+            api_key=chat_key, base_url="http://embeddings:8080/v1", max_retries=2, timeout=30.0,
+        )
+
+
+async def test_embed_passes_dimensions_when_configured() -> None:
+    """embedding_dimensions set -> embed() includes dimensions= in the
+    embeddings.create() call (OpenAI's Matryoshka truncation)."""
+    stub = _StubEmbeddings(vectors=[[0.1] * 768])
+    client = _make_stub_client(embeddings=stub)
+    provider = OpenAICompatibleProvider(client=client, embedding_dimensions=768)
+
+    await provider.embed(["hello"], model="text-embedding-3-small")
+
+    assert stub.last_kwargs["dimensions"] == 768
+
+
+async def test_embed_omits_dimensions_when_not_configured() -> None:
+    """embedding_dimensions unset (every existing tenant) -> embed() call
+    kwargs stay exactly {model, input}, byte-for-byte unchanged (regression
+    guard -- mirrors test_embed_kwargs_are_exactly_model_and_input)."""
+    stub = _StubEmbeddings()
+    client = _make_stub_client(embeddings=stub)
+    provider = OpenAICompatibleProvider(client=client)
+
+    await provider.embed(["hello"], model="nomic-embed-text")
+
+    assert set(stub.last_kwargs.keys()) == {"model", "input"}
+    assert "dimensions" not in stub.last_kwargs
+
+
 # -- upstream-error logging tests ----------------------------------------------
 
 

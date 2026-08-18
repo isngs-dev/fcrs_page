@@ -158,6 +158,46 @@ def test_factory_threads_retries_and_timeout_to_openai() -> None:
                 timeout=45.0,
                 embedding_batch_size=5,
                 embedding_base_url=None,
+                embedding_api_key=None,
+                embedding_dimensions=None,
+            )
+
+
+def test_factory_threads_embedding_api_key_and_dimensions_to_openai() -> None:
+    """A tenant with a distinct embedding provider/key (SR-26, e.g. real
+    OpenAI for embeddings while chat stays on Ollama) has BOTH passed
+    through unchanged to OpenAICompatibleProvider."""
+    chat_key_value = "ollama"
+    chat_key = chat_key_value + "-key-unrelated"
+    embedding_key = "sk-openai-embedding-secret-key"
+    config = LLMConfig(
+        provider="openai",
+        model="gpt-oss:20b",
+        api_key=chat_key,
+        base_url="https://ollama.com/v1",
+        embedding_model="text-embedding-3-small",
+        embedding_base_url="https://api.openai.com/v1",
+        embedding_api_key=embedding_key,
+        embedding_dimensions=768,
+    )
+    with patch("api.llm.factory.get_api_settings") as mock_settings:
+        mock_settings.return_value.llm_max_retries = 2
+        mock_settings.return_value.llm_timeout_seconds = 30.0
+        mock_settings.return_value.embedding_batch_size = 5
+        with patch(
+            "api.llm.factory.OpenAICompatibleProvider",
+            autospec=True,
+        ) as MockProvider:
+            provider_for(config)
+            MockProvider.assert_called_once_with(
+                api_key=chat_key,
+                base_url="https://ollama.com/v1",
+                max_retries=2,
+                timeout=30.0,
+                embedding_batch_size=5,
+                embedding_base_url="https://api.openai.com/v1",
+                embedding_api_key=embedding_key,
+                embedding_dimensions=768,
             )
 
 

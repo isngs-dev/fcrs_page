@@ -47,6 +47,8 @@ class LLMConfigRequest(BaseModel):
     api_version: str | None = None
     embedding_model: str | None = None
     embedding_base_url: str | None = None
+    embedding_api_key: str | None = None
+    embedding_dimensions: int | None = None
 
 
 class GenerateRequest(BaseModel):
@@ -80,10 +82,11 @@ async def set_llm_config(
     body: LLMConfigRequest,
     request: Request,
     claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
-) -> dict[str, str | None]:
+) -> dict[str, str | int | None]:
     """Set the calling tenant's LLM provider + model + API key.
 
-    Returns provider + model only; the key is encrypted and never echoed.
+    Returns provider + model only; every key (chat and embedding) is
+    encrypted and never echoed.
     """
     await upsert_llm_config(
         request.app.state.db,
@@ -95,6 +98,8 @@ async def set_llm_config(
         api_version=body.api_version,
         embedding_model=body.embedding_model,
         embedding_base_url=body.embedding_base_url,
+        embedding_api_key=body.embedding_api_key,
+        embedding_dimensions=body.embedding_dimensions,
     )
     _log.info(
         "LLM config updated",
@@ -104,7 +109,7 @@ async def set_llm_config(
             "model": body.model,
         },
     )
-    response: dict[str, str | None] = {
+    response: dict[str, str | int | None] = {
         "provider": body.provider,
         "model": body.model,
     }
@@ -112,6 +117,8 @@ async def set_llm_config(
         response["embedding_model"] = body.embedding_model
     if body.embedding_base_url is not None:
         response["embedding_base_url"] = body.embedding_base_url
+    if body.embedding_dimensions is not None:
+        response["embedding_dimensions"] = body.embedding_dimensions
     return response
 
 

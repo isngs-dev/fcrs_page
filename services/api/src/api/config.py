@@ -105,9 +105,11 @@ class ApiSettings(Settings):
     # chunk_overlap_chars: trailing chars of the previous chunk prepended to
     #   the next chunk as sentence-boundary context. Scaled with max_chars to
     #   keep the same ~15% overlap ratio.
-    # SR-24: 384 to match the companion embedding container's sentence-
-    # transformers/all-MiniLM-L6-v2 model (migration 0051). Was 768.
-    embedding_dimension: int = 384
+    # SR-26: back to 768 (migration 0053) -- OpenAI's text-embedding-3-small
+    # requested with dimensions=768 (Matryoshka truncation from its native
+    # 1536), replacing SR-24's self-hosted all-MiniLM-L6-v2 stopgap (which
+    # was fixed at 384, no dimensions knob).
+    embedding_dimension: int = 768
     chunk_max_chars: int = 2000
     chunk_overlap_chars: int = 300
 
