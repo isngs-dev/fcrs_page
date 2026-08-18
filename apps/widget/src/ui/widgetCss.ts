@@ -589,11 +589,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-sched-card .cw-sched-recap-label { margin: 0; color: #8da0bb; font-size: 11px; }
 .cw-sched-card .cw-sched-recap strong { color: var(--cw-ink); font-size: 14px; }
 .cw-sched-email-label { color: var(--cw-ink); font-size: 14px; font-weight: 700; }
-.cw-sched-card .cw-sched-email-input, .cw-sched-card .cw-sched-name-input { min-height: 50px; padding: 11px 13px; border: 1px solid #d8dce2; border-radius: 10px; background: var(--cw-paper); font-size: 14px; }
-.cw-sched-card .cw-sched-phone-group { display: flex; align-items: stretch; min-height: 50px; border: 1px solid #d8dce2; border-radius: 10px; background: var(--cw-paper); overflow: hidden; }
-.cw-sched-card .cw-sched-phone-group:focus-within { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
-.cw-sched-card .cw-sched-phone-code { flex: 0 0 auto; max-width: 92px; margin: 0; padding: 11px 6px 11px 13px; border: none; border-right: 1px solid #d8dce2; border-radius: 0; background: transparent; color: var(--cw-ink); font-size: 14px; font-family: inherit; outline: none; }
-.cw-sched-card .cw-sched-phone-input { flex: 1 1 auto; min-width: 0; min-height: 0; margin: 0; padding: 11px 13px; border: none; border-radius: 0; background: transparent; font-size: 14px; }
+.cw-sched-card .cw-sched-email-input, .cw-sched-card .cw-sched-name-input, .cw-sched-card .cw-sched-phone-input { min-height: 50px; padding: 11px 13px; border: 1px solid #d8dce2; border-radius: 10px; background: var(--cw-paper); font-size: 14px; }
 .cw-sched-card .cw-sched-confirm-actions { align-items: stretch; }
 .cw-sched-card .cw-sched-confirm-actions .cw-sched-back-button { flex: 0 0 auto; min-width: 82px; border-radius: 9px; font-size: 13px; }
 .cw-sched-card .cw-sched-confirm-actions .cw-sched-confirm-button { flex: 1 1 auto; border-radius: 9px; font-size: 13px; }

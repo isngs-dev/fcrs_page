@@ -39,7 +39,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { WidgetConfig } from "../config";
 import { SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT, bookSlot, fetchSlots, type AvailabilitySummary, type Slot } from "../schedule";
-import { COUNTRY_CALLING_CODES, dialCodeForIso, guessCountryIso } from "../countryCodes";
+import { formatUsPhoneInput } from "../phoneFormat";
 
 const LOG_PREFIX = "[chatbot-widget]";
 
@@ -258,7 +258,6 @@ export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaPr
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [phoneCountryIso, setPhoneCountryIso] = useState(() => guessCountryIso());
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [lastLoadedSlots, setLastLoadedSlots] = useState<Slot[]>([]);
@@ -345,7 +344,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaPr
       ...(leadId ? { leadId } : {}),
       ...(email.trim() ? { email: email.trim() } : {}),
       ...(name.trim() ? { name: name.trim() } : {}),
-      ...(phone.trim() ? { phone: `${dialCodeForIso(phoneCountryIso)} ${phone.trim()}` } : {}),
+      ...(phone.trim() ? { phone: phone.trim() } : {}),
     });
 
     if (!result.ok) {
@@ -586,29 +585,17 @@ export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaPr
           <label className="cw-sched-email-label" htmlFor="cw-sched-email">Where should we send the invite?</label>
           <input id="cw-sched-email" className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
           <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} aria-label="Name, optional" placeholder="Name (optional)" autoComplete="name" />
-          <div className="cw-sched-phone-group">
-            <select
-              className="cw-sched-phone-code"
-              value={phoneCountryIso}
-              onChange={(e) => setPhoneCountryIso(e.target.value)}
-              disabled={submitting}
-              aria-label="Phone country code"
-            >
-              {COUNTRY_CALLING_CODES.map((c) => (
-                <option key={c.iso} value={c.iso}>{c.dial} {c.iso}</option>
-              ))}
-            </select>
-            <input
-              className="cw-input cw-sched-phone-input"
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              disabled={submitting}
-              aria-label="Phone, optional"
-              placeholder="Phone (optional)"
-              autoComplete="tel"
-            />
-          </div>
+          <input
+            className="cw-input cw-sched-phone-input"
+            type="tel"
+            inputMode="numeric"
+            value={phone}
+            onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))}
+            disabled={submitting}
+            aria-label="Phone, optional"
+            placeholder="(555) 123-4567"
+            autoComplete="tel"
+          />
 
           <div className="cw-sched-consent-row">
             <input

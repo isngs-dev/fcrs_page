@@ -659,7 +659,7 @@ describe("ScheduleCta", () => {
       expect(container.querySelector(".cw-sched-success-card")?.textContent).toMatch(/Sales team/i);
     });
 
-    it("phone: selecting a country code and typing a number sends the combined dial code + number", async () => {
+    it("phone: strips non-digit characters live-typing and formats/sends a US number", async () => {
       fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
       bookSlotMock.mockResolvedValueOnce({
         ok: true,
@@ -679,18 +679,17 @@ describe("ScheduleCta", () => {
       });
       continueFromTimeSelection();
 
-      const phoneCodeSelect = container.querySelector<HTMLSelectElement>(".cw-sched-phone-code");
-      if (!phoneCodeSelect) throw new Error("phone country code select not found");
+      expect(container.querySelector(".cw-sched-phone-code")).toBeNull();
       const phoneInput = container.querySelector<HTMLInputElement>(".cw-sched-phone-input");
       if (!phoneInput) throw new Error("phone input not found");
 
+      // Letters/symbols are stripped as typed -- not just rejected on submit
+      // -- and the digits are progressively formatted as a US number.
       act(() => {
-        phoneCodeSelect.value = "GB";
-        phoneCodeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        setNativeInputValue(phoneInput, "(786) abc775-6768xyz9999");
       });
-      act(() => {
-        setNativeInputValue(phoneInput, "7911 123456");
-      });
+      expect(phoneInput.value).toBe("(786) 775-6768");
+
       act(() => {
         setNativeInputValue(getEmailInput(), "invite@example.com");
       });
@@ -704,10 +703,10 @@ describe("ScheduleCta", () => {
 
       expect(bookSlotMock).toHaveBeenCalledTimes(1);
       const [, bookInput] = bookSlotMock.mock.calls[0] as [WidgetConfig, { phone?: string }];
-      expect(bookInput.phone).toBe("+44 7911 123456");
+      expect(bookInput.phone).toBe("(786) 775-6768");
     });
 
-    it("omits phone entirely when the number field is left blank, regardless of the selected country code", async () => {
+    it("omits phone entirely when the number field is left blank", async () => {
       fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
       bookSlotMock.mockResolvedValueOnce({
         ok: true,
