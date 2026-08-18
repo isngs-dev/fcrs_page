@@ -46,7 +46,7 @@ export const BOOK_CALL_SUGGESTION_MESSAGE = "Book a call with sales";
 // straight to scheduling, bypassing the orchestrator turn.
 const SUGGESTIONS = [
   { message: "I want more qualified roofing leads", label: "I want more qualified roofing leads", icon: "chat" },
-  { message: "I want more roof inspections booked", label: "I want more roof inspections booked", icon: "calendar" },
+  { message: "I want more roof inspections booked", label: "I want more roof inspections booked", icon: "chat" },
   { message: "I want to generate leads with Google Ads", label: "I want to generate leads with Google Ads", icon: "chat" },
   { message: "I want to generate leads with Meta Ads", label: "I want to generate leads with Meta Ads", icon: "chat" },
   { message: BOOK_CALL_SUGGESTION_MESSAGE, label: "Book a call with Sales", icon: "calendar" },
