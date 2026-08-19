@@ -320,7 +320,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-typing-dot:nth-child(3) { background: var(--cw-line-dashed); }
 
 .cw-line { align-self: center; padding: 7px 10px; border-radius: 8px; font-size: 12px; text-align: center; }
-.cw-line-error, .cw-lead-error, .cw-sched-error { border: 1px solid var(--cw-danger-line); background: var(--cw-danger-bg); color: var(--cw-danger-ink); }
+.cw-line-error, .cw-lead-error, .cw-sched-error, .cw-voice-error { border: 1px solid var(--cw-danger-line); background: var(--cw-danger-bg); color: var(--cw-danger-ink); }
 
 /* Composer — pill input + 38px circular citron send (ink arrow); disabled = citron-soft/faint arrow */
 .cw-input-row { flex: 0 0 auto; display: flex; flex-direction: column; padding: 12px 16px 15px; border-top: 1px solid #eef0f2; background: var(--cw-paper); }
@@ -394,7 +394,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   cursor: pointer;
 }
 .cw-lead-consent-label, .cw-sched-consent-label { color: #5a5b54; font-size: 11px; line-height: 1.45; }
-.cw-lead-error, .cw-sched-error { padding: 7px 8px; border-radius: 7px; font-size: 11px; }
+.cw-lead-error, .cw-sched-error, .cw-voice-error { padding: 7px 8px; border-radius: 7px; font-size: 11px; }
+.cw-voice-error { margin: 8px 18px 0; }
 
 .cw-lead-submit, .cw-sched-confirm-button {
   min-height: 44px;

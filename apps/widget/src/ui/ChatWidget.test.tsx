@@ -857,6 +857,145 @@ describe("ChatWidget", () => {
       expect(container.querySelector(".cw-voice-button")).toBeNull();
     });
 
+    describe("voice input error feedback (previously 100% silent -- onerror just reset listening)", () => {
+      class FakeRecognition {
+        static latest: FakeRecognition | null = null;
+        continuous = true;
+        interimResults = true;
+        lang = "";
+        onstart: (() => void) | null = null;
+        onend: (() => void) | null = null;
+        onerror: ((event: { error: string }) => void) | null = null;
+        onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null = null;
+        start = vi.fn(() => this.onstart?.());
+        stop = vi.fn(() => this.onend?.());
+        abort = vi.fn();
+
+        constructor() {
+          FakeRecognition.latest = this;
+        }
+      }
+
+      function getVoiceButton(): HTMLButtonElement {
+        const button = container.querySelector<HTMLButtonElement>(".cw-voice-button");
+        if (!button) throw new Error("voice button not found");
+        return button;
+      }
+
+      beforeEach(() => {
+        Object.defineProperty(window, "webkitSpeechRecognition", {
+          configurable: true,
+          value: FakeRecognition,
+        });
+      });
+
+      afterEach(() => {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      });
+
+      it("shows an honest message when the browser denies microphone permission ('not-allowed')", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        act(() => {
+          FakeRecognition.latest?.onerror?.({ error: "not-allowed" });
+        });
+
+        expect(container.querySelector(".cw-voice-error")?.textContent).toMatch(/microphone access was denied/i);
+        expect(getVoiceButton().getAttribute("aria-pressed")).toBe("false");
+      });
+
+      it("shows an honest message when no microphone is found ('audio-capture')", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        act(() => {
+          FakeRecognition.latest?.onerror?.({ error: "audio-capture" });
+        });
+
+        expect(container.querySelector(".cw-voice-error")?.textContent).toMatch(/no microphone was found/i);
+      });
+
+      it("stays silent (no alarming error) for 'no-speech' -- not detecting speech in the window is normal, not a failure", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        act(() => {
+          FakeRecognition.latest?.onerror?.({ error: "no-speech" });
+        });
+
+        expect(container.querySelector(".cw-voice-error")).toBeNull();
+      });
+
+      it("stays silent for 'aborted' -- a stop()/abort() call is not a failure", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        act(() => {
+          FakeRecognition.latest?.onerror?.({ error: "aborted" });
+        });
+
+        expect(container.querySelector(".cw-voice-error")).toBeNull();
+      });
+
+      it("clears a previous error when the visitor tries voice input again", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        act(() => {
+          getVoiceButton().click();
+        });
+        act(() => {
+          FakeRecognition.latest?.onerror?.({ error: "not-allowed" });
+        });
+        expect(container.querySelector(".cw-voice-error")).not.toBeNull();
+
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        expect(container.querySelector(".cw-voice-error")).toBeNull();
+      });
+
+      it("a successful result never shows an error", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        act(() => {
+          FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "Hello there" } }] });
+        });
+
+        expect(container.querySelector(".cw-voice-error")).toBeNull();
+        expect(getInput().value).toBe("Hello there");
+      });
+    });
+
     it("has an in-panel close control that shows the exit confirmation, then closes + restores launcher focus on Yes", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);

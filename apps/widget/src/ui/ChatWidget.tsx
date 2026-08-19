@@ -173,6 +173,10 @@ interface VoiceRecognitionResultEvent {
   results: ArrayLike<{ 0: { transcript: string } }>;
 }
 
+interface VoiceRecognitionErrorEvent {
+  error: string;
+}
+
 interface VoiceRecognition {
   continuous: boolean;
   interimResults: boolean;
@@ -182,8 +186,33 @@ interface VoiceRecognition {
   abort: () => void;
   onstart: (() => void) | null;
   onend: (() => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: VoiceRecognitionErrorEvent) => void) | null;
   onresult: ((event: VoiceRecognitionResultEvent) => void) | null;
+}
+
+/**
+ * Maps the Web Speech API's `SpeechRecognitionErrorEvent.error` codes to an
+ * honest, visitor-facing message -- or `null` for the two codes that are
+ * NOT real failures ("no-speech": the listening window closed with nothing
+ * said; "aborted": `stop()`/`abort()` was called, e.g. the visitor's own
+ * click or the panel closing) and must stay silent, not alarm the visitor
+ * over normal behavior.
+ */
+function voiceErrorMessage(code: string): string | null {
+  switch (code) {
+    case "no-speech":
+    case "aborted":
+      return null;
+    case "not-allowed":
+    case "service-not-allowed":
+      return "Microphone access was denied. Please allow microphone access in your browser to use voice input.";
+    case "audio-capture":
+      return "No microphone was found. Please check your device and try again.";
+    case "network":
+      return "Voice input needs an internet connection. Please try again.";
+    default:
+      return "Voice input isn't available right now. Please type your message instead.";
+  }
 }
 
 type VoiceRecognitionConstructor = new () => VoiceRecognition;
@@ -268,6 +297,15 @@ export function ChatWidget({
   const pendingIdentityQuestionRef = useRef<{ message: string; conversationId: string | null } | null>(null);
   const voiceRecognitionRef = useRef<VoiceRecognition | null>(null);
   const [listening, setListening] = useState(false);
+  // Honest voice-input error (free, browser-native SpeechRecognition --
+  // previously failed 100% silently: onerror just reset `listening` with
+  // no feedback at all, so a visitor whose mic permission was denied (or
+  // any other real failure) saw the button revert with zero explanation,
+  // reading as "broken". "no-speech"/"aborted" are NOT real failures (no
+  // speech detected in the window / the visitor's own stop) and never set
+  // this -- only genuine problems (denied permission, no mic hardware, no
+  // network) do.
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const voiceSupported = getVoiceRecognitionConstructor() !== null;
 
   useEffect(() => {
@@ -409,6 +447,7 @@ export function ChatWidget({
     setPending(false);
     setSchedulePending(false);
     setScheduleError(false);
+    setVoiceError(null);
     conversationIdRef.current = null;
     resumedConversationInPlayRef.current = false;
     lastFailedSendRef.current = null;
@@ -464,13 +503,18 @@ export function ChatWidget({
 
     const Recognition = getVoiceRecognitionConstructor();
     if (!Recognition) return;
+    setVoiceError(null);
     const recognition = new Recognition();
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.lang = document.documentElement.lang || "en-US";
     recognition.onstart = () => setListening(true);
     recognition.onend = () => setListening(false);
-    recognition.onerror = () => setListening(false);
+    recognition.onerror = (event) => {
+      setListening(false);
+      const message = voiceErrorMessage(event.error);
+      if (message) setVoiceError(message);
+    };
     recognition.onresult = (event) => {
       const transcript = event.results[0]?.[0]?.transcript?.trim();
       if (transcript) setInputValue(transcript);
@@ -880,6 +924,7 @@ export function ChatWidget({
   const resetChat = useCallback(() => {
     voiceRecognitionRef.current?.abort();
     setListening(false);
+    setVoiceError(null);
     setMessages([]);
     setInputValue("");
     setPending(false);
@@ -988,6 +1033,11 @@ export function ChatWidget({
                 >
                   {schedulePending ? "Connecting…" : "Connect with a sales rep"}
                 </button>
+              )}
+              {voiceError && (
+                <div className="cw-voice-error" role="alert">
+                  {voiceError}
+                </div>
               )}
               <div className="cw-input-row">
                 <div className="cw-composer">
