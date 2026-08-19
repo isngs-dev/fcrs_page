@@ -20,13 +20,25 @@
  * Backend reality check (2026-07-19 restyle): the 5a mock shows a
  * multi-source table with INDEXED/PROCESSING/FAILED badges and a chunk
  * count column. The real backend (services/api/src/api/ingestion/routes.py)
- * has no list endpoint -- only `GET /admin/ingestion/docs/{doc_id}`, one
- * document at a time -- and no chunk count in its response payload
- * (`chunks_out` is dropped before the API boundary). The real `doc.status`
- * enum is `pending`/`parsed`/`failed` (not `INDEXED`/`PROCESSING`/`FAILED`);
- * `run.status` is `queued`/`running`/`succeeded`/`failed`. This component
- * therefore renders a single-source status card styled per the 5a table row
- * recipe rather than fabricating a multi-row table the backend can't back.
+ * has no chunk count in its response payload (`chunks_out` is dropped before
+ * the API boundary), and the real `doc.status` enum is `pending`/`parsed`/
+ * `failed` (not `INDEXED`/`PROCESSING`/`FAILED`); `run.status` is
+ * `queued`/`running`/`succeeded`/`failed`. This component therefore renders
+ * a single-source LIVE-POLLING status card styled per the 5a table row
+ * recipe, not a multi-row table.
+ *
+ * Knowledge Base list feature: a real `GET /admin/ingestion/docs` list
+ * endpoint now exists (`doc-list.tsx`'s `<KnowledgeDocList>`, rendered by
+ * `page.tsx` as a separate, permanent section) -- this component's
+ * `StatusPanel` is deliberately KEPT as-is for its live 2.5s-polling
+ * progress feedback on the doc just uploaded; the list is a static
+ * server-rendered snapshot that has no polling of its own. Accepted
+ * consequence: right after uploading, the new doc briefly appears in both
+ * places (this status card AND the list below) until the admin navigates
+ * away or uploads again -- an explicit, deliberate UX call, not an
+ * oversight. Retiring this status card in favor of per-row polling inside
+ * the list is an explicit non-goal.
+ *
  * "Coverage check" and "Test the bot" have no backend behind them at all
  * (see `CoverageCheckCard`/`TestBotCard` below) -- both render honest
  * unavailable/coming-soon states, not invented data.
@@ -35,7 +47,9 @@ import { useEffect, useId, useRef, useState, type DragEvent, type FormEvent } fr
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   getDocStatus,
   uploadKnowledge,
@@ -438,6 +452,8 @@ export function UploadForm({ tenantId }: { tenantId?: string } = {}) {
   const [isDragActive, setIsDragActive] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputId = useId();
+  const titleId = useId();
+  const descriptionId = useId();
 
   function applyFiles(files: FileList | null) {
     const file = files?.[0];
@@ -490,6 +506,16 @@ export function UploadForm({ tenantId }: { tenantId?: string } = {}) {
 
   return (
     <form ref={formRef} action={formAction} onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={titleId}>Title (optional)</Label>
+        <Input id={titleId} name="title" placeholder="Falls back to the filename when left blank" />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={descriptionId}>Description (optional)</Label>
+        <Textarea id={descriptionId} name="description" rows={2} placeholder="What's in this document?" />
+      </div>
+
       <Dropzone
         fileInputId={fileInputId}
         selectedFileName={selectedFileName}

@@ -8,15 +8,14 @@
  * `require_roles(Role.CLIENT_ADMIN)` (routes.py:49) is an exact allowlist,
  * not hierarchical.
  *
- * Layout note: the 5a mock shows a full sources table (multiple rows,
- * chunk counts, mixed source types) fed by a real list endpoint. The actual
- * backend (services/api/src/api/ingestion/routes.py) only exposes
- * `GET /admin/ingestion/docs/{doc_id}` -- a single document by id, no list
- * route, no chunk count in the response. So this page keeps the upload +
- * single-source-status flow it already had, restyled to the 5a visual
- * recipe (header meta line, dashed dropzone, source-row status card,
- * Coverage check + Test the bot side cards) rather than fabricating a
- * multi-row table the backend can't back.
+ * Knowledge Base list feature: `GET /admin/ingestion/docs` now exists, so
+ * this page fetches the real list server-side (`listKnowledgeDocs`,
+ * `adminApiFetch` is always `cache: "no-store"`) and renders it via
+ * `<KnowledgeDocList>` below the upload card, sorted newest-first exactly
+ * as the backend returns it. `uploadKnowledge` (actions.ts) calls
+ * `revalidatePath("/knowledge")` on a fresh upload, so this list reflects
+ * the new item immediately without a manual reload -- no client-side
+ * polling/fetching needed here, this stays a plain server-rendered list.
  *
  * SR-27 slice 3: geometry-only restyle to `Console.dc.html:458-499` -- fixed
  * 360px right column (was a fractional `2.2fr_1fr` track), 22px/24px card
@@ -25,11 +24,14 @@
  */
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
+import { listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
 import { UploadForm, CoverageCheckCard, TestBotCard } from "@/app/(protected)/knowledge/upload-form";
+import { KnowledgeDocList } from "@/app/(protected)/knowledge/doc-list";
 import { SoftCard } from "@/components/admin/soft-card";
 
 export default async function KnowledgePage() {
   await requireRole("CLIENT_ADMIN");
+  const docsResult = await listKnowledgeDocs();
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-5 sm:p-7">
@@ -65,6 +67,14 @@ export default async function KnowledgePage() {
           <TestBotCard />
         </div>
       </div>
+
+      <SoftCard className="flex-1 px-6 pb-6 pt-4">
+        <h2 className="pb-0.5 text-[16px] font-semibold text-foreground">Uploaded knowledge</h2>
+        <p className="mb-[18px] mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
+          Every knowledge item on file for this bot, newest upload first.
+        </p>
+        <KnowledgeDocList result={docsResult} />
+      </SoftCard>
     </div>
   );
 }

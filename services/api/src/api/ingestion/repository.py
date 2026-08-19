@@ -63,6 +63,9 @@ class KnowledgeDoc:
     storage_key: str
     created_at: datetime
     updated_at: datetime
+    title: str | None = None
+    description: str | None = None
+    uploaded_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -110,11 +113,18 @@ async def create_doc(
     content_hash: str,
     storage_key: str,
     doc_id: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    uploaded_by: str | None = None,
 ) -> KnowledgeDoc:
     """Insert a new ``knowledge_docs`` row with ``status='pending'``.
 
     Returns the resulting ``KnowledgeDoc``. ``doc_id`` defaults to a fresh
-    ``uuid4().hex``; the caller may supply one for idempotency.
+    ``uuid4().hex``; the caller may supply one for idempotency. ``title``/
+    ``description`` are admin-supplied, optional metadata (Knowledge Base
+    list feature); ``uploaded_by`` is the uploading admin's user id
+    (``AuthClaims.subject``) for provenance/display, never accepted from a
+    request body.
     """
     _reject_global(claims)
 
@@ -128,17 +138,20 @@ async def create_doc(
         "pending",
         content_hash,
         storage_key,
+        title,
+        description,
+        uploaded_by,
     ]
     await db.execute(
         "INSERT INTO knowledge_docs "
         "(tenant_id, doc_id, source, filename, content_type, status, "
-        " content_hash, storage_key) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        " content_hash, storage_key, title, description, uploaded_by) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         *params,
     )
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
-        "storage_key, created_at, updated_at "
+        "storage_key, created_at, updated_at, title, description, uploaded_by "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND doc_id = $2",
         claims.tenant_id,
@@ -164,7 +177,7 @@ async def find_doc_by_hash(
 
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
-        "storage_key, created_at, updated_at "
+        "storage_key, created_at, updated_at, title, description, uploaded_by "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND content_hash = $2",
         claims.tenant_id,
@@ -183,13 +196,40 @@ async def get_doc(
 
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
-        "storage_key, created_at, updated_at "
+        "storage_key, created_at, updated_at, title, description, uploaded_by "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND doc_id = $2",
         claims.tenant_id,
         doc_id,
     )
     return _row_to_doc(row) if row is not None else None
+
+
+async def list_docs(
+    db: Database,
+    claims: AuthClaims,
+) -> list[KnowledgeDoc]:
+    """Return all of the caller's tenant's docs, newest upload first.
+
+    Knowledge Base list feature: backs ``GET /admin/ingestion/docs``. The
+    ``LIMIT`` is a cheap defensive cap against a runaway result set, not real
+    pagination — no offset/page params, since realistic per-tenant document
+    counts are small and nothing has asked for pagination. Uses the existing
+    ``idx_knowledge_docs_tenant_created (tenant_id, created_at)`` index
+    (migration 0010) — no new index needed.
+    """
+    _reject_global(claims)
+
+    rows = await db.fetch(
+        "SELECT doc_id, source, filename, content_type, status, content_hash, "
+        "storage_key, created_at, updated_at, title, description, uploaded_by "
+        "FROM knowledge_docs "
+        "WHERE tenant_id = $1 "
+        "ORDER BY created_at DESC "
+        "LIMIT 1000",
+        claims.tenant_id,
+    )
+    return [_row_to_doc(row) for row in rows]
 
 
 async def update_doc_status(
@@ -489,6 +529,12 @@ def _row_to_doc(row: Any) -> KnowledgeDoc:
         storage_key=str(row["storage_key"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        # .get(), not row[...]: the live DB always has these columns
+        # post-migration-0054, but pre-existing test stub seed dicts that
+        # don't yet carry these keys should degrade to None, not KeyError.
+        title=row.get("title"),
+        description=row.get("description"),
+        uploaded_by=row.get("uploaded_by"),
     )
 
 

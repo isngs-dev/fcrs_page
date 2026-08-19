@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "apps/fcrs-landing", "run", "dev"],
       "port": 4321
+    },
+    {
+      "name": "admin-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "apps/admin-web", "run", "dev"],
+      "port": 3000
     }
   ]
 }

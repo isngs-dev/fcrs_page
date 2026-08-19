@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const adminApiFetchMock = vi.fn();
+const revalidatePathMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -10,7 +11,11 @@ vi.mock("@/lib/api", async () => {
   };
 });
 
-const { uploadKnowledge, getDocStatus } = await import(
+vi.mock("next/cache", () => ({
+  revalidatePath: (...args: unknown[]) => revalidatePathMock(...args),
+}));
+
+const { uploadKnowledge, getDocStatus, listKnowledgeDocs } = await import(
   "@/app/(protected)/knowledge/actions"
 );
 const { AdminApiError } = await import("@/lib/api");
@@ -19,9 +24,14 @@ function jsonResponse(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-function buildFormData(file: File | null): FormData {
+function buildFormData(
+  file: File | null,
+  extra: { title?: string; description?: string } = {}
+): FormData {
   const fd = new FormData();
   if (file) fd.set("file", file);
+  if (extra.title !== undefined) fd.set("title", extra.title);
+  if (extra.description !== undefined) fd.set("description", extra.description);
   return fd;
 }
 
@@ -35,6 +45,7 @@ describe("uploadKnowledge", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     adminApiFetchMock.mockReset();
+    revalidatePathMock.mockReset();
   });
 
   it("rejects a missing file client-side without calling adminApiFetch", async () => {
@@ -216,6 +227,178 @@ describe("uploadKnowledge", () => {
     expect(adminApiFetchMock).toHaveBeenCalledWith(
       "/admin/tenants/tenant-x/ingestion/upload",
       expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("revalidates the implicit /knowledge path on a fresh (non-idempotent) upload", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", run_id: "run-1", status: "pending" }, 200)
+    );
+
+    await uploadKnowledge(undefined, { status: "idle" }, buildFormData(makeFile()));
+
+    expect(revalidatePathMock).toHaveBeenCalledWith("/knowledge");
+  });
+
+  it("revalidates the tenant-scoped path when tenantId is bound", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", run_id: "run-1", status: "pending" }, 200)
+    );
+
+    await uploadKnowledge("tenant-x", { status: "idle" }, buildFormData(makeFile()));
+
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/tenant-x/knowledge");
+  });
+
+  it("does NOT revalidate on an idempotent re-upload (run_id: null, list unchanged)", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-2", run_id: null, status: "parsed" }, 200)
+    );
+
+    await uploadKnowledge(undefined, { status: "idle" }, buildFormData(makeFile()));
+
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+
+  it("includes title/description in the outgoing FormData when provided, trimmed", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", run_id: "run-1", status: "pending" }, 200)
+    );
+
+    await uploadKnowledge(
+      undefined,
+      { status: "idle" },
+      buildFormData(makeFile(), { title: "  Refund policy  ", description: "  How refunds work.  " })
+    );
+
+    const [, init] = adminApiFetchMock.mock.calls[0] as [string, { body: FormData }];
+    expect(init.body.get("title")).toBe("Refund policy");
+    expect(init.body.get("description")).toBe("How refunds work.");
+  });
+
+  it("omits title/description entirely from the outgoing FormData when left blank", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", run_id: "run-1", status: "pending" }, 200)
+    );
+
+    await uploadKnowledge(
+      undefined,
+      { status: "idle" },
+      buildFormData(makeFile(), { title: "   ", description: "" })
+    );
+
+    const [, init] = adminApiFetchMock.mock.calls[0] as [string, { body: FormData }];
+    expect(init.body.get("title")).toBeNull();
+    expect(init.body.get("description")).toBeNull();
+  });
+});
+
+describe("listKnowledgeDocs", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+  });
+
+  it("maps a 200 body to an ok result with camelCase fields", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          docs: [
+            {
+              doc_id: "doc-1",
+              title: "Refund policy",
+              description: "How refunds work.",
+              filename: "refunds.txt",
+              content_type: "text/plain",
+              status: "parsed",
+              uploaded_by: "user-1",
+              uploaded_by_name: "Jane Admin",
+              created_at: "2026-08-18T12:00:00Z",
+            },
+          ],
+        },
+        200
+      )
+    );
+
+    const result = await listKnowledgeDocs();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.docs).toHaveLength(1);
+      expect(result.docs[0]).toEqual({
+        docId: "doc-1",
+        title: "Refund policy",
+        description: "How refunds work.",
+        filename: "refunds.txt",
+        contentType: "text/plain",
+        status: "parsed",
+        uploadedBy: "user-1",
+        uploadedByName: "Jane Admin",
+        createdAt: "2026-08-18T12:00:00Z",
+      });
+    }
+  });
+
+  it("maps an empty docs array to an ok result with an empty list, never an error", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ docs: [] }, 200));
+
+    const result = await listKnowledgeDocs();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.docs).toEqual([]);
+    }
+  });
+
+  it("maps an AdminApiError to an error result with the correlation id", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(500, {
+        error_code: "INTERNAL_SERVER_ERROR",
+        message: "Something went wrong.",
+        correlation_id: "corr-list-1",
+      })
+    );
+
+    const result = await listKnowledgeDocs();
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.correlationId).toBe("corr-list-1");
+      expect(result.message).toContain("corr-list-1");
+    }
+  });
+
+  it("maps a network throw to a generic error result", async () => {
+    adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await listKnowledgeDocs();
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/unable to reach the server/i);
+    }
+  });
+
+  it("targets the tenant-scoped list path when tenantId is provided", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ docs: [] }, 200));
+
+    await listKnowledgeDocs("tenant-x");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/tenants/tenant-x/ingestion/docs",
+      expect.objectContaining({ method: "GET" })
+    );
+  });
+
+  it("targets the implicit list path when tenantId is omitted", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ docs: [] }, 200));
+
+    await listKnowledgeDocs();
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/ingestion/docs",
+      expect.objectContaining({ method: "GET" })
     );
   });
 });

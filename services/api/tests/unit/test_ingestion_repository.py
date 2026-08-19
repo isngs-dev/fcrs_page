@@ -69,12 +69,26 @@ class _StubDatabase:
         self._docs: dict[tuple[str, str], dict[str, Any]] = {}
         # run_rows: keyed by (tenant_id, run_id)
         self._runs: dict[tuple[str, str], dict[str, Any]] = {}
+        self._insert_seq = 0
 
     async def execute(self, query: str, *args: Any) -> str:
         q = query.strip().upper()
 
         if q.startswith("INSERT INTO KNOWLEDGE_DOCS"):
-            tenant_id, doc_id, source, filename, content_type, status, content_hash, storage_key = args
+            (
+                tenant_id,
+                doc_id,
+                source,
+                filename,
+                content_type,
+                status,
+                content_hash,
+                storage_key,
+                title,
+                description,
+                uploaded_by,
+            ) = args
+            self._insert_seq += 1
             self._docs[(tenant_id, doc_id)] = {
                 "doc_id": doc_id,
                 "source": source,
@@ -83,9 +97,19 @@ class _StubDatabase:
                 "status": status,
                 "content_hash": content_hash,
                 "storage_key": storage_key,
+                "title": title,
+                "description": description,
+                "uploaded_by": uploaded_by,
                 "created_at": _NOW,
                 "updated_at": _NOW,
                 "tenant_id": tenant_id,
+                # Test-only: not a real column, used to give list_docs a
+                # deterministic "newest first" ordering to emulate even
+                # though every row in this stub shares the same _NOW
+                # created_at. Real ORDER BY created_at DESC correctness is
+                # proven against live Postgres by the integration test, not
+                # here (this repo's established stub-DB limitation).
+                "_seq": self._insert_seq,
             }
             return "INSERT 0 1"
 
@@ -176,6 +200,15 @@ class _StubDatabase:
         return None
 
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
+        q = query.strip().upper()
+
+        if "FROM KNOWLEDGE_DOCS" in q:
+            # list_docs — WHERE tenant_id = $1 ORDER BY created_at DESC.
+            tenant_id = args[0]
+            rows = [row for (tid, _), row in self._docs.items() if tid == tenant_id]
+            rows.sort(key=lambda r: r["_seq"], reverse=True)
+            return rows
+
         return []
 
     async def fetchval(self, query: str, *args: Any) -> Any:
@@ -333,6 +366,179 @@ async def test_update_doc_status_transitions() -> None:
         doc = await get_doc(db, claims, "docT")  # type: ignore[arg-type]
     assert doc is not None
     assert doc.status == "parsed"
+
+
+async def test_create_doc_persists_title_description_uploaded_by() -> None:
+    """create_doc stores and round-trips title/description/uploaded_by."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import create_doc
+
+        db = _StubDatabase()
+        claims = _admin_claims()
+        doc = await create_doc(
+            db,  # type: ignore[arg-type]
+            claims,
+            source="upload",
+            filename="sample.txt",
+            content_type="text/plain",
+            content_hash="abc123",
+            storage_key="tenant-alpha/doc1/sample.txt",
+            doc_id="doc1",
+            title="Refund policy",
+            description="Our current refund policy for solar installs.",
+            uploaded_by="user-42",
+        )
+    assert doc.title == "Refund policy"
+    assert doc.description == "Our current refund policy for solar installs."
+    assert doc.uploaded_by == "user-42"
+
+
+async def test_create_doc_title_description_uploaded_by_default_to_none() -> None:
+    """Omitting title/description/uploaded_by (existing call shape) leaves them None."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import create_doc
+
+        db = _StubDatabase()
+        claims = _admin_claims()
+        doc = await create_doc(
+            db,  # type: ignore[arg-type]
+            claims,
+            source="upload",
+            filename="sample.txt",
+            content_type="text/plain",
+            content_hash="abc123",
+            storage_key="tenant-alpha/doc1/sample.txt",
+            doc_id="doc1",
+        )
+    assert doc.title is None
+    assert doc.description is None
+    assert doc.uploaded_by is None
+
+
+async def test_get_doc_and_find_doc_by_hash_include_new_fields() -> None:
+    """get_doc/find_doc_by_hash also round-trip the new fields, not just create_doc."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import create_doc, find_doc_by_hash, get_doc
+
+        db = _StubDatabase()
+        claims = _admin_claims()
+        await create_doc(
+            db,  # type: ignore[arg-type]
+            claims,
+            source="upload",
+            filename="sample.txt",
+            content_type="text/plain",
+            content_hash="hash-fields",
+            storage_key="tenant-alpha/doc1/sample.txt",
+            doc_id="doc1",
+            title="Title A",
+            description="Desc A",
+            uploaded_by="user-9",
+        )
+        via_get = await get_doc(db, claims, "doc1")  # type: ignore[arg-type]
+        via_hash = await find_doc_by_hash(db, claims, "hash-fields")  # type: ignore[arg-type]
+    assert via_get is not None
+    assert via_get.title == "Title A"
+    assert via_get.description == "Desc A"
+    assert via_get.uploaded_by == "user-9"
+    assert via_hash is not None
+    assert via_hash.title == "Title A"
+
+
+async def test_list_docs_returns_tenant_docs_newest_first() -> None:
+    """list_docs returns only the caller's tenant's docs, newest upload first."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import create_doc, list_docs
+
+        db = _StubDatabase()
+        claims = _admin_claims()
+        await create_doc(
+            db,  # type: ignore[arg-type]
+            claims,
+            source="upload",
+            filename="first.txt",
+            content_type="text/plain",
+            content_hash="h-first",
+            storage_key="tenant-alpha/docFirst/first.txt",
+            doc_id="docFirst",
+        )
+        await create_doc(
+            db,  # type: ignore[arg-type]
+            claims,
+            source="upload",
+            filename="second.txt",
+            content_type="text/plain",
+            content_hash="h-second",
+            storage_key="tenant-alpha/docSecond/second.txt",
+            doc_id="docSecond",
+        )
+        docs = await list_docs(db, claims)  # type: ignore[arg-type]
+    assert [d.doc_id for d in docs] == ["docSecond", "docFirst"]
+
+
+async def test_list_docs_tenant_isolation() -> None:
+    """Tenant B's list_docs never includes tenant A's docs."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import create_doc, list_docs
+
+        db = _StubDatabase()
+        alpha_claims = _admin_claims("tenant-alpha")
+        beta_claims = _admin_claims("tenant-beta")
+
+        await create_doc(
+            db,  # type: ignore[arg-type]
+            alpha_claims,
+            source="upload",
+            filename="secret.txt",
+            content_type="text/plain",
+            content_hash="h-secret",
+            storage_key="tenant-alpha/docSecret/secret.txt",
+            doc_id="docSecret",
+        )
+        await create_doc(
+            db,  # type: ignore[arg-type]
+            beta_claims,
+            source="upload",
+            filename="beta.txt",
+            content_type="text/plain",
+            content_hash="h-beta",
+            storage_key="tenant-beta/docBeta/beta.txt",
+            doc_id="docBeta",
+        )
+
+        beta_docs = await list_docs(db, beta_claims)  # type: ignore[arg-type]
+    doc_ids = [d.doc_id for d in beta_docs]
+    assert doc_ids == ["docBeta"]
+    assert "docSecret" not in doc_ids
+
+
+async def test_list_docs_empty_tenant_returns_empty_list() -> None:
+    """A tenant with no docs gets an empty list, never an error."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import list_docs
+
+        db = _StubDatabase()
+        claims = _admin_claims()
+        docs = await list_docs(db, claims)  # type: ignore[arg-type]
+    assert docs == []
+
+
+async def test_list_docs_rejects_global_caller() -> None:
+    """PLATFORM_ADMIN (global, no tenant_id) is rejected — ingestion is tenant-scoped only."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import list_docs
+
+        db = _StubDatabase()
+        claims = _global_claims()
+        with pytest.raises(ValidationError):
+            await list_docs(db, claims)  # type: ignore[arg-type]
 
 
 # ==============================================================================

@@ -1,14 +1,21 @@
 /**
  * Per-client knowledge upload screen (S13.7), restyled to match the 5a
- * design applied to `/knowledge` (see that page's header comment for the
- * full backend-reality trace: no list endpoint, so this stays a single-
- * source upload+status flow rather than a fabricated multi-row table).
- * Reuses S13.3's `UploadForm` as-is, parameterized by the route's
- * `{tenantId}` (D1) so the upload and status-poll actions target the S12.7
- * PLATFORM_ADMIN super-user surface `/admin/tenants/{tenantId}/ingestion/**`
- * instead of the implicit `/admin/ingestion/**`.
+ * design applied to `/knowledge`. Reuses S13.3's `UploadForm` as-is,
+ * parameterized by the route's `{tenantId}` (D1) so the upload and
+ * status-poll actions target the S12.7 PLATFORM_ADMIN super-user surface
+ * `/admin/tenants/{tenantId}/ingestion/**` instead of the implicit
+ * `/admin/ingestion/**`.
+ *
+ * Knowledge Base list feature: `listKnowledgeDocs(tenantId)` targets the
+ * same PLATFORM_ADMIN tenant-scoped list surface; `uploadKnowledge`
+ * (actions.ts) calls `revalidatePath(`/clients/${tenantId}/knowledge`)` on
+ * a fresh upload (bound via `.bind(null, tenantId)`), so the list below
+ * reflects the new item immediately without a manual reload -- mirrors
+ * `/knowledge`'s own header comment for the full rationale.
  */
+import { listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
 import { UploadForm, CoverageCheckCard, TestBotCard } from "@/app/(protected)/knowledge/upload-form";
+import { KnowledgeDocList } from "@/app/(protected)/knowledge/doc-list";
 
 export default async function ClientKnowledgePage({
   params,
@@ -16,6 +23,7 @@ export default async function ClientKnowledgePage({
   params: Promise<{ tenantId: string }>;
 }) {
   const { tenantId } = await params;
+  const docsResult = await listKnowledgeDocs(tenantId);
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-5 sm:p-7">
@@ -41,6 +49,14 @@ export default async function ClientKnowledgePage({
           <CoverageCheckCard />
           <TestBotCard />
         </div>
+      </div>
+
+      <div className="rounded-[14px] border border-[var(--border)] bg-white p-4.5 sm:p-5">
+        <h2 className="mb-3.5 text-[14px] font-bold text-[var(--foreground)]">Uploaded knowledge</h2>
+        <p className="mb-4 text-[12.5px] text-[var(--muted-foreground)]">
+          Every knowledge item on file for this client&apos;s bot, newest upload first.
+        </p>
+        <KnowledgeDocList result={docsResult} />
       </div>
     </div>
   );

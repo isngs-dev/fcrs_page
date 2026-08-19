@@ -11,6 +11,8 @@
  * poll loop (decision 4) -- the browser cannot call admin-api directly (the
  * JWT is server-only), so every poll tick round-trips through this action.
  */
+import { revalidatePath } from "next/cache";
+
 import { AdminApiError, adminApiFetch } from "@/lib/api";
 import {
   ALLOWED_CONTENT_TYPES,
@@ -101,6 +103,15 @@ export async function uploadKnowledge(
 
   const uploadForm = new FormData();
   uploadForm.append("file", file, file.name);
+  // Title/description (Knowledge Base list feature): optional, so only
+  // append when non-blank -- an all-whitespace value is treated the same
+  // as omitted (the backend normalizes it to null either way).
+  const title = formData.get("title");
+  if (typeof title === "string" && title.trim()) uploadForm.append("title", title.trim());
+  const description = formData.get("description");
+  if (typeof description === "string" && description.trim()) {
+    uploadForm.append("description", description.trim());
+  }
 
   const uploadPath = tenantId
     ? `/admin/tenants/${encodeURIComponent(tenantId)}/ingestion/upload`
@@ -126,6 +137,16 @@ export async function uploadKnowledge(
   }
 
   const body = (await response.json()) as AdminUploadResponseBody;
+
+  // Knowledge Base list feature: on a FRESH upload (run_id set -- the list
+  // actually changed), revalidate the Knowledge page so the new item shows
+  // up without a manual reload. Skipped on an idempotent re-upload
+  // (run_id: null) since the list didn't change. Mirrors the exact
+  // tenantId-conditional dual-path pattern already used by every other
+  // mutating action in this app (e.g. settings/actions.ts).
+  if (body.run_id !== null) {
+    revalidatePath(tenantId ? `/clients/${tenantId}/knowledge` : "/knowledge");
+  }
 
   return {
     status: "uploaded",
@@ -267,5 +288,96 @@ export async function getDocStatus(docId: string, tenantId?: string): Promise<Do
         }
       : null,
     parsedPreview: body.parsed_preview,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// listKnowledgeDocs
+// ---------------------------------------------------------------------------
+
+export interface KnowledgeDocListItem {
+  docId: string;
+  title: string | null;
+  description: string | null;
+  filename: string;
+  contentType: string;
+  status: string;
+  uploadedBy: string | null;
+  uploadedByName: string | null;
+  createdAt: string;
+}
+
+export interface ListKnowledgeOk {
+  status: "ok";
+  docs: KnowledgeDocListItem[];
+}
+
+export interface ListKnowledgeError {
+  status: "error";
+  message: string;
+  correlationId: string | null;
+}
+
+export type ListKnowledgeResult = ListKnowledgeOk | ListKnowledgeError;
+
+interface AdminKnowledgeDocListItemBody {
+  doc_id: string;
+  title: string | null;
+  description: string | null;
+  filename: string;
+  content_type: string;
+  status: string;
+  uploaded_by: string | null;
+  uploaded_by_name: string | null;
+  created_at: string;
+}
+
+interface AdminKnowledgeListResponseBody {
+  docs: AdminKnowledgeDocListItemBody[];
+}
+
+/**
+ * Knowledge Base list feature: fetches every knowledge doc for the caller's
+ * tenant, newest upload first (the backend already sorts -- this never
+ * re-sorts). `tenantId` (S13.7 pattern): when provided, targets the
+ * PLATFORM_ADMIN super-user surface `GET /admin/tenants/{tenantId}/ingestion/docs`
+ * instead of the implicit `GET /admin/ingestion/docs`. Called server-side
+ * from the RSC page (not a client poll loop), so a network/auth failure
+ * renders an honest inline error rather than a blank/fabricated list.
+ */
+export async function listKnowledgeDocs(tenantId?: string): Promise<ListKnowledgeResult> {
+  const path = tenantId
+    ? `/admin/tenants/${encodeURIComponent(tenantId)}/ingestion/docs`
+    : "/admin/ingestion/docs";
+
+  let response: Response;
+  try {
+    response = await adminApiFetch(path, { method: "GET" });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      return {
+        status: "error",
+        message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
+        correlationId: err.correlationId || null,
+      };
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: null };
+  }
+
+  const body = (await response.json()) as AdminKnowledgeListResponseBody;
+
+  return {
+    status: "ok",
+    docs: body.docs.map((doc) => ({
+      docId: doc.doc_id,
+      title: doc.title,
+      description: doc.description,
+      filename: doc.filename,
+      contentType: doc.content_type,
+      status: doc.status,
+      uploadedBy: doc.uploaded_by,
+      uploadedByName: doc.uploaded_by_name,
+      createdAt: doc.created_at,
+    })),
   };
 }

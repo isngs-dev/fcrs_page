@@ -58,11 +58,25 @@ class _StubDatabase:
         self._hashes: dict[tuple[str, str], str] = {}  # (tenant_id, hash) -> doc_id
         # (tenant_id, doc_id) -> chunk count, seeded by tests exercising delete.
         self._chunk_counts: dict[tuple[str, str], int] = {}
+        self._insert_seq = 0
 
     async def execute(self, query: str, *args: Any) -> str:
         q = query.strip().upper()
         if "INSERT INTO KNOWLEDGE_DOCS" in q:
-            tenant_id, doc_id, source, filename, content_type, status, content_hash, storage_key = args
+            (
+                tenant_id,
+                doc_id,
+                source,
+                filename,
+                content_type,
+                status,
+                content_hash,
+                storage_key,
+                title,
+                description,
+                uploaded_by,
+            ) = args
+            self._insert_seq += 1
             self._docs[(tenant_id, doc_id)] = {
                 "doc_id": doc_id,
                 "source": source,
@@ -71,9 +85,13 @@ class _StubDatabase:
                 "status": status,
                 "content_hash": content_hash,
                 "storage_key": storage_key,
+                "title": title,
+                "description": description,
+                "uploaded_by": uploaded_by,
                 "created_at": _NOW,
                 "updated_at": _NOW,
                 "tenant_id": tenant_id,
+                "_seq": self._insert_seq,
             }
             self._hashes[(tenant_id, content_hash)] = doc_id
             return "INSERT 0 1"
@@ -166,6 +184,15 @@ class _StubDatabase:
         return None
 
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
+        q = query.strip().upper()
+
+        if "FROM KNOWLEDGE_DOCS" in q:
+            # list_docs — WHERE tenant_id = $1 ORDER BY created_at DESC.
+            tenant_id = str(args[0])
+            rows = [row for (tid, _), row in self._docs.items() if tid == tenant_id]
+            rows.sort(key=lambda r: (r["created_at"], r.get("_seq", 0)), reverse=True)
+            return rows
+
         return []
 
     async def fetchval(self, query: str, *args: Any) -> Any:
@@ -705,6 +732,399 @@ async def test_get_doc_client_agent_returns_403() -> None:
             )
 
     assert resp.status_code == 403
+
+
+# ==============================================================================
+# GET /admin/ingestion/docs (list)
+# ==============================================================================
+
+
+def _seed_doc(
+    stub_db: _StubDatabase,
+    *,
+    tenant_id: str,
+    doc_id: str,
+    filename: str,
+    created_at: datetime,
+    title: str | None = None,
+    description: str | None = None,
+    uploaded_by: str | None = None,
+    status: str = "parsed",
+) -> None:
+    stub_db._docs[(tenant_id, doc_id)] = {
+        "doc_id": doc_id,
+        "source": "upload",
+        "filename": filename,
+        "content_type": "text/plain",
+        "status": status,
+        "content_hash": f"hash-{doc_id}",
+        "storage_key": f"{tenant_id}/{doc_id}/{filename}",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "tenant_id": tenant_id,
+        "title": title,
+        "description": description,
+        "uploaded_by": uploaded_by,
+    }
+
+
+async def test_list_docs_returns_200_sorted_newest_first_with_title_fields() -> None:
+    """GET /admin/ingestion/docs -> 200 {docs:[...]} sorted newest-first; no tenant_id/storage_key."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    older = _NOW.replace(hour=10)
+    newer = _NOW.replace(hour=14)
+    _seed_doc(
+        stub_db,
+        tenant_id=_TENANT_ID,
+        doc_id="doc-old",
+        filename="old.txt",
+        created_at=older,
+        title="Older doc",
+        uploaded_by="user-1",
+    )
+    _seed_doc(
+        stub_db,
+        tenant_id=_TENANT_ID,
+        doc_id="doc-new",
+        filename="new.txt",
+        created_at=newer,
+        description="No title, falls back to filename",
+        uploaded_by="user-1",
+    )
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with patch(
+            "api.ingestion.routes.get_user_by_id",
+            return_value={"id": "user-1", "name": "Jane Admin", "email": "jane@example.com"},
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get(
+                    "/admin/ingestion/docs",
+                    cookies={"access_token": token},
+                )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    docs = body["docs"]
+    assert [d["doc_id"] for d in docs] == ["doc-new", "doc-old"]
+
+    newest = docs[0]
+    assert newest["title"] is None
+    assert newest["description"] == "No title, falls back to filename"
+    assert newest["filename"] == "new.txt"
+    assert newest["uploaded_by"] == "user-1"
+    assert newest["uploaded_by_name"] == "Jane Admin"
+    assert "tenant_id" not in newest
+    assert "storage_key" not in newest
+
+    oldest = docs[1]
+    assert oldest["title"] == "Older doc"
+
+
+async def test_list_docs_empty_tenant_returns_empty_list_not_error() -> None:
+    """A tenant with no knowledge docs gets {docs: []}, never a 404 or fabricated rows."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/admin/ingestion/docs",
+                cookies={"access_token": token},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"docs": []}
+
+
+async def test_list_docs_tenant_isolation() -> None:
+    """Tenant A's list never includes tenant B's docs (mandatory multi-tenant isolation)."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    other_tenant = "tenant-other"
+    _seed_doc(
+        stub_db,
+        tenant_id=_TENANT_ID,
+        doc_id="doc-mine",
+        filename="mine.txt",
+        created_at=_NOW,
+    )
+    _seed_doc(
+        stub_db,
+        tenant_id=other_tenant,
+        doc_id="doc-not-mine",
+        filename="secret.txt",
+        created_at=_NOW,
+    )
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(tenant_id=_TENANT_ID)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/admin/ingestion/docs",
+                cookies={"access_token": token},
+            )
+
+    assert resp.status_code == 200
+    doc_ids = [d["doc_id"] for d in resp.json()["docs"]]
+    assert doc_ids == ["doc-mine"]
+    assert "doc-not-mine" not in doc_ids
+
+
+async def test_list_docs_uploaded_by_name_falls_back_to_raw_id_when_user_missing() -> None:
+    """A deleted/missing uploader never crashes the list -- falls back to the raw id."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    _seed_doc(
+        stub_db,
+        tenant_id=_TENANT_ID,
+        doc_id="doc-orphan",
+        filename="orphan.txt",
+        created_at=_NOW,
+        uploaded_by="user-deleted",
+    )
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with patch("api.ingestion.routes.get_user_by_id", return_value=None):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get(
+                    "/admin/ingestion/docs",
+                    cookies={"access_token": token},
+                )
+
+    assert resp.status_code == 200
+    doc = resp.json()["docs"][0]
+    assert doc["uploaded_by"] == "user-deleted"
+    assert doc["uploaded_by_name"] == "user-deleted"
+
+
+async def test_list_docs_uploaded_by_name_falls_back_to_email_when_name_unset() -> None:
+    """Regression: a real user with name=NULL must show their email, never the
+    literal string "None" (str(None) on an unconditional str() cast -- caught
+    live against a real seeded user whose `name` column was never set)."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    _seed_doc(
+        stub_db,
+        tenant_id=_TENANT_ID,
+        doc_id="doc-noname",
+        filename="noname.txt",
+        created_at=_NOW,
+        uploaded_by="user-noname",
+    )
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with patch(
+            "api.ingestion.routes.get_user_by_id",
+            return_value={"id": "user-noname", "name": None, "email": "noname@example.com"},
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.get(
+                    "/admin/ingestion/docs",
+                    cookies={"access_token": token},
+                )
+
+    assert resp.status_code == 200
+    doc = resp.json()["docs"][0]
+    assert doc["uploaded_by_name"] == "noname@example.com"
+    assert doc["uploaded_by_name"] != "None"
+
+
+async def test_list_docs_no_cookie_returns_401() -> None:
+    """GET /admin/ingestion/docs without a cookie -> 401."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/admin/ingestion/docs")
+
+    assert resp.status_code == 401
+
+
+async def test_list_docs_client_agent_returns_403() -> None:
+    """GET /admin/ingestion/docs with CLIENT_AGENT -> 403."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.CLIENT_AGENT)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/admin/ingestion/docs",
+                cookies={"access_token": token},
+            )
+
+    assert resp.status_code == 403
+
+
+async def test_list_docs_platform_admin_via_tenant_scoped_route_returns_200() -> None:
+    """PLATFORM_ADMIN reaches a specific tenant's list via the tenant-scoped route -> 200."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    _seed_doc(
+        stub_db,
+        tenant_id=_TENANT_ID,
+        doc_id="doc-scoped",
+        filename="scoped.txt",
+        created_at=_NOW,
+    )
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                f"/admin/tenants/{_TENANT_ID}/ingestion/docs",
+                cookies={"access_token": token},
+            )
+
+    assert resp.status_code == 200
+    doc_ids = [d["doc_id"] for d in resp.json()["docs"]]
+    assert doc_ids == ["doc-scoped"]
+
+
+async def test_list_docs_global_platform_admin_on_implicit_route_returns_403() -> None:
+    """PLATFORM_ADMIN on the implicit (non-tenant-scoped) list route -> 403 (no tenant context)."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/admin/ingestion/docs",
+                cookies={"access_token": token},
+            )
+
+    assert resp.status_code == 403
+
+
+async def test_upload_with_title_and_description_persists_and_appears_in_list() -> None:
+    """Upload with title/description -> both persisted and visible in a subsequent list call."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    stub_storage = _InMemoryStorage()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with (
+            patch("api.ingestion.routes.ingest_document") as mock_task,
+            patch("api.ingestion.routes.get_storage", return_value=stub_storage),
+        ):
+            mock_delay = MagicMock()
+            mock_delay.id = "task-id-titled"
+            mock_task.delay = MagicMock(return_value=mock_delay)
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                upload_resp = await client.post(
+                    "/admin/ingestion/upload",
+                    cookies={"access_token": token},
+                    files={"file": ("sample.txt", b"hello document", "text/plain")},
+                    data={"title": "  Refund policy  ", "description": "  How refunds work.  "},
+                )
+                list_resp = await client.get(
+                    "/admin/ingestion/docs",
+                    cookies={"access_token": token},
+                )
+
+    assert upload_resp.status_code == 200
+    docs = list_resp.json()["docs"]
+    assert len(docs) == 1
+    assert docs[0]["title"] == "Refund policy"
+    assert docs[0]["description"] == "How refunds work."
+    assert docs[0]["uploaded_by"] == "user-1"
+
+
+async def test_upload_blank_title_normalizes_to_null() -> None:
+    """A whitespace-only title is stored/returned as null, not an empty string."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    stub_storage = _InMemoryStorage()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with (
+            patch("api.ingestion.routes.ingest_document") as mock_task,
+            patch("api.ingestion.routes.get_storage", return_value=stub_storage),
+        ):
+            mock_delay = MagicMock()
+            mock_delay.id = "task-id-blank-title"
+            mock_task.delay = MagicMock(return_value=mock_delay)
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/admin/ingestion/upload",
+                    cookies={"access_token": token},
+                    files={"file": ("sample.txt", b"hello document", "text/plain")},
+                    data={"title": "   "},
+                )
+                doc_id = resp.json()["doc_id"]
+                get_resp = await client.get(
+                    f"/admin/ingestion/docs/{doc_id}",
+                    cookies={"access_token": token},
+                )
+
+    assert get_resp.json()["title"] is None
 
 
 # ==============================================================================
