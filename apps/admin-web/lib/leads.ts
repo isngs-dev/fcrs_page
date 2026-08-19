@@ -290,7 +290,14 @@ function mapErrorMessage(error: AdminApiError): string {
  */
 export async function listAllLeadsForBoard(): Promise<LeadsResult> {
   try {
-    const response = await adminApiFetch(`/admin/leads?limit=200&offset=0`);
+    // include_converted=true (bug fix): the backend excludes converted
+    // leads by default (SR-9.2 D1 -- a sensible default for the Table
+    // view's working list), but the Board's Converted column IS the UI
+    // for viewing conversion history -- without this, that column would
+    // structurally always show 0/empty no matter how many leads get
+    // converted, even though the conversion itself (and the resulting
+    // Contact) succeeded.
+    const response = await adminApiFetch(`/admin/leads?limit=200&offset=0&include_converted=true`);
     const body = (await response.json()) as LeadListResponseBody;
     return {
       status: "ok",

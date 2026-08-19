@@ -11,6 +11,7 @@ vi.mock("next/headers", () => ({
 const {
   buildLeadsQuery,
   listLeads,
+  listAllLeadsForBoard,
   getLeadDetail,
   getLeadActivities,
   LEAD_STAGES,
@@ -319,6 +320,70 @@ describe("listLeads", () => {
 
     const [url] = fetchSpy.mock.calls[0] as [string];
     expect(url).toBe("http://localhost:8000/admin/tenants/tenant-x/leads?limit=25&offset=0");
+  });
+});
+
+describe("listAllLeadsForBoard", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    getMock.mockReset();
+  });
+
+  it("requests include_converted=true, so the Converted column isn't structurally always empty", async () => {
+    getMock.mockReturnValue(undefined);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 200, offset: 0 }), { status: 200 })
+    );
+
+    await listAllLeadsForBoard();
+
+    const [url] = fetchSpy.mock.calls[0] as [string];
+    expect(url).toBe("http://localhost:8000/admin/leads?limit=200&offset=0&include_converted=true");
+  });
+
+  it("maps a converted lead in the response through like any other item", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              lead_id: "lead-converted",
+              name: "Ada Lovelace",
+              email: "ada@example.com",
+              phone: null,
+              status: "won",
+              stage: "converted",
+              qualification_score: 90,
+              assigned_agent_id: null,
+              source: "widget",
+              created_at: "2026-07-15T00:00:00Z",
+            },
+          ],
+          total: 1,
+          limit: 200,
+          offset: 0,
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await listAllLeadsForBoard();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].stage).toBe("converted");
+    }
+  });
+
+  it("maps a fetch failure to an honest error, never a fabricated empty board", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await listAllLeadsForBoard();
+
+    expect(result.status).toBe("error");
   });
 });
 
