@@ -23,16 +23,69 @@
  * throw synchronously too (permissions, etc.) — any failure here must
  * degrade to a harmless no-op and never throw into the host page or affect
  * chat.
+ *
+ * Voice: `pickFemaleVoice` below best-effort-selects a female voice (the
+ * Web Speech API has no gender field, only free-text `.name`, so this is a
+ * name-hint heuristic, not a guarantee — some browsers/OSes may not ship
+ * any voice matching a hint, in which case this silently falls back to
+ * the browser/OS default voice, same as before this existed).
  */
 
 /** Baked-in greeting text (decision 5) — no server-driven/per-tenant config yet (flagged). */
-export const TTS_GREETING_TEXT = "Hi, I'm your assistant. How can I help?";
+export const TTS_GREETING_TEXT = "Hi, I'm Rebecca, how can I help?";
 
 function getSpeechSynthesis(): SpeechSynthesis | null {
   if (typeof window === "undefined") return null;
   const synth = window.speechSynthesis;
   if (!synth || typeof synth.speak !== "function") return null;
   return synth;
+}
+
+/**
+ * Preference-ordered, case-insensitive substrings matched against
+ * `SpeechSynthesisVoice.name` to find a female voice for the greeting.
+ * The Web Speech API has no gender field on `SpeechSynthesisVoice`, so
+ * this is a best-effort heuristic over well-known voice names shipped by
+ * the major platforms/browsers (Edge's neural voices, Windows/legacy
+ * Edge, macOS/iOS/Safari, Chrome/Google) — ordered so voices widely
+ * regarded as clear and natural-sounding are tried first. The trailing
+ * "female" entry is a catch-all for any voice whose name says so
+ * explicitly (e.g. "Google UK English Female"), regardless of platform.
+ */
+const FEMALE_VOICE_NAME_HINTS = [
+  "aria", // Microsoft Edge neural (US)
+  "jenny", // Microsoft Edge neural (US)
+  "samantha", // macOS/iOS default (US)
+  "zira", // Windows/legacy Edge (US)
+  "hazel", // Windows/legacy Edge (GB)
+  "susan", // Windows legacy (US)
+  "karen", // macOS (AU)
+  "victoria", // macOS (US)
+  "moira", // macOS (IE)
+  "tessa", // macOS (ZA)
+  "fiona", // macOS/legacy (Scottish)
+  "female",
+];
+
+/**
+ * Best-effort female-voice pick for a warm, clear, professional greeting.
+ * Returns `null` (never throws) when `getVoices` is unavailable or no
+ * hint matches — callers leave `utterance.voice` unset in that case,
+ * which falls back to the browser/OS default voice exactly as before.
+ */
+function pickFemaleVoice(synth: SpeechSynthesis): SpeechSynthesisVoice | null {
+  if (typeof synth.getVoices !== "function") return null;
+  let voices: SpeechSynthesisVoice[];
+  try {
+    voices = synth.getVoices();
+  } catch {
+    return null;
+  }
+  for (const hint of FEMALE_VOICE_NAME_HINTS) {
+    const match = voices.find((voice) => voice.name.toLowerCase().includes(hint));
+    if (match) return match;
+  }
+  return null;
 }
 
 /**
@@ -67,6 +120,15 @@ export function speakGreeting(onBlocked?: () => void): void {
       return;
     }
     const utterance = new Utterance(TTS_GREETING_TEXT);
+    const femaleVoice = pickFemaleVoice(synth);
+    if (femaleVoice) {
+      utterance.voice = femaleVoice;
+    }
+    // Warm/clear/professional delivery: a slightly unhurried pace reads as
+    // warmer and is easier to follow than the default rate. Pitch is left
+    // at the selected voice's own default — forcing an artificial pitch
+    // shift on a synthetic voice tends to sound worse, not warmer.
+    utterance.rate = 0.95;
     if (onBlocked) {
       utterance.onerror = (event) => {
         if (event.error === "canceled" || event.error === "interrupted") return;

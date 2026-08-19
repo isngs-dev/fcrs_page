@@ -278,6 +278,128 @@ describe("tts", () => {
 
       expect(onBlocked).not.toHaveBeenCalled();
     });
+
+    it("greets with 'Rebecca' by name, not the old generic 'your assistant' text", () => {
+      expect(TTS_GREETING_TEXT).toBe("Hi, I'm Rebecca, how can I help?");
+    });
+
+    function fakeVoice(name: string): SpeechSynthesisVoice {
+      return { name, lang: "en-US", default: false, localService: true, voiceURI: name };
+    }
+
+    class FakeUtteranceWithVoice {
+      text: string;
+      voice: SpeechSynthesisVoice | null = null;
+      rate = 1;
+      onerror: ((event: { error: string }) => void) | null = null;
+      constructor(text: string) {
+        this.text = text;
+      }
+    }
+
+    it("selects a known female-named voice when one is available", () => {
+      const speak = vi.fn();
+      const getVoices = vi.fn(() => [
+        fakeVoice("Microsoft David - English (United States)"),
+        fakeVoice("Microsoft Zira - English (United States)"),
+      ]);
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak, cancel: vi.fn(), getVoices },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: FakeUtteranceWithVoice,
+        configurable: true,
+        writable: true,
+      });
+
+      speakGreeting();
+
+      const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
+      expect(uttered.voice?.name).toBe("Microsoft Zira - English (United States)");
+    });
+
+    it("matches a voice whose name explicitly says 'Female' even if not on the known-name list", () => {
+      const speak = vi.fn();
+      const getVoices = vi.fn(() => [
+        fakeVoice("Google UK English Male"),
+        fakeVoice("Google UK English Female"),
+      ]);
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak, cancel: vi.fn(), getVoices },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: FakeUtteranceWithVoice,
+        configurable: true,
+        writable: true,
+      });
+
+      speakGreeting();
+
+      const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
+      expect(uttered.voice?.name).toBe("Google UK English Female");
+    });
+
+    it("leaves voice unset (browser default) when no female-sounding voice is available -- never throws", () => {
+      const speak = vi.fn();
+      const getVoices = vi.fn(() => [fakeVoice("Microsoft David - English (United States)")]);
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak, cancel: vi.fn(), getVoices },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: FakeUtteranceWithVoice,
+        configurable: true,
+        writable: true,
+      });
+
+      expect(() => speakGreeting()).not.toThrow();
+      const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
+      expect(uttered.voice).toBeNull();
+    });
+
+    it("never throws when speechSynthesis has no getVoices at all (older/partial implementations)", () => {
+      const speak = vi.fn();
+      Object.defineProperty(window, "speechSynthesis", {
+        // Deliberately no getVoices — matches the plain-object mocks used
+        // throughout the rest of this file, and real older browsers.
+        value: { speak, cancel: vi.fn() },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: FakeUtteranceWithVoice,
+        configurable: true,
+        writable: true,
+      });
+
+      expect(() => speakGreeting()).not.toThrow();
+      expect(speak).toHaveBeenCalledTimes(1);
+    });
+
+    it("sets a slightly slower rate for clarity, regardless of whether a voice match was found", () => {
+      const speak = vi.fn();
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak, cancel: vi.fn(), getVoices: vi.fn(() => []) },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: FakeUtteranceWithVoice,
+        configurable: true,
+        writable: true,
+      });
+
+      speakGreeting();
+
+      const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
+      expect(uttered.rate).toBeLessThan(1);
+      expect(uttered.rate).toBeGreaterThanOrEqual(0.9);
+    });
   });
 
   describe("cancel", () => {
