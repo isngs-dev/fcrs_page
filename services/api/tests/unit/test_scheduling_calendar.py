@@ -267,6 +267,38 @@ async def test_google_create_event_requests_meet_conference_and_extracts_url(
     assert body["conferenceData"]["createRequest"]["requestId"] == "evt-1"
     assert body["attendees"] == [{"email": "visitor@example.com"}]
     assert body["summary"] == "Call with Jordan Visitor"
+    assert body["description"] == "Name: Jordan Visitor"
+
+
+async def test_google_create_event_includes_name_and_phone_in_description(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The customer's name + phone (already collected in the booking form)
+    must reach the Calendar event description, not just the summary --
+    the sales team needs the phone number visible directly on the event."""
+    transport = _StubTransport(status_code=200, json_body={"id": "google-evt-999"})
+    await _post_via_stub(monkeypatch, transport)
+
+    provider = GoogleCalendarProvider(
+        calendar_id="primary", access_token="tok-xyz", timeout=5.0
+    )
+    event = CalendarEvent(
+        event_id="evt-1",
+        starts_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC),
+        ends_at=datetime(2026, 7, 15, 14, 30, tzinfo=UTC),
+        timezone="UTC",
+        attendee_email="visitor@example.com",
+        attendee_name="Jordan Visitor",
+        attendee_phone="+15551234567",
+    )
+
+    await provider.create_event(None, event)  # type: ignore[arg-type]
+
+    import json as _json
+
+    assert transport.captured_request is not None
+    body = _json.loads(transport.captured_request.content.decode())
+    assert body["description"] == "Name: Jordan Visitor\nPhone: +15551234567"
 
 
 async def test_google_create_event_without_attendee_omits_attendees_field(
@@ -292,6 +324,7 @@ async def test_google_create_event_without_attendee_omits_attendees_field(
     assert transport.captured_request is not None
     body = _json.loads(transport.captured_request.content.decode())
     assert "attendees" not in body
+    assert "description" not in body
     assert body["summary"] == "Scheduled call"
 
 

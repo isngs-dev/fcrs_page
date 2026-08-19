@@ -460,6 +460,7 @@ async def book_slot(
                     timezone=event.timezone,
                     attendee_email=str(body.email) if body.email is not None else None,
                     attendee_name=body.name,
+                    attendee_phone=body.phone,
                 ),
             )
         except Exception as exc:

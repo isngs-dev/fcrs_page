@@ -83,6 +83,11 @@ class CalendarEvent:
     confirmation (consent-gated, unsubscribe-aware, delivery-tracked in
     ``notification_jobs``) is the ONE visitor-facing email channel; letting
     Google independently email the attendee would bypass all of that.
+
+    ``attendee_phone`` mirrors ``attendee_name``/``attendee_email`` -- optional,
+    and when present ``GoogleCalendarProvider`` folds it into the event
+    ``description`` (Google Calendar has no dedicated phone field) so the
+    sales team can see it directly on the event, not just in the CRM.
     """
 
     event_id: str
@@ -91,6 +96,7 @@ class CalendarEvent:
     timezone: str
     attendee_email: str | None = None
     attendee_name: str | None = None
+    attendee_phone: str | None = None
 
 
 class CalendarProvider(Protocol):
@@ -242,6 +248,14 @@ class GoogleCalendarProvider:
         }
         if event.attendee_email:
             body["attendees"] = [{"email": event.attendee_email}]
+
+        description_lines = []
+        if event.attendee_name:
+            description_lines.append(f"Name: {event.attendee_name}")
+        if event.attendee_phone:
+            description_lines.append(f"Phone: {event.attendee_phone}")
+        if description_lines:
+            body["description"] = "\n".join(description_lines)
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             try:
