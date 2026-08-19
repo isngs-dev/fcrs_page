@@ -62,6 +62,15 @@ describe("proxy (route gate)", () => {
     ).toBe(false);
   });
 
+  it("matcher config excludes /forgot-password and /reset-password (logged-out visitors must reach them)", () => {
+    expect(
+      unstable_doesProxyMatch({ config, nextConfig: {}, url: "/forgot-password" })
+    ).toBe(false);
+    expect(
+      unstable_doesProxyMatch({ config, nextConfig: {}, url: "/reset-password" })
+    ).toBe(false);
+  });
+
   it("matcher config includes protected paths", () => {
     expect(unstable_doesProxyMatch({ config, nextConfig: {}, url: "/" })).toBe(
       true

@@ -58,7 +58,8 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except the login page and Next.js internals requires a
-  // valid cookie; /login itself is never gated (no redirect loop).
-  matcher: ["/((?!login|_next|favicon.ico).*)"],
+  // Everything except the login page, the password-reset request/confirm
+  // pages, and Next.js internals requires a valid cookie -- those three are
+  // the only screens a logged-out visitor must reach (no redirect loop).
+  matcher: ["/((?!login|forgot-password|reset-password|_next|favicon.ico).*)"],
 };
