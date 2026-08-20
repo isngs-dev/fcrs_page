@@ -2259,6 +2259,58 @@ describe("ChatWidget", () => {
       expect(botBubbles[0]?.textContent).toContain("I'd be happy to help you find a time with our sales team.");
       // The staged date strip renders in the bot turn, inside the message thread.
       expect(container.querySelector(".cw-bubble-row-bot .cw-sched-day-strip")).not.toBeNull();
+      // The persistent CTA hides once the in-thread scheduling picker is
+      // the active (most recent) bot bubble -- a second "start scheduling"
+      // button directly beneath the calendar the visitor is already using
+      // is redundant and confusing, not helpful.
+      expect(container.querySelector(".cw-connect-sales-button")).toBeNull();
+    });
+
+    it("the persistent CTA reappears once a later turn's bot reply is not an active scheduling UI", async () => {
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
+      fetchAvailabilitySummaryMock.mockResolvedValueOnce({
+        ok: true,
+        summary: {
+          action: "schedule_cta",
+          timezone: "UTC",
+          days: [{ date: "2026-07-22", hasAvailability: true }],
+          transitionMessage: "I'd be happy to help you find a time with our sales team.",
+          existingBooking: null,
+        },
+      });
+      fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [] });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      act(() => {
+        getConnectButton().click();
+      });
+      await flush();
+
+      expect(container.querySelector(".cw-connect-sales-button")).toBeNull();
+
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-followup",
+          messageId: "msg-followup",
+          reply: "Sure, here's an answer to your other question.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      typeAndSend("Actually, one more question");
+      await flush();
+
+      // The most recent bot bubble is now a plain answer (no active
+      // scheduling UI), and no booking was confirmed, so the CTA is back.
+      expect(container.querySelector(".cw-connect-sales-button")).not.toBeNull();
     });
 
     it("action=lead_form renders the fixed transition bubble + the lead form, not the picker", async () => {
@@ -2285,6 +2337,9 @@ describe("ChatWidget", () => {
 
       expect(container.querySelector("form.cw-lead-form")).not.toBeNull();
       expect(container.querySelector(".cw-sched-calendar")).toBeNull();
+      // action=lead_form is a different UI category from the scheduling
+      // picker -- it must not trigger the same hide-the-CTA logic.
+      expect(container.querySelector(".cw-connect-sales-button")).not.toBeNull();
     });
 
     it("existingBooking non-null shows the keep-vs-book-another ask before the picker", async () => {

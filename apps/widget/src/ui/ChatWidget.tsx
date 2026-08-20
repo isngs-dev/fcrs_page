@@ -267,6 +267,24 @@ export function ChatWidget({
   const [hasBooking, setHasBooking] = useState(false);
   const handleBooked = useCallback(() => setHasBooking(true), []);
   const bookingCheckedRef = useRef(false);
+  // Hides the SAME persistent "Connect with a sales rep" CTA while the
+  // native in-thread <ScheduleCta> calendar/grid picker is already showing
+  // as the most recent bot bubble -- a second, redundant "start scheduling"
+  // button sitting directly beneath a calendar the visitor is already using
+  // reads as confusing/duplicated, not helpful. Only the LAST message is
+  // checked (not any earlier schedule_cta bubble from prior turns in the
+  // same conversation) since that's the only one still visually active at
+  // the bottom of the thread. Independent of hasBooking -- this covers the
+  // in-progress, not-yet-booked window; hasBooking covers after.
+  //
+  // Deliberately does NOT include "calendly_handoff": that flow hands off
+  // to an external tab with no reliable in-widget "booking confirmed"
+  // signal (see hasBooking's own doc above), so the CTA staying visible
+  // there is an existing, intentional, already-tested design decision --
+  // not the same "avoid a redundant button under an active native picker"
+  // problem this fixes.
+  const lastMessage = messages[messages.length - 1];
+  const schedulingUiActive = lastMessage?.role === "bot" && lastMessage.action === "schedule_cta";
   // In-memory only (S14.2 decision 4) — never persisted here (SR-3's
   // sessionStorage mirror, when opted in, lives in resume.ts, not this
   // ref). Seeded from resumeConversationId when a resume is in play (SR-3
@@ -1024,7 +1042,7 @@ export function ChatWidget({
                   We couldn&rsquo;t check appointment availability. <button type="button" className="cw-sched-retry" onClick={() => void startScheduling()}>Retry</button>
                 </div>
               )}
-              {!hasBooking && (
+              {!hasBooking && !schedulingUiActive && (
                 <button
                   type="button"
                   className="cw-connect-sales-button"
