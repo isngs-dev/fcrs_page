@@ -27,6 +27,7 @@ describe("getBotSettings", () => {
       answer_threshold: 0.7,
       escalate_threshold: 0.4,
       turn_cap: 7,
+      low_confidence_streak_cap: 5,
       llm_provider: null,
       llm_model: null,
     };
@@ -48,6 +49,7 @@ describe("getBotSettings", () => {
       expect(result.settings.answerThreshold).toBe(0.7);
       expect(result.settings.escalateThreshold).toBe(0.4);
       expect(result.settings.turnCap).toBe(7);
+      expect(result.settings.lowConfidenceStreakCap).toBe(5);
       // nulls preserved, never coerced to "" / 0
       expect(result.settings.llmProvider).toBeNull();
       expect(result.settings.llmModel).toBeNull();
@@ -129,6 +131,7 @@ describe("getBotSettings", () => {
           answer_threshold: 0.7,
           escalate_threshold: 0.4,
           turn_cap: 7,
+          low_confidence_streak_cap: 5,
           llm_provider: "anthropic",
           llm_model: "claude",
         }),
@@ -154,6 +157,7 @@ describe("getBotSettings", () => {
           answer_threshold: 0.7,
           escalate_threshold: 0.4,
           turn_cap: 7,
+          low_confidence_streak_cap: 5,
           llm_provider: null,
           llm_model: null,
         }),
@@ -179,6 +183,7 @@ describe("getBotSettings", () => {
           answer_threshold: 0.7,
           escalate_threshold: 0.4,
           turn_cap: 7,
+          low_confidence_streak_cap: 5,
           llm_provider: null,
           llm_model: null,
         }),

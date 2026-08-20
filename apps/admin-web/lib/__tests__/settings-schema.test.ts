@@ -188,6 +188,7 @@ const baseSettings: BotSettings = {
   answerThreshold: 0.7,
   escalateThreshold: 0.4,
   turnCap: 7,
+  lowConfidenceStreakCap: 5,
   llmProvider: null,
   llmModel: null,
 };
@@ -203,6 +204,7 @@ describe("fieldValuesFromSettings", () => {
       escalationPolicy: "Escalate on refunds.",
       tone: "friendly",
       turnCap: "7",
+      lowConfidenceStreakCap: "5",
     });
   });
 
@@ -227,6 +229,7 @@ describe("fieldValuesFromSettings", () => {
       escalationPolicy: "",
       tone: "",
       turnCap: "7",
+      lowConfidenceStreakCap: "5",
     });
   });
 });
@@ -282,6 +285,66 @@ describe("settingsFormSchema -- turnCap", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       const msg = result.error.issues.find((i) => i.path[0] === "turnCap")?.message;
+      expect(msg).toMatch(/at least 1/i);
+    }
+  });
+});
+
+describe("settingsFormSchema -- lowConfidenceStreakCap", () => {
+  it("a blank lowConfidenceStreakCap -> undefined (leave-as-is sentinel)", () => {
+    const result = settingsFormSchema.safeParse({
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      lowConfidenceStreakCap: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lowConfidenceStreakCap).toBeUndefined();
+    }
+  });
+
+  it("a valid whole-number lowConfidenceStreakCap parses to a number", () => {
+    const result = settingsFormSchema.safeParse({
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      lowConfidenceStreakCap: "2",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lowConfidenceStreakCap).toBe(2);
+    }
+  });
+
+  it("a non-numeric lowConfidenceStreakCap fails validation", () => {
+    const result = settingsFormSchema.safeParse({
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      lowConfidenceStreakCap: "not-a-number",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.find(
+        (i) => i.path[0] === "lowConfidenceStreakCap"
+      )?.message;
+      expect(msg).toMatch(/whole number/i);
+    }
+  });
+
+  it("a lowConfidenceStreakCap below 1 fails validation", () => {
+    const result = settingsFormSchema.safeParse({
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      lowConfidenceStreakCap: "0",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.find(
+        (i) => i.path[0] === "lowConfidenceStreakCap"
+      )?.message;
       expect(msg).toMatch(/at least 1/i);
     }
   });
