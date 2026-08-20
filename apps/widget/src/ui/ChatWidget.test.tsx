@@ -793,7 +793,7 @@ describe("ChatWidget", () => {
       expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("I want more qualified roofing leads");
     });
 
-    it("sends the roof-inspections chip's message without the word 'booked' (avoids scheduling_request misclassification) while keeping its label unchanged", async () => {
+    it("sends the roof-inspections chip's message as an explicit question (avoids scheduling_request misclassification) while keeping its label unchanged", async () => {
       sendTurnMock.mockResolvedValueOnce({
         ok: true,
         turn: {
@@ -823,15 +823,23 @@ describe("ChatWidget", () => {
       await flush();
 
       // The label still reads "booked" (the approved pitch text); the
-      // message actually sent to the orchestrator drops it, since "booked"
-      // reliably misclassifies as intent="scheduling_request" and skips RAG
-      // entirely -- confirmed against real conversation data.
+      // message actually sent to the orchestrator is rephrased as an
+      // explicit question, since any declarative "I want more roof
+      // inspections[...]" phrasing reliably misclassifies as
+      // intent="scheduling_request" and skips RAG entirely -- confirmed
+      // against real conversation data (a first fix that only dropped the
+      // word "booked" was still confirmed live to misclassify).
       expect(sendTurnMock).toHaveBeenCalledWith(
         baseConfig,
-        expect.objectContaining({ message: "I want more roof inspections", conversationId: null }),
+        expect.objectContaining({
+          message: "How do you get me more roof inspections booked?",
+          conversationId: null,
+        }),
       );
       expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain("I want more roof inspections booked");
-      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("I want more roof inspections");
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe(
+        "How do you get me more roof inspections booked?"
+      );
     });
 
     it("uses browser speech recognition when available and stops it when the panel closes", () => {

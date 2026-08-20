@@ -264,10 +264,10 @@ _CLARIFY_REPLY = (
 # call" being the only path). The widget renders the S8.1 booking UI or the
 # S7.1 lead form depending on which `action` the turn carries.
 _ESCALATE_REPLY = (
-    "I'm not able to answer that confidently from what I know here. I can "
-    "help connect you with someone who can -- book a call if that's "
-    "available, or share your name and email below and confirm you're "
-    "happy for us to contact you, and I'll pass it along."
+    "I'd like to respond more precisely - let's get you a proper answer "
+    "from someone on the team. Book a call if that's available, or share "
+    "your name and email below and I'll make sure it gets to the right "
+    "person. Happy to help with anything else in the meantime, too."
 )
 
 # Fixed off-topic template -- a DISTINCT reply from _ESCALATE_REPLY (used
