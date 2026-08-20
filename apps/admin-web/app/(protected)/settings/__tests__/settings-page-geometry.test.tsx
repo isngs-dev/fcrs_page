@@ -55,6 +55,7 @@ function mockSettingsFetch() {
           answer_threshold: 0.5,
           escalate_threshold: 0.35,
           turn_cap: 6,
+          low_confidence_streak_cap: 3,
           llm_provider: null,
           llm_model: null,
         }),
@@ -121,6 +122,11 @@ describe("SettingsPage -- Bot-settings shell only (split from the combined route
     expect(html).toMatch(/name="turnCap"/);
     expect(html).toMatch(/id="turnCap"[^>]*value="6"|value="6"[^>]*id="turnCap"/);
     expect(html).not.toMatch(/Turn cap 6/);
+    // Repeated low-confidence escalation cap -- same live-input treatment.
+    expect(html).toMatch(/name="lowConfidenceStreakCap"/);
+    expect(html).toMatch(
+      /id="lowConfidenceStreakCap"[^>]*value="3"|value="3"[^>]*id="lowConfidenceStreakCap"/
+    );
   });
 
   it("Appearance rail entry is disabled, no Appearance section is built (D4)", async () => {

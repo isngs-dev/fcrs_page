@@ -23,17 +23,21 @@ class OrchestratorConfig:
     """A tenant's 3-way decision thresholds + turn-count cap (S10.4) +
     identity-gate toggle (SR-14 D9).
 
-    ``turn_cap`` and ``identity_gate_enabled`` are always resolved (never
-    ``None``) -- see ``get_orchestrator_config``. ``identity_gate_enabled``
-    defaults to ``False`` (OFF) for both an unconfigured tenant and a row
-    with ``identity_gate_enabled IS NULL`` (an S10.2/S10.4-era row predating
-    this column) -- no existing tenant's behavior changes silently.
+    ``turn_cap``, ``low_confidence_streak_cap``, and ``identity_gate_enabled``
+    are always resolved (never ``None``) -- see ``get_orchestrator_config``.
+    ``identity_gate_enabled`` defaults to ``False`` (OFF) for both an
+    unconfigured tenant and a row with ``identity_gate_enabled IS NULL`` (an
+    S10.2/S10.4-era row predating this column) -- no existing tenant's
+    behavior changes silently. ``low_confidence_streak_cap`` is the
+    consecutive non-"answer" turn count that triggers an early escalate
+    instead of another "clarify" -- see ``api.orchestrator.service``.
     """
 
     answer_threshold: float
     escalate_threshold: float
     turn_cap: int = 6
     identity_gate_enabled: bool = False
+    low_confidence_streak_cap: int = 3
 
 
 def _reject_global(claims: AuthClaims) -> None:
@@ -61,7 +65,8 @@ async def get_orchestrator_config(db: Database, claims: AuthClaims) -> Orchestra
     _reject_global(claims)
 
     row = await db.fetchrow(
-        "SELECT answer_threshold, escalate_threshold, turn_cap, identity_gate_enabled "
+        "SELECT answer_threshold, escalate_threshold, turn_cap, identity_gate_enabled, "
+        "low_confidence_streak_cap "
         "FROM tenant_orchestrator_configs WHERE tenant_id = $1",
         claims.tenant_id,
     )
@@ -72,6 +77,7 @@ async def get_orchestrator_config(db: Database, claims: AuthClaims) -> Orchestra
             escalate_threshold=settings.orchestrator_default_escalate_threshold,
             turn_cap=settings.orchestrator_default_turn_cap,
             identity_gate_enabled=False,
+            low_confidence_streak_cap=settings.orchestrator_default_low_confidence_streak_cap,
         )
 
     row_turn_cap = row["turn_cap"]
@@ -82,11 +88,18 @@ async def get_orchestrator_config(db: Database, claims: AuthClaims) -> Orchestra
     identity_gate_enabled = (
         bool(row_identity_gate_enabled) if row_identity_gate_enabled is not None else False
     )
+    row_streak_cap = row["low_confidence_streak_cap"]
+    low_confidence_streak_cap = (
+        int(row_streak_cap)
+        if row_streak_cap is not None
+        else settings.orchestrator_default_low_confidence_streak_cap
+    )
     return OrchestratorConfig(
         answer_threshold=float(row["answer_threshold"]),
         escalate_threshold=float(row["escalate_threshold"]),
         turn_cap=turn_cap,
         identity_gate_enabled=identity_gate_enabled,
+        low_confidence_streak_cap=low_confidence_streak_cap,
     )
 
 
@@ -98,18 +111,23 @@ async def upsert_orchestrator_config(
     escalate_threshold: float,
     turn_cap: int | None = None,
     identity_gate_enabled: bool | None = None,
+    low_confidence_streak_cap: int | None = None,
 ) -> None:
     """Insert or update the caller's tenant orchestrator config.
 
     Raises ``ValidationError`` for global callers, ``ValidationError``
     (``INVALID_ORCHESTRATOR_THRESHOLDS``) if
     ``0 <= escalate_threshold <= answer_threshold <= 1`` does not hold
-    (defense-in-depth over the DB CHECK constraint), and ``ValidationError``
+    (defense-in-depth over the DB CHECK constraint), ``ValidationError``
     (``INVALID_TURN_CAP``) if ``turn_cap`` is not ``None`` and ``< 1``
-    (defense-in-depth over the 0027 CHECK constraint). ``turn_cap`` and
-    ``identity_gate_enabled`` are always bound (an explicit ``None`` clears
-    each back to its default -- the settings turn_cap default, and ``False``
-    for the identity gate, SR-14 D9).
+    (defense-in-depth over the 0027 CHECK constraint), and
+    ``ValidationError`` (``INVALID_LOW_CONFIDENCE_STREAK_CAP``) if
+    ``low_confidence_streak_cap`` is not ``None`` and ``< 1``
+    (defense-in-depth over the 0055 CHECK constraint). ``turn_cap``,
+    ``identity_gate_enabled``, and ``low_confidence_streak_cap`` are always
+    bound (an explicit ``None`` clears each back to its default -- the
+    respective settings default, and ``False`` for the identity gate,
+    SR-14 D9).
     """
     _reject_global(claims)
 
@@ -126,16 +144,24 @@ async def upsert_orchestrator_config(
             code="INVALID_TURN_CAP",
         )
 
+    if low_confidence_streak_cap is not None and low_confidence_streak_cap < 1:
+        raise ValidationError(
+            "low_confidence_streak_cap must be >= 1.",
+            code="INVALID_LOW_CONFIDENCE_STREAK_CAP",
+        )
+
     await db.execute(
         "INSERT INTO tenant_orchestrator_configs "
-        "(tenant_id, answer_threshold, escalate_threshold, turn_cap, identity_gate_enabled) "
-        "VALUES ($1, $2, $3, $4, $5) "
+        "(tenant_id, answer_threshold, escalate_threshold, turn_cap, identity_gate_enabled, "
+        "low_confidence_streak_cap) "
+        "VALUES ($1, $2, $3, $4, $5, $6) "
         "ON CONFLICT (tenant_id) DO UPDATE SET "
         "answer_threshold = $2, escalate_threshold = $3, turn_cap = $4, "
-        "identity_gate_enabled = $5, updated_at = now()",
+        "identity_gate_enabled = $5, low_confidence_streak_cap = $6, updated_at = now()",
         claims.tenant_id,
         answer_threshold,
         escalate_threshold,
         turn_cap,
         identity_gate_enabled,
+        low_confidence_streak_cap,
     )

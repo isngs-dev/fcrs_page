@@ -76,6 +76,21 @@ export const settingsFormSchema = z.object({
     .refine((value) => value === undefined || value >= 1, {
       message: "Turn cap must be at least 1.",
     }),
+  // Same "blank -> leave as-is" contract as turnCap, for the repeated-
+  // low-confidence early-escalate streak length. Mirrors
+  // `AdminBotSettingsRequest.low_confidence_streak_cap`'s `ge=1` constraint.
+  lowConfidenceStreakCap: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined))
+    .refine((value) => value === undefined || /^\d+$/.test(value), {
+      message: "Repeat-question cap must be a whole number.",
+    })
+    .transform((value) => (value === undefined ? undefined : Number(value)))
+    .refine((value) => value === undefined || value >= 1, {
+      message: "Repeat-question cap must be at least 1.",
+    }),
 });
 
 export type SettingsFormInput = z.input<typeof settingsFormSchema>;
@@ -145,6 +160,7 @@ export interface SettingsFieldValues {
   escalationPolicy: string;
   tone: string;
   turnCap: string;
+  lowConfidenceStreakCap: string;
 }
 
 /** Derives the field values a fresh/reset form should show for a given
@@ -161,6 +177,7 @@ export function fieldValuesFromSettings(settings: BotSettings): SettingsFieldVal
     escalationPolicy: settings.escalationPolicy ?? "",
     tone: settings.tone ?? "",
     turnCap: String(settings.turnCap),
+    lowConfidenceStreakCap: String(settings.lowConfidenceStreakCap),
   };
 }
 

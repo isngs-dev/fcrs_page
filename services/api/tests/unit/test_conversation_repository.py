@@ -27,6 +27,7 @@ from api.conversation_store.repository import (
     get_conversation,
     get_last_assistant_decision,
     get_message,
+    get_recent_assistant_decisions,
     get_messages,
     get_window,
     get_working_memory,
@@ -1524,6 +1525,79 @@ async def test_get_last_assistant_decision_rejects_global_caller_before_query() 
         await get_last_assistant_decision(db, claims, "conv-1")
 
     assert db.all_sql == []
+
+
+# -- get_recent_assistant_decisions (low-confidence streak check) ----------------
+
+
+async def test_get_recent_assistant_decisions_returns_newest_first_tenant_scoped() -> None:
+    db = _RecordingDatabase(rows=[{"decision": "escalate"}, {"decision": "clarify"}])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    decisions = await get_recent_assistant_decisions(db, claims, "conv-1", limit=3)
+
+    assert decisions == ["escalate", "clarify"]
+    assert "WHERE tenant_id = $1 AND conversation_id = $2" in db.last_sql
+    assert "role = $3" in db.last_sql
+    assert "ORDER BY created_at DESC, message_id DESC" in db.last_sql
+    assert "LIMIT $4" in db.last_sql
+    assert db.last_params == ("tenant-a", "conv-1", "bot", 3)
+
+
+async def test_get_recent_assistant_decisions_maps_null_decision_to_none() -> None:
+    """A legacy pre-0024 row with decision IS NULL maps to None, not a
+    dropped/miscounted entry -- the caller (the streak check) must see it
+    and treat it as a streak-breaker, not silently skip it."""
+    db = _RecordingDatabase(rows=[{"decision": "clarify"}, {"decision": None}])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    decisions = await get_recent_assistant_decisions(db, claims, "conv-1", limit=5)
+
+    assert decisions == ["clarify", None]
+
+
+async def test_get_recent_assistant_decisions_returns_empty_list_for_no_rows() -> None:
+    db = _RecordingDatabase(rows=[])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    assert await get_recent_assistant_decisions(db, claims, "conv-1", limit=3) == []
+
+
+async def test_get_recent_assistant_decisions_visitor_scopes_through_conversation_owner() -> None:
+    """A visitor cannot inspect another visitor's bot turns in the same tenant."""
+    db = _RecordingDatabase(rows=[{"decision": "escalate"}])
+    claims = _claims("tenant-a", Role.VISITOR, subject="visitor-xyz")
+
+    decisions = await get_recent_assistant_decisions(db, claims, "conv-1", limit=3)
+
+    assert decisions == ["escalate"]
+    assert "EXISTS (SELECT 1 FROM conversations c" in db.last_sql
+    assert "c.visitor_id = $4" in db.last_sql
+    assert "LIMIT $5" in db.last_sql
+    assert db.last_params == ("tenant-a", "conv-1", "bot", "visitor-xyz", 3)
+
+
+async def test_get_recent_assistant_decisions_rejects_global_caller_before_query() -> None:
+    """PLATFORM_ADMIN has no tenant scope, so the read fails closed."""
+    db = _RecordingDatabase()
+    claims = _claims(None, Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError):
+        await get_recent_assistant_decisions(db, claims, "conv-1", limit=3)
+
+    assert db.all_sql == []
+
+
+async def test_get_recent_assistant_decisions_tenant_isolation() -> None:
+    """Tenant A's read must never be able to see tenant B's conversation --
+    the WHERE clause binds tenant_id, not just conversation_id."""
+    db = _RecordingDatabase(rows=[{"decision": "clarify"}])
+    claims_a = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await get_recent_assistant_decisions(db, claims_a, "conv-shared", limit=3)
+
+    assert db.last_params[0] == "tenant-a"
+    assert "tenant_id = $1" in db.last_sql
 
 
 # -- append_message / get_message action round-trip (S10.4) ----------------------

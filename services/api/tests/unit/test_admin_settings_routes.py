@@ -53,12 +53,14 @@ class _StubDatabase:
         escalate_threshold: float,
         turn_cap: int,
         identity_gate_enabled: bool | None = None,
+        low_confidence_streak_cap: int | None = None,
     ) -> None:
         self._orchestrator_configs[tenant_id] = {
             "answer_threshold": answer_threshold,
             "escalate_threshold": escalate_threshold,
             "turn_cap": turn_cap,
             "identity_gate_enabled": identity_gate_enabled,
+            "low_confidence_streak_cap": low_confidence_streak_cap,
         }
 
     def seed_llm_config(self, *, tenant_id: str, provider: str, model: str) -> None:
@@ -104,12 +106,20 @@ class _StubDatabase:
         if "TENANT_ORCHESTRATOR_CONFIGS" in q and ("INSERT INTO" in q or q.startswith("UPDATE")):
             # Mirrors config_repository.upsert_orchestrator_config's real
             # INSERT ... ON CONFLICT DO UPDATE bind order.
-            tenant_id, answer_threshold, escalate_threshold, turn_cap, identity_gate_enabled = args
+            (
+                tenant_id,
+                answer_threshold,
+                escalate_threshold,
+                turn_cap,
+                identity_gate_enabled,
+                low_confidence_streak_cap,
+            ) = args
             self._orchestrator_configs[tenant_id] = {
                 "answer_threshold": answer_threshold,
                 "escalate_threshold": escalate_threshold,
                 "turn_cap": turn_cap,
                 "identity_gate_enabled": identity_gate_enabled,
+                "low_confidence_streak_cap": low_confidence_streak_cap,
             }
             self.updated_tables.append("tenant_orchestrator_configs")
             return "INSERT 0 1"
@@ -195,7 +205,11 @@ def app(db: _StubDatabase) -> Any:
 
 async def test_get_settings_client_admin_200(app: Any, db: _StubDatabase) -> None:
     db.seed_orchestrator_config(
-        tenant_id=_TENANT_ID, answer_threshold=0.8, escalate_threshold=0.3, turn_cap=6
+        tenant_id=_TENANT_ID,
+        answer_threshold=0.8,
+        escalate_threshold=0.3,
+        turn_cap=6,
+        low_confidence_streak_cap=4,
     )
     db.seed_llm_config(tenant_id=_TENANT_ID, provider="anthropic", model="claude-sonnet")
 
@@ -208,6 +222,7 @@ async def test_get_settings_client_admin_200(app: Any, db: _StubDatabase) -> Non
     assert body["answer_threshold"] == 0.8
     assert body["escalate_threshold"] == 0.3
     assert body["turn_cap"] == 6
+    assert body["low_confidence_streak_cap"] == 4
     assert body["llm_provider"] == "anthropic"
     assert body["llm_model"] == "claude-sonnet"
     assert body["greeting"] is None
@@ -495,6 +510,120 @@ async def test_put_settings_turn_cap_client_agent_403(app: Any) -> None:
         response = await client.put(
             "/admin/settings",
             json={"turn_cap": 3},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# PUT /admin/settings -- low_confidence_streak_cap
+# ---------------------------------------------------------------------------
+
+
+async def test_put_settings_low_confidence_streak_cap_updates_preserving_rest(
+    app: Any, db: _StubDatabase
+) -> None:
+    """Providing low_confidence_streak_cap writes tenant_orchestrator_configs,
+    but turn_cap/thresholds/identity_gate_enabled must survive untouched."""
+    db.seed_orchestrator_config(
+        tenant_id=_TENANT_ID,
+        answer_threshold=0.8,
+        escalate_threshold=0.3,
+        turn_cap=6,
+        identity_gate_enabled=True,
+        low_confidence_streak_cap=3,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        put_response = await client.put(
+            "/admin/settings",
+            json={"low_confidence_streak_cap": 2},
+            cookies={"access_token": token},
+        )
+
+    assert put_response.status_code == 200
+    assert put_response.json()["low_confidence_streak_cap"] == 2
+    assert "tenant_orchestrator_configs" in db.updated_tables
+
+    stored = db._orchestrator_configs[_TENANT_ID]
+    assert stored["low_confidence_streak_cap"] == 2
+    assert stored["turn_cap"] == 6
+    assert stored["answer_threshold"] == 0.8
+    assert stored["escalate_threshold"] == 0.3
+    assert stored["identity_gate_enabled"] is True
+
+
+async def test_put_settings_without_low_confidence_streak_cap_does_not_touch_orchestrator_config(
+    app: Any, db: _StubDatabase
+) -> None:
+    db.seed_orchestrator_config(
+        tenant_id=_TENANT_ID,
+        answer_threshold=0.8,
+        escalate_threshold=0.3,
+        turn_cap=6,
+        low_confidence_streak_cap=3,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        await client.put(
+            "/admin/settings",
+            json={"greeting": "Hi"},
+            cookies={"access_token": token},
+        )
+
+    assert "tenant_orchestrator_configs" not in db.updated_tables
+    assert db._orchestrator_configs[_TENANT_ID]["low_confidence_streak_cap"] == 3
+
+
+async def test_put_settings_turn_cap_alone_preserves_existing_low_confidence_streak_cap(
+    app: Any, db: _StubDatabase
+) -> None:
+    """Providing ONLY turn_cap must not clobber the tenant's own
+    low_confidence_streak_cap back to a default -- each cap is independently
+    optional in the request body."""
+    db.seed_orchestrator_config(
+        tenant_id=_TENANT_ID,
+        answer_threshold=0.8,
+        escalate_threshold=0.3,
+        turn_cap=6,
+        low_confidence_streak_cap=2,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        put_response = await client.put(
+            "/admin/settings",
+            json={"turn_cap": 9},
+            cookies={"access_token": token},
+        )
+
+    assert put_response.status_code == 200
+    stored = db._orchestrator_configs[_TENANT_ID]
+    assert stored["turn_cap"] == 9
+    assert stored["low_confidence_streak_cap"] == 2
+
+
+async def test_put_settings_low_confidence_streak_cap_below_one_422(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={"low_confidence_streak_cap": 0},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
+
+
+async def test_put_settings_low_confidence_streak_cap_client_agent_403(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_AGENT)
+        response = await client.put(
+            "/admin/settings",
+            json={"low_confidence_streak_cap": 2},
             cookies={"access_token": token},
         )
 

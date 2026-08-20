@@ -41,6 +41,7 @@ from api.orchestrator.service import (
     _INTENT_LABEL_DESCRIPTIONS,
     _NO_ANSWER_SENTINEL,
     _OFF_TOPIC_REPLY,
+    _REPEATED_LOW_CONFIDENCE_REPLY,
     _TURN_CAP_REPLY,
     Source,
     StreamEvent,
@@ -79,12 +80,14 @@ def _orch_cfg(
     escalate_threshold: float = 0.35,
     turn_cap: int = 6,
     identity_gate_enabled: bool = False,
+    low_confidence_streak_cap: int = 3,
 ) -> OrchestratorConfig:
     return OrchestratorConfig(
         answer_threshold=answer_threshold,
         escalate_threshold=escalate_threshold,
         turn_cap=turn_cap,
         identity_gate_enabled=identity_gate_enabled,
+        low_confidence_streak_cap=low_confidence_streak_cap,
     )
 
 
@@ -173,6 +176,7 @@ class _Patched:
         count_messages_return: int = 1,
         gate_turns_return: int = 0,
         prev_decision: str | None = None,
+        recent_decisions: list[str | None] | None = None,
         availability: Availability | None = ...,  # type: ignore[assignment]
         stream_chunks: list[str] | None = None,
         stream_error: Exception | None = None,
@@ -200,6 +204,9 @@ class _Patched:
 
         self.count_messages = AsyncMock(side_effect=_count_messages_side_effect)
         self.get_last_assistant_decision = AsyncMock(return_value=prev_decision)
+        self.get_recent_assistant_decisions = AsyncMock(
+            return_value=recent_decisions if recent_decisions is not None else []
+        )
         self.lead_id = None if lead_id is ... else lead_id
         self.lead = None if lead is ... else lead
         self.get_lead_id_by_visitor_id = AsyncMock(return_value=self.lead_id)
@@ -277,6 +284,10 @@ class _Patched:
             patch(
                 "api.orchestrator.service.get_last_assistant_decision",
                 self.get_last_assistant_decision,
+            ),
+            patch(
+                "api.orchestrator.service.get_recent_assistant_decisions",
+                self.get_recent_assistant_decisions,
             ),
             patch("api.orchestrator.service.get_availability", self.get_availability),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
@@ -402,6 +413,149 @@ async def test_question_middle_confidence_clarifies_no_generate() -> None:
     # Resource-leak fix: no _GeneratePlan carries the provider onward for
     # the clarify branch, so _resolve_turn must close it itself.
     p.provider.aclose.assert_awaited_once()
+
+
+# -- question -> clarify -> repeated-low-confidence early escalate -------------------
+
+
+async def test_clarify_escalates_early_when_streak_cap_reached() -> None:
+    """default low_confidence_streak_cap=3: 2 prior consecutive
+    clarify/escalate turns + this clarify == 3 in a row -> escalate early
+    with _REPEATED_LOW_CONFIDENCE_REPLY, not another _CLARIFY_REPLY."""
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+        recent_decisions=["clarify", "escalate"],
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
+
+    p.provider.generate.assert_not_awaited()
+    p.get_recent_assistant_decisions.assert_awaited_once()
+
+    assert len(p._append_calls) == 2
+    assistant_call = p._append_calls[1]
+    assert assistant_call["content"] == _REPEATED_LOW_CONFIDENCE_REPLY
+    assert assistant_call["decision"] == "escalate"
+    assert assistant_call["grounded"] is False
+    assert assistant_call["confidence"] == 0.4
+    assert assistant_call["sources"] == []
+
+    assert result.decision == "escalate"
+    assert result.reply == _REPEATED_LOW_CONFIDENCE_REPLY
+    assert result.confidence == 0.4
+    p.provider.aclose.assert_awaited_once()
+
+
+async def test_clarify_stays_clarify_when_streak_below_cap() -> None:
+    """Only 1 prior clarify + this one == 2, below the default cap of 3 ->
+    normal _CLARIFY_REPLY, not an early escalate."""
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+        recent_decisions=["clarify"],
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
+
+    assert result.decision == "clarify"
+    assert result.reply == _CLARIFY_REPLY
+
+
+async def test_clarify_streak_broken_by_prior_answer_stays_clarify() -> None:
+    """The most recent prior decision was a real "answer" -- the streak is
+    broken, so this clarify is treated as turn 1 of a new streak, not
+    escalated regardless of what came before the answer."""
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+        recent_decisions=["answer", "clarify", "escalate"],
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
+
+    assert result.decision == "clarify"
+    assert result.reply == _CLARIFY_REPLY
+
+
+async def test_clarify_streak_broken_by_null_legacy_decision_stays_clarify() -> None:
+    """A legacy pre-0024 row with decision=None breaks the streak, same as
+    an "answer" would -- never treated as a wildcard match."""
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+        recent_decisions=[None, "clarify", "escalate"],
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
+
+    assert result.decision == "clarify"
+    assert result.reply == _CLARIFY_REPLY
+
+
+async def test_clarify_escalates_early_with_lower_per_tenant_streak_cap() -> None:
+    """A tenant configured with low_confidence_streak_cap=2 escalates after
+    just 1 prior clarify + this one, instead of waiting for the default 3."""
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+        recent_decisions=["clarify"],
+        orchestrator_config=_orch_cfg(low_confidence_streak_cap=2),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
+
+    assert result.decision == "escalate"
+    assert result.reply == _REPEATED_LOW_CONFIDENCE_REPLY
+
+
+async def test_clarify_early_escalate_resolves_schedule_cta_action() -> None:
+    """The early escalate resolves `action` from tenant availability, same
+    as every other escalate branch (S10.4 decision 4/5)."""
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+        recent_decisions=["clarify", "escalate"],
+        availability=_availability(available=True),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
+
+    assert result.decision == "escalate"
+    assert result.action == "schedule_cta"
+
+
+async def test_clarify_early_escalate_resolves_lead_form_action_without_availability() -> None:
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+        recent_decisions=["clarify", "escalate"],
+        availability=None,
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
+
+    assert result.decision == "escalate"
+    assert result.action == "lead_form"
+
+
+async def test_stream_clarify_escalates_early_when_streak_cap_reached() -> None:
+    """The streaming mirror of test_clarify_escalates_early_when_streak_cap_reached."""
+    p = _Patched(
+        classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
+        recent_decisions=["clarify", "escalate"],
+    )
+    with p:
+        events = await _collect(
+            answer_turn_stream(db=object(), claims=_claims(), message="tell me about it")
+        )
+
+    done = next(e for e in events if e.type == "done")
+    assert done.data["decision"] == "escalate"
+    assert done.data["reply"] == _REPEATED_LOW_CONFIDENCE_REPLY
+    p.provider.generate.assert_not_awaited()
+    p.provider.stream.assert_not_called()
 
 
 # -- question -> escalate (sub-floor) -------------------------------------------------

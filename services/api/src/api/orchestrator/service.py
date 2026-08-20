@@ -54,6 +54,7 @@ from api.conversation_store.repository import (
     create_conversation,
     get_last_assistant_decision,
     get_message,
+    get_recent_assistant_decisions,
     get_working_memory,
 )
 from api.leads.repository import get_lead, get_lead_id_by_visitor_id
@@ -298,6 +299,22 @@ _TURN_CAP_REPLY = (
     "team who can help further. Book a call, or share your name and email "
     "below and confirm you're happy for us to contact you, and we'll reach "
     "out."
+)
+
+# Fixed repeated-low-confidence template -- distinct from _ESCALATE_REPLY:
+# fires when the last `cfg.low_confidence_streak_cap` assistant turns in a
+# row already landed in clarify/escalate (never a real "answer"), so another
+# _CLARIFY_REPLY would just repeat the same non-answer a third+ time. Warm,
+# not apologetic-to-the-point-of-unhelpful, and explicitly invites the
+# visitor to keep asking about anything else -- this is a per-topic
+# escalation, not a conversation-ending one; the very next turn still runs
+# the full pipeline normally and can answer confidently if it's a different,
+# well-covered question. Same dual-purpose schedule_cta/lead_form phrasing.
+_REPEATED_LOW_CONFIDENCE_REPLY = (
+    "I don't want to keep guessing on this one -- let's get you a proper "
+    "answer from someone on the team. Book a call if that's available, or "
+    "share your name and email below and I'll make sure it gets to the "
+    "right person. Happy to help with anything else in the meantime, too."
 )
 
 # Fixed identity-gate template (SR-14 D1/D4) -- the trusted-constant reply
@@ -703,6 +720,39 @@ async def _resolve_turn(
         )
 
     if decision == "clarify":
+        # Repeated-low-confidence early escalate: if the preceding assistant
+        # turns already ran up a streak of non-"answer" decisions (clarify
+        # or escalate) reaching cfg.low_confidence_streak_cap - 1, this
+        # clarify would be the Nth non-answer in a row on (very likely) the
+        # same topic -- escalate now instead of asking to clarify again.
+        # `None` decisions (legacy rows, or a "blocked"/"identity_gate" turn
+        # in between) break the streak, same as an "answer" would -- only a
+        # contiguous run of literal "clarify"/"escalate" counts.
+        recent_decisions = await get_recent_assistant_decisions(
+            db, claims, conversation_id, limit=cfg.low_confidence_streak_cap
+        )
+        streak = 0
+        for prior in recent_decisions:
+            if prior in ("clarify", "escalate"):
+                streak += 1
+            else:
+                break
+        if streak + 1 >= cfg.low_confidence_streak_cap:
+            action = await _schedule_action(db, claims)
+            await provider.aclose()
+            return _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=_REPEATED_LOW_CONFIDENCE_REPLY,
+                decision="escalate",
+                confidence=confidence,
+                sources=[],
+                intent=intent,
+                action=action,
+                grounded=False,
+                tokens=None,
+            )
+
         # Fixed-template branch -- our own trusted constant, never scanned.
         # No _GeneratePlan will carry `provider` onward, so close it here.
         await provider.aclose()

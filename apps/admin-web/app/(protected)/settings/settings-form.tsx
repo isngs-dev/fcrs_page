@@ -170,7 +170,8 @@ export function SettingsForm({
     fields.businessHoursText !== serverFields.businessHoursText ||
     fields.escalationPolicy !== serverFields.escalationPolicy ||
     fields.tone !== serverFields.tone ||
-    fields.turnCap !== serverFields.turnCap;
+    fields.turnCap !== serverFields.turnCap ||
+    fields.lowConfidenceStreakCap !== serverFields.lowConfidenceStreakCap;
 
   function handleDiscard() {
     setFields(serverFields);
@@ -429,7 +430,6 @@ export function SettingsForm({
               label="Thresholds & turn cap"
               description='Answer/escalate confidence thresholds are governed by orchestrator config and not editable here. Turn cap controls how many visitor messages the bot answers before proactively offering to connect with sales.'
               htmlFor="turnCap"
-              isLast
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-secondary px-3 py-1.5 text-[12px] font-semibold text-foreground">
@@ -456,6 +456,43 @@ export function SettingsForm({
               {fieldErrors.turnCap ? (
                 <p role="alert" className="mt-1.5 text-sm text-destructive">
                   {fieldErrors.turnCap}
+                </p>
+              ) : null}
+            </SetRow>
+
+            <SetRow
+              label="Repeated low-confidence escalation"
+              description="If the bot can't confidently answer this many questions in a row on the same topic, it stops trying to clarify and offers to connect with sales instead of waiting out the full turn cap."
+              htmlFor="lowConfidenceStreakCap"
+              isLast
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <label
+                  className="text-[12px] font-semibold text-foreground"
+                  htmlFor="lowConfidenceStreakCap"
+                >
+                  Escalate after
+                </label>
+                <input
+                  id="lowConfidenceStreakCap"
+                  name="lowConfidenceStreakCap"
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={fields.lowConfidenceStreakCap}
+                  onChange={(e) =>
+                    setFields((f) => ({ ...f, lowConfidenceStreakCap: e.target.value }))
+                  }
+                  className={`${SET_ROW_FIELD_CLASS} w-20`}
+                />
+                <span className="text-[12px] text-muted-foreground">
+                  unclear replies in a row
+                </span>
+              </div>
+              {fieldErrors.lowConfidenceStreakCap ? (
+                <p role="alert" className="mt-1.5 text-sm text-destructive">
+                  {fieldErrors.lowConfidenceStreakCap}
                 </p>
               ) : null}
             </SetRow>

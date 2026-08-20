@@ -47,6 +47,10 @@ function ReadOnlyInfoPanel({ settings }: { settings: BotSettings }) {
           <dd className="text-foreground">{settings.turnCap}</dd>
         </div>
         <div>
+          <dt className="text-xs text-muted-foreground">Repeat-question escalate</dt>
+          <dd className="text-foreground">{settings.lowConfidenceStreakCap}</dd>
+        </div>
+        <div>
           <dt className="text-xs text-muted-foreground">LLM provider</dt>
           <dd className="text-foreground">{settings.llmProvider ?? "Not configured"}</dd>
         </div>

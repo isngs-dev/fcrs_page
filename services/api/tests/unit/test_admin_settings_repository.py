@@ -24,7 +24,7 @@ _CLIENT_AGENT = AuthClaims(subject="cg-1", role=Role.CLIENT_AGENT, tenant_id=_TE
 _PLATFORM_ADMIN = AuthClaims(subject="pa-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
 
 _STUB_ORCH_CONFIG = OrchestratorConfig(
-    answer_threshold=0.8, escalate_threshold=0.3, turn_cap=6
+    answer_threshold=0.8, escalate_threshold=0.3, turn_cap=6, low_confidence_streak_cap=4
 )
 
 
@@ -95,6 +95,7 @@ async def test_get_bot_settings_merges_row_orchestrator_and_llm_config() -> None
     assert result.answer_threshold == 0.8
     assert result.escalate_threshold == 0.3
     assert result.turn_cap == 6
+    assert result.low_confidence_streak_cap == 4
     assert result.llm_provider == "anthropic"
     assert result.llm_model == "claude-sonnet"
 
@@ -115,6 +116,7 @@ async def test_get_bot_settings_no_row_yet_qualitative_fields_none_thresholds_po
     assert result.answer_threshold == 0.8
     assert result.escalate_threshold == 0.3
     assert result.turn_cap == 6
+    assert result.low_confidence_streak_cap == 4
     assert result.llm_provider is None
     assert result.llm_model is None
 

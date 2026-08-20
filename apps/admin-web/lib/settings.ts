@@ -24,6 +24,7 @@ export interface BotSettings {
   answerThreshold: number;
   escalateThreshold: number;
   turnCap: number;
+  lowConfidenceStreakCap: number;
   llmProvider: string | null;
   llmModel: string | null;
 }
@@ -39,6 +40,7 @@ interface AdminBotSettingsResponseBody {
   answer_threshold: number;
   escalate_threshold: number;
   turn_cap: number;
+  low_confidence_streak_cap: number;
   llm_provider: string | null;
   llm_model: string | null;
 }
@@ -59,6 +61,7 @@ function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
     answerThreshold: body.answer_threshold,
     escalateThreshold: body.escalate_threshold,
     turnCap: body.turn_cap,
+    lowConfidenceStreakCap: body.low_confidence_streak_cap,
     llmProvider: body.llm_provider,
     llmModel: body.llm_model,
   };

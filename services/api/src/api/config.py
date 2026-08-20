@@ -265,6 +265,17 @@ class ApiSettings(Settings):
     # 1). Overridable per-tenant via tenant_orchestrator_configs.turn_cap.
     orchestrator_default_turn_cap: int = 6
 
+    # Consecutive low-confidence (clarify/escalate) turn-streak cap. Used by
+    # get_orchestrator_config when a tenant has no explicit
+    # low_confidence_streak_cap (no row, or a row with the column NULL). When
+    # the current turn would land in the "clarify" band AND the preceding
+    # consecutive assistant turns already made this many non-"answer" turns
+    # in a row, the orchestrator escalates immediately instead of clarifying
+    # again -- the same topic keeps not landing, so waiting out the full
+    # turn_cap would just frustrate the visitor. Overridable per-tenant via
+    # tenant_orchestrator_configs.low_confidence_streak_cap.
+    orchestrator_default_low_confidence_streak_cap: int = 3
+
     # Conversation analytics (S11.2). Used by GET /admin/analytics/overview
     # when from/to are omitted: default look-back window (days) and the hard
     # cap on the window span so a caller-supplied range can't scan unbounded.

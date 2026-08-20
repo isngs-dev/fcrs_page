@@ -33,6 +33,7 @@ export interface SaveFieldErrors {
   tone?: string;
   businessHoursText?: string;
   turnCap?: string;
+  lowConfidenceStreakCap?: string;
 }
 
 export interface SaveIdleState {
@@ -65,6 +66,7 @@ interface AdminBotSettingsResponseBody {
   answer_threshold: number;
   escalate_threshold: number;
   turn_cap: number;
+  low_confidence_streak_cap: number;
   llm_provider: string | null;
   llm_model: string | null;
 }
@@ -81,6 +83,7 @@ function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
     answerThreshold: body.answer_threshold,
     escalateThreshold: body.escalate_threshold,
     turnCap: body.turn_cap,
+    lowConfidenceStreakCap: body.low_confidence_streak_cap,
     llmProvider: body.llm_provider,
     llmModel: body.llm_model,
   };
@@ -117,6 +120,7 @@ export async function saveSettings(
     tone: nullToUndefined(formData.get("tone")),
     businessHoursText: String(formData.get("businessHoursText") ?? ""),
     turnCap: nullToUndefined(formData.get("turnCap")),
+    lowConfidenceStreakCap: nullToUndefined(formData.get("lowConfidenceStreakCap")),
   });
 
   if (!parsed.success) {
@@ -130,6 +134,9 @@ export async function saveSettings(
       else if (key === "escalationPolicy") fieldErrors.escalationPolicy ??= issue.message;
       else if (key === "tone") fieldErrors.tone ??= issue.message;
       else if (key === "turnCap") fieldErrors.turnCap ??= issue.message;
+      else if (key === "lowConfidenceStreakCap") {
+        fieldErrors.lowConfidenceStreakCap ??= issue.message;
+      }
     }
     return errorState({
       fieldErrors,
@@ -147,6 +154,7 @@ export async function saveSettings(
     tone,
     businessHoursText,
     turnCap,
+    lowConfidenceStreakCap,
   } = parsed.data;
 
   // Belt-and-suspenders JSON guard (decision 5) -- reject client-side and
@@ -173,6 +181,8 @@ export async function saveSettings(
     // `tenant_orchestrator_configs` untouched (never resets it to a
     // default), mirroring how a blank field here means "no change".
     turn_cap: turnCap ?? null,
+    // Same "null means not provided" contract as turn_cap.
+    low_confidence_streak_cap: lowConfidenceStreakCap ?? null,
   };
 
   const path = tenantId

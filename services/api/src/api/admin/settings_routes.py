@@ -48,6 +48,9 @@ class AdminBotSettingsRequest(BaseModel):
     # `tenant_orchestrator_configs` when this is explicitly provided, so a
     # qualitative-only save (the pre-existing behavior) never clobbers it.
     turn_cap: int | None = Field(default=None, ge=1)
+    # Same "None means leave as-is" contract as turn_cap, for the repeated-
+    # low-confidence early-escalate streak length.
+    low_confidence_streak_cap: int | None = Field(default=None, ge=1)
 
     @field_validator("sidebar_workspace_label", "dashboard_title")
     @classmethod
@@ -72,6 +75,7 @@ class AdminBotSettingsResponse(BaseModel):
     answer_threshold: float
     escalate_threshold: float
     turn_cap: int
+    low_confidence_streak_cap: int
     llm_provider: str | None
     llm_model: str | None
 
@@ -88,6 +92,7 @@ def _to_response(settings: BotSettings) -> AdminBotSettingsResponse:
         answer_threshold=settings.answer_threshold,
         escalate_threshold=settings.escalate_threshold,
         turn_cap=settings.turn_cap,
+        low_confidence_streak_cap=settings.low_confidence_streak_cap,
         llm_provider=settings.llm_provider,
         llm_model=settings.llm_model,
     )
@@ -104,19 +109,20 @@ async def _get_settings(request: Request, claims: AuthClaims) -> AdminBotSetting
 async def _put_settings(
     body: AdminBotSettingsRequest, request: Request, claims: AuthClaims,
 ) -> AdminBotSettingsResponse:
-    """Write the qualitative fields, plus ``turn_cap`` when provided.
+    """Write the qualitative fields, plus ``turn_cap``/``low_confidence_streak_cap``
+    when provided.
 
     Thresholds/``identity_gate_enabled``/provider/model stay untouched here
-    otherwise. ``turn_cap`` lives in ``tenant_orchestrator_configs``, a
+    otherwise. Both fields live in ``tenant_orchestrator_configs``, a
     DIFFERENT table from ``tenant_bot_settings`` -- when the caller provides
-    it, the CURRENT orchestrator config is read first so
+    either one, the CURRENT orchestrator config is read first so
     ``upsert_orchestrator_config`` (a full-row upsert) can be called with the
     tenant's existing ``answer_threshold``/``escalate_threshold``/
-    ``identity_gate_enabled`` alongside the new ``turn_cap``, instead of
-    silently clobbering those three back to their defaults. A ``None``
-    ``turn_cap`` (the field's default) means "not provided" -- the
-    orchestrator table is left completely untouched, exactly as before this
-    field existed.
+    ``identity_gate_enabled``/(the other of the two caps) alongside the new
+    value, instead of silently clobbering the rest back to their defaults.
+    ``None`` for either field (its default) means "not provided" -- if
+    NEITHER is provided, the orchestrator table is left completely
+    untouched, exactly as before this field existed.
     """
     db = request.app.state.db
 
@@ -132,15 +138,22 @@ async def _put_settings(
         dashboard_title=body.dashboard_title,
     )
 
-    if body.turn_cap is not None:
+    if body.turn_cap is not None or body.low_confidence_streak_cap is not None:
         current_orchestrator_config = await get_orchestrator_config(db, claims)
         await upsert_orchestrator_config(
             db,
             claims,
             answer_threshold=current_orchestrator_config.answer_threshold,
             escalate_threshold=current_orchestrator_config.escalate_threshold,
-            turn_cap=body.turn_cap,
+            turn_cap=(
+                body.turn_cap if body.turn_cap is not None else current_orchestrator_config.turn_cap
+            ),
             identity_gate_enabled=current_orchestrator_config.identity_gate_enabled,
+            low_confidence_streak_cap=(
+                body.low_confidence_streak_cap
+                if body.low_confidence_streak_cap is not None
+                else current_orchestrator_config.low_confidence_streak_cap
+            ),
         )
 
     await record_audit(

@@ -352,6 +352,51 @@ async def get_last_assistant_decision(
     return str(row["decision"])
 
 
+async def get_recent_assistant_decisions(
+    db: Database,
+    claims: AuthClaims,
+    conversation_id: str,
+    *,
+    limit: int,
+) -> list[str | None]:
+    """Return the last ``limit`` assistant turns' ``decision`` values, newest first.
+
+    Same tenant/VISITOR scoping as ``get_last_assistant_decision`` (this is
+    its multi-row sibling) -- used by the orchestrator's low-confidence
+    streak check (``api.orchestrator.service``) to detect N consecutive
+    non-"answer" turns without a second query per turn. A ``None`` entry
+    means that turn's ``decision`` column was legacy-NULL (a pre-0024 row);
+    callers must treat it the same as a non-"clarify"/"escalate" value (i.e.
+    it breaks the streak), never as a wildcard match.
+    """
+    _reject_global(claims)
+
+    params: list[Any] = [claims.tenant_id, conversation_id, "bot"]
+    where = "WHERE tenant_id = $1 AND conversation_id = $2"
+    where += f" AND role = ${len(params)}"
+
+    if claims.role == Role.VISITOR:
+        params.append(claims.subject)
+        where += (
+            " AND EXISTS (SELECT 1 FROM conversations c "
+            "WHERE c.conversation_id = messages.conversation_id "
+            "AND c.tenant_id = messages.tenant_id "
+            f"AND c.visitor_id = ${len(params)})"
+        )
+
+    params.append(limit)
+
+    # Parameterized SQL; `where` is a safe constant clause built above.
+    # ruff: noqa: S608
+    sql = (
+        "SELECT decision FROM messages "
+        + where
+        + f" ORDER BY created_at DESC, message_id DESC LIMIT ${len(params)}"
+    )
+    rows = await db.fetch(sql, *params)
+    return [None if row["decision"] is None else str(row["decision"]) for row in rows]
+
+
 async def get_conversation(
     db: Database, claims: AuthClaims, conversation_id: str,
 ) -> Conversation | None:

@@ -60,6 +60,7 @@ async def test_get_returns_row_thresholds_when_present() -> None:
                 "escalate_threshold": 0.4,
                 "turn_cap": 8,
                 "identity_gate_enabled": True,
+                "low_confidence_streak_cap": 2,
             }
         ]
     )
@@ -68,7 +69,11 @@ async def test_get_returns_row_thresholds_when_present() -> None:
     cfg = await get_orchestrator_config(db, claims)
 
     assert cfg == OrchestratorConfig(
-        answer_threshold=0.7, escalate_threshold=0.4, turn_cap=8, identity_gate_enabled=True,
+        answer_threshold=0.7,
+        escalate_threshold=0.4,
+        turn_cap=8,
+        identity_gate_enabled=True,
+        low_confidence_streak_cap=2,
     )
     assert db.last_params[0] == "tenant-a"
     assert "tenant_orchestrator_configs" in db.last_sql.lower()
@@ -87,6 +92,7 @@ async def test_get_returns_settings_defaults_when_no_row() -> None:
     assert cfg.escalate_threshold == settings.orchestrator_default_escalate_threshold
     assert cfg.turn_cap == settings.orchestrator_default_turn_cap
     assert cfg.identity_gate_enabled is False
+    assert cfg.low_confidence_streak_cap == settings.orchestrator_default_low_confidence_streak_cap
 
 
 async def test_get_returns_settings_default_turn_cap_when_row_turn_cap_null() -> None:
@@ -99,6 +105,7 @@ async def test_get_returns_settings_default_turn_cap_when_row_turn_cap_null() ->
                 "escalate_threshold": 0.4,
                 "turn_cap": None,
                 "identity_gate_enabled": None,
+                "low_confidence_streak_cap": None,
             }
         ]
     )
@@ -111,6 +118,7 @@ async def test_get_returns_settings_default_turn_cap_when_row_turn_cap_null() ->
     assert cfg.escalate_threshold == 0.4
     assert cfg.turn_cap == settings.orchestrator_default_turn_cap
     assert cfg.identity_gate_enabled is False
+    assert cfg.low_confidence_streak_cap == settings.orchestrator_default_low_confidence_streak_cap
 
 
 async def test_get_returns_identity_gate_off_when_row_column_null() -> None:
@@ -124,6 +132,7 @@ async def test_get_returns_identity_gate_off_when_row_column_null() -> None:
                 "escalate_threshold": 0.4,
                 "turn_cap": 6,
                 "identity_gate_enabled": None,
+                "low_confidence_streak_cap": 3,
             }
         ]
     )
@@ -142,6 +151,7 @@ async def test_get_returns_identity_gate_on_when_explicitly_true() -> None:
                 "escalate_threshold": 0.4,
                 "turn_cap": 6,
                 "identity_gate_enabled": True,
+                "low_confidence_streak_cap": 3,
             }
         ]
     )
@@ -150,6 +160,48 @@ async def test_get_returns_identity_gate_on_when_explicitly_true() -> None:
     cfg = await get_orchestrator_config(db, claims)
 
     assert cfg.identity_gate_enabled is True
+
+
+async def test_get_returns_settings_default_low_confidence_streak_cap_when_row_column_null() -> None:
+    """A row with low_confidence_streak_cap IS NULL (a pre-0055 row
+    predating this column) -> the settings default, never None -- same
+    resolution as no row at all."""
+    db = _RecordingDatabase(
+        rows=[
+            {
+                "answer_threshold": 0.7,
+                "escalate_threshold": 0.4,
+                "turn_cap": 6,
+                "identity_gate_enabled": False,
+                "low_confidence_streak_cap": None,
+            }
+        ]
+    )
+    claims = _claims("tenant-a")
+    settings = get_api_settings()
+
+    cfg = await get_orchestrator_config(db, claims)
+
+    assert cfg.low_confidence_streak_cap == settings.orchestrator_default_low_confidence_streak_cap
+
+
+async def test_get_returns_explicit_low_confidence_streak_cap_when_present() -> None:
+    db = _RecordingDatabase(
+        rows=[
+            {
+                "answer_threshold": 0.7,
+                "escalate_threshold": 0.4,
+                "turn_cap": 6,
+                "identity_gate_enabled": False,
+                "low_confidence_streak_cap": 2,
+            }
+        ]
+    )
+    claims = _claims("tenant-a")
+
+    cfg = await get_orchestrator_config(db, claims)
+
+    assert cfg.low_confidence_streak_cap == 2
 
 
 async def test_get_rejects_global_caller() -> None:
@@ -171,7 +223,7 @@ async def test_upsert_binds_tenant_and_thresholds_positionally() -> None:
         db, claims, answer_threshold=0.6, escalate_threshold=0.3,
     )
 
-    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None)
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None, None)
     assert "ON CONFLICT (tenant_id)" in db.last_sql
     assert "tenant_orchestrator_configs" in db.last_sql.lower()
 
@@ -184,7 +236,7 @@ async def test_upsert_binds_turn_cap_positionally() -> None:
         db, claims, answer_threshold=0.6, escalate_threshold=0.3, turn_cap=8,
     )
 
-    assert db.last_params == ("tenant-a", 0.6, 0.3, 8, None)
+    assert db.last_params == ("tenant-a", 0.6, 0.3, 8, None, None)
     assert "turn_cap" in db.last_sql
 
 
@@ -196,8 +248,24 @@ async def test_upsert_binds_identity_gate_enabled_positionally() -> None:
         db, claims, answer_threshold=0.6, escalate_threshold=0.3, identity_gate_enabled=True,
     )
 
-    assert db.last_params == ("tenant-a", 0.6, 0.3, None, True)
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, True, None)
     assert "identity_gate_enabled" in db.last_sql
+
+
+async def test_upsert_binds_low_confidence_streak_cap_positionally() -> None:
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a")
+
+    await upsert_orchestrator_config(
+        db,
+        claims,
+        answer_threshold=0.6,
+        escalate_threshold=0.3,
+        low_confidence_streak_cap=2,
+    )
+
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None, 2)
+    assert "low_confidence_streak_cap" in db.last_sql
 
 
 async def test_upsert_identity_gate_enabled_none_clears_to_default() -> None:
@@ -210,7 +278,39 @@ async def test_upsert_identity_gate_enabled_none_clears_to_default() -> None:
         db, claims, answer_threshold=0.6, escalate_threshold=0.3, identity_gate_enabled=None,
     )
 
-    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None)
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None, None)
+
+
+async def test_upsert_low_confidence_streak_cap_none_clears_to_default() -> None:
+    """low_confidence_streak_cap=None is a valid, explicit clear-to-default
+    -- always bound, mirroring turn_cap=None."""
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a")
+
+    await upsert_orchestrator_config(
+        db,
+        claims,
+        answer_threshold=0.6,
+        escalate_threshold=0.3,
+        low_confidence_streak_cap=None,
+    )
+
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None, None)
+
+
+async def test_upsert_rejects_low_confidence_streak_cap_below_one() -> None:
+    db = _RecordingDatabase()
+    claims = _claims("tenant-a")
+
+    with pytest.raises(ValidationError) as exc_info:
+        await upsert_orchestrator_config(
+            db,
+            claims,
+            answer_threshold=0.6,
+            escalate_threshold=0.3,
+            low_confidence_streak_cap=0,
+        )
+    assert exc_info.value.code == "INVALID_LOW_CONFIDENCE_STREAK_CAP"
 
 
 async def test_upsert_rejects_turn_cap_below_one() -> None:
@@ -233,7 +333,7 @@ async def test_upsert_turn_cap_none_clears_to_default() -> None:
         db, claims, answer_threshold=0.6, escalate_threshold=0.3, turn_cap=None,
     )
 
-    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None)
+    assert db.last_params == ("tenant-a", 0.6, 0.3, None, None, None)
 
 
 async def test_upsert_rejects_escalate_greater_than_answer() -> None:
@@ -273,7 +373,7 @@ async def test_upsert_allows_equal_thresholds() -> None:
     await upsert_orchestrator_config(
         db, claims, answer_threshold=0.5, escalate_threshold=0.5,
     )
-    assert db.last_params == ("tenant-a", 0.5, 0.5, None, None)
+    assert db.last_params == ("tenant-a", 0.5, 0.5, None, None, None)
 
 
 async def test_upsert_rejects_global_caller() -> None:
