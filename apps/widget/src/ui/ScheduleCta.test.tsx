@@ -27,6 +27,7 @@ const baseConfig: WidgetConfig = {
   apiBase: "http://localhost:8000",
   mountSelector: null,
   debug: false,
+  position: "right",
 };
 
 const SLOT_A = { startsAt: "2026-07-20T09:00:00+00:00", endsAt: "2026-07-20T09:30:00+00:00" };

@@ -83,6 +83,33 @@ describe("parseConfig", () => {
     if (!result.ok) throw new Error("expected ok result");
     expect(result.config.debug).toBe(false);
   });
+
+  it("defaults position to 'right' when data-position is absent (every pre-existing embed)", () => {
+    const script = makeScript({ "data-client-key": "pk_test_123" });
+    const result = parseConfig(script);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok result");
+    expect(result.config.position).toBe("right");
+  });
+
+  it("reads data-position='left' (case-insensitive, trimmed)", () => {
+    const script = makeScript({ "data-client-key": "pk_test_123", "data-position": " LEFT " });
+    const result = parseConfig(script);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok result");
+    expect(result.config.position).toBe("left");
+  });
+
+  it("treats any non-'left' data-position value as 'right' rather than throwing", () => {
+    const script = makeScript({ "data-client-key": "pk_test_123", "data-position": "top" });
+    const result = parseConfig(script);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok result");
+    expect(result.config.position).toBe("right");
+  });
 });
 
 describe("findWidgetScript", () => {

@@ -17,7 +17,8 @@ import type { AdmissionResult } from "./session";
 
 const renderMock = vi.fn();
 const loadConfigMock = vi.fn<() => { ok: true; config: WidgetConfig }>();
-const mountWidgetMock = vi.fn<(mountSelector: string | null) => { reactRoot: { render: typeof renderMock } }>();
+const mountWidgetMock =
+  vi.fn<(mountSelector: string | null, position: "left" | "right") => { reactRoot: { render: typeof renderMock } }>();
 const mintVisitorSessionMock = vi.fn<(config: WidgetConfig) => Promise<AdmissionResult>>();
 const hydrateFromResumeMock = vi.fn<(record: ResumeRecord) => void>();
 const getResumeSeedMock = vi.fn<() => { conversationId: string | null } | null>();
@@ -28,7 +29,8 @@ vi.mock("./config", () => ({
 }));
 
 vi.mock("./mount", () => ({
-  mountWidget: (mountSelector: string | null) => mountWidgetMock(mountSelector),
+  mountWidget: (mountSelector: string | null, position: "left" | "right") =>
+    mountWidgetMock(mountSelector, position),
 }));
 
 vi.mock("./session", () => ({
@@ -56,6 +58,7 @@ const baseConfig: WidgetConfig = {
   apiBase: "http://localhost:8000",
   mountSelector: null,
   debug: true,
+  position: "right",
 };
 
 // Not a real credential — a short fixture id used only to distinguish
@@ -118,6 +121,31 @@ describe("entry.tsx boot()", () => {
     expect(mintVisitorSessionMock.mock.calls.length).toBe(4);
     // Honest hard-stop: debug is on, so the diagnostic strip renders — never ChatWidget.
     expect(renderMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards config.position to mountWidget alongside the mount selector", async () => {
+    loadConfigMock.mockReturnValue({
+      ok: true,
+      config: { ...baseConfig, mountSelector: "#my-mount", position: "left" },
+    });
+    mintVisitorSessionMock.mockResolvedValue({
+      ok: false,
+      error: {
+        type: "ADMISSION_ERROR",
+        errorCode: "NETWORK_ERROR",
+        message: "Network request failed.",
+        correlationId: null,
+        status: null,
+        retryAfterSeconds: null,
+      },
+    });
+
+    await act(async () => {
+      await import("./entry");
+    });
+    await flushRetries();
+
+    expect(mountWidgetMock).toHaveBeenCalledWith("#my-mount", "left");
   });
 
   it("a non-retryable admission error (INVALID_CLIENT_KEY) is NOT retried — exactly one attempt", async () => {

@@ -16,6 +16,7 @@ const baseConfig: WidgetConfig = {
   apiBase: "http://localhost:8000",
   mountSelector: null,
   debug: false,
+  position: "right",
 };
 
 function jsonResponse(status: number, body: unknown, extraHeaders?: Record<string, string>): Response {

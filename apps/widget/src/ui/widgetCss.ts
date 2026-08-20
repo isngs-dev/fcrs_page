@@ -147,6 +147,24 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 
 .cw-diagnostic { position: fixed; right: 20px; bottom: 88px; z-index: 2147483000; max-width: 320px; padding: 12px 14px; border: 1px solid #b23a32; border-radius: 10px; background: var(--cw-danger-bg); color: var(--cw-danger-ink); font-size: 12px; box-shadow: 0 8px 22px rgba(25, 26, 23, 0.18); }
 
+/* data-position="left" (mount.ts stamps this on the shadow host from
+   config.position/data-position, default "right" -- every pre-existing
+   embed with no data-position attribute is untouched by these rules).
+   Mirrors every right-anchored element to the left edge with the same
+   pixel offsets; the teaser tail's border pair also flips (top+right ->
+   top+left) so its 45deg-rotated diamond still visually points toward the
+   launcher, which now sits on the left instead of the right. */
+:host([data-position="left"]) .cw-placeholder { right: auto; left: 28px; }
+:host([data-position="left"]) .cw-teaser { right: auto; left: 88px; }
+:host([data-position="left"]) .cw-teaser-tail {
+  right: auto;
+  left: -5px;
+  border-right: none;
+  border-left: 1px solid var(--cw-line);
+}
+:host([data-position="left"]) .cw-diagnostic { right: auto; left: 20px; }
+:host([data-position="left"]) .cw-panel { right: auto; left: 24px; }
+
 /* Full-height desktop drawer — 400px max width, flush to the right edge. */
 .cw-panel {
   position: fixed;
@@ -629,5 +647,9 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   .cw-launcher-orb { width: 26px; height: 26px; }
   .cw-launcher-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
   .cw-teaser { right: 80px; bottom: 20px; max-width: calc(100vw - 160px); overflow: hidden; text-overflow: ellipsis; }
+  /* .cw-panel is already inset:0 (full-viewport) on mobile regardless of
+     position, so only the launcher/teaser need a left-side mobile offset. */
+  :host([data-position="left"]) .cw-placeholder { right: auto; left: 12px; }
+  :host([data-position="left"]) .cw-teaser { right: auto; left: 80px; }
 }
 `;

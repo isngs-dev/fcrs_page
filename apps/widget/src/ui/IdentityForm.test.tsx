@@ -25,6 +25,7 @@ const baseConfig: WidgetConfig = {
   apiBase: "http://localhost:8000",
   mountSelector: null,
   debug: false,
+  position: "right",
 };
 
 let container: HTMLDivElement;

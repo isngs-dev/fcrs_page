@@ -16,6 +16,13 @@ export interface WidgetConfig {
   mountSelector: string | null;
   /** `data-debug="true"` opt-in — renders the diagnostic strip on failure. */
   debug: boolean;
+  /** `data-position="left"|"right"` — which screen corner the launcher/panel
+   * anchor to. Defaults to "right" (the pre-existing, unconfigurable
+   * behavior every already-deployed embed keeps by not setting this
+   * attribute at all). Any value other than exactly "left" (case-
+   * insensitive, trimmed) falls back to "right" rather than throwing or
+   * rendering nothing -- a typo'd data-position must never break the embed. */
+  position: "left" | "right";
 }
 
 export interface MissingClientKeyError {
@@ -63,10 +70,12 @@ export function parseConfig(script: HTMLScriptElement | null): ConfigResult {
   const apiBase = script?.dataset.apiBase?.trim() || __WIDGET_API_BASE__;
   const mountSelector = script?.dataset.mount?.trim() || null;
   const debug = script?.dataset.debug?.trim().toLowerCase() === "true";
+  const position: "left" | "right" =
+    script?.dataset.position?.trim().toLowerCase() === "left" ? "left" : "right";
 
   return {
     ok: true,
-    config: { clientKey, apiBase, mountSelector, debug },
+    config: { clientKey, apiBase, mountSelector, debug, position },
   };
 }
 

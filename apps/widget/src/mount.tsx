@@ -49,13 +49,26 @@ function resolveHostElement(mountSelector: string | null, doc: Document): HTMLEl
  * Create (or reuse) the shadow host, attach an open shadow root, inject
  * CSS, and set up the React root. Safe to call more than once — returns
  * the existing mount on subsequent calls instead of mounting again.
+ *
+ * `position` (default "right", matching every pre-existing embed's
+ * unconfigurable behavior) is stamped as a `data-position` attribute on the
+ * light-DOM host element -- `widgetCss.ts`'s `:host([data-position="left"])`
+ * rules read it from there to flip the launcher/panel/teaser to the left
+ * edge. Stamped on the HOST (light DOM), not an element inside the shadow
+ * root, because `:host()` selectors inside a shadow-scoped stylesheet only
+ * ever match attributes on the shadow root's own host element.
  */
-export function mountWidget(mountSelector: string | null, doc: Document = document): MountResult {
+export function mountWidget(
+  mountSelector: string | null,
+  position: "left" | "right" = "right",
+  doc: Document = document,
+): MountResult {
   if (activeMount) {
     return activeMount;
   }
 
   const host = resolveHostElement(mountSelector, doc);
+  host.setAttribute("data-position", position);
 
   // A shadow root can only be attached once per element — if one already
   // exists (e.g. re-entrant call on a reused host), reuse it rather than

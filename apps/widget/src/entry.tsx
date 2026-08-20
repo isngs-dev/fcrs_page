@@ -55,7 +55,7 @@ async function boot(): Promise<void> {
 
   // Mount the shadow host unconditionally once we have a valid config, so
   // the (opt-in) debug strip has a place to render on failure too.
-  const { reactRoot } = mountWidget(config.mountSelector);
+  const { reactRoot } = mountWidget(config.mountSelector, config.position);
 
   // SR-3 decision 2/7: try resume BEFORE minting. A valid unexpired record
   // reuses the still-valid token — no fetch, no retry loop needed for it.

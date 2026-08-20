@@ -68,4 +68,16 @@ describe("mountWidget", () => {
     expect(host.id).toBe("chatbot-widget-root");
     expect(document.body.contains(host)).toBe(true);
   });
+
+  it("stamps data-position=\"right\" on the host by default", () => {
+    const { host } = mountWidget(null);
+
+    expect(host.getAttribute("data-position")).toBe("right");
+  });
+
+  it("stamps data-position=\"left\" on the host when passed explicitly", () => {
+    const { host } = mountWidget(null, "left");
+
+    expect(host.getAttribute("data-position")).toBe("left");
+  });
 });

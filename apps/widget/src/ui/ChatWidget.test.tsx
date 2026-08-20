@@ -112,6 +112,7 @@ const baseConfig: WidgetConfig = {
   apiBase: "http://localhost:8000",
   mountSelector: null,
   debug: false,
+  position: "right",
 };
 
 // SR-27: ChatWidget now issues an EXTRA fetchAvailabilitySummary call on
