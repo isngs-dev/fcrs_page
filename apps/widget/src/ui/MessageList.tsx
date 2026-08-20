@@ -44,9 +44,21 @@ export const BOOK_CALL_SUGGESTION_MESSAGE = "Book a call with sales";
 // BOOK_CALL_SUGGESTION_MESSAGE (label may read differently) since
 // ChatWidget.tsx#handleSuggestion matches on it by strict equality to route
 // straight to scheduling, bypassing the orchestrator turn.
+//
+// The roof-inspections chip's message deliberately differs from its label:
+// live traffic showed the literal word "booked" reliably tips the
+// orchestrator's LLM intent classifier into "scheduling_request" (see
+// api.orchestrator.service's intent branch), which skips RAG/knowledge-base
+// retrieval entirely and short-circuits straight to the fixed escalate
+// reply -- no uploaded knowledge-base content could ever answer it,
+// regardless of what's there. The other three chips (none contain
+// "book"/"booked") reliably classify as "question" and get real, grounded
+// answers. Dropping "booked" from the SENT message (label stays exactly as
+// approved) reclassifies it the same way, while the visitor still sees the
+// original pitch text on the button.
 const SUGGESTIONS = [
   { message: "I want more qualified roofing leads", label: "I want more qualified roofing leads", icon: "chat" },
-  { message: "I want more roof inspections booked", label: "I want more roof inspections booked", icon: "chat" },
+  { message: "I want more roof inspections", label: "I want more roof inspections booked", icon: "chat" },
   { message: "I want to generate leads with Google Ads", label: "I want to generate leads with Google Ads", icon: "chat" },
   { message: "I want to generate leads with Meta Ads", label: "I want to generate leads with Meta Ads", icon: "chat" },
   { message: BOOK_CALL_SUGGESTION_MESSAGE, label: "Book a call with Sales", icon: "calendar" },

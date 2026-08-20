@@ -793,6 +793,47 @@ describe("ChatWidget", () => {
       expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("I want more qualified roofing leads");
     });
 
+    it("sends the roof-inspections chip's message without the word 'booked' (avoids scheduling_request misclassification) while keeping its label unchanged", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-suggestion-2",
+          messageId: "msg-suggestion-2",
+          reply: "Here is how we get you more roof inspections.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
+        (button) => button.textContent?.includes("I want more roof inspections booked"),
+      );
+      expect(suggestion).toBeDefined();
+
+      act(() => {
+        suggestion?.click();
+      });
+      await flush();
+
+      // The label still reads "booked" (the approved pitch text); the
+      // message actually sent to the orchestrator drops it, since "booked"
+      // reliably misclassifies as intent="scheduling_request" and skips RAG
+      // entirely -- confirmed against real conversation data.
+      expect(sendTurnMock).toHaveBeenCalledWith(
+        baseConfig,
+        expect.objectContaining({ message: "I want more roof inspections", conversationId: null }),
+      );
+      expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain("I want more roof inspections booked");
+      expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("I want more roof inspections");
+    });
+
     it("uses browser speech recognition when available and stops it when the panel closes", () => {
       type ResultHandler = (event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void;
 
