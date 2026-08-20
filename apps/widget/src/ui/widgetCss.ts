@@ -571,6 +571,14 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-sched-day-number { color: var(--cw-ink); font-size: 16px; font-weight: 700; }
 .cw-sched-day-strip .cw-sched-day:hover:not(:disabled) { border-color: var(--cw-citron); background: #eff6ff; }
 .cw-sched-day-strip .cw-sched-day:focus-visible { border: 2px solid var(--cw-citron); background: #eff6ff; }
+/* Unavailable days (e.g. weekends when the tenant only takes Mon-Fri
+   bookings) were already disabled (unclickable, aria-label says
+   "unavailable") but had no visual treatment distinguishing them from
+   bookable days -- mirrors the existing .cw-sched-calendar time-slot
+   :disabled dimming so a visitor can tell at a glance which days to skip. */
+.cw-sched-day-strip .cw-sched-day:disabled { background: var(--cw-cool-paper); cursor: not-allowed; }
+.cw-sched-day-strip .cw-sched-day:disabled .cw-sched-day-weekday,
+.cw-sched-day-strip .cw-sched-day:disabled .cw-sched-day-number { color: var(--cw-dim); }
 .cw-sched-card .cw-sched-tz-label { margin-bottom: -10px; color: #61758f; font-size: 12px; }
 .cw-sched-card .cw-sched-tz-select { min-height: 44px; padding: 8px 11px; border: 1px solid var(--cw-line); border-radius: 9px; font-size: 13px; }
 .cw-sched-time-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #61758f; font-size: 13px; font-weight: 600; }
