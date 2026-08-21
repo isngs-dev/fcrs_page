@@ -105,7 +105,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cw-placeholder:focus-visible, .cw-input:focus-visible, .cw-suggestion:focus-visible,
+.cw-placeholder:focus-visible, .cw-suggestion:focus-visible,
 .cw-header-button:focus-visible, .cw-voice-button:focus-visible, .cw-send-button:focus-visible,
 .cw-lead-input:focus-visible, .cw-lead-checkbox:focus-visible, .cw-lead-submit:focus-visible,
 .cw-sched-slot:focus-visible, .cw-sched-checkbox:focus-visible, .cw-sched-confirm-button:focus-visible,
@@ -345,6 +345,11 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 /* Composer — pill input + 38px circular citron send (ink arrow); disabled = citron-soft/faint arrow */
 .cw-input-row { flex: 0 0 auto; display: flex; flex-direction: column; padding: 12px 16px 15px; border-top: 1px solid #eef0f2; background: var(--cw-paper); }
 .cw-composer { display: flex; align-items: center; gap: 6px; min-height: 50px; padding: 6px 6px 6px 14px; border: 1px solid #d8dce2; border-radius: 12px; background: var(--cw-paper); transition: border-color 160ms ease, box-shadow 160ms ease; }
+/* This is .cw-input's real focus indicator -- a soft border/glow on the
+   whole rounded pill, not a plain rectangular outline on the raw <input>
+   (which would clash with the pill's rounded corners). Accordingly
+   .cw-input is deliberately excluded from the shared harsh-outline
+   :focus-visible rule above. */
 .cw-composer:focus-within { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
 .cw-input { flex: 1 1 auto; min-width: 0; min-height: 36px; padding: 6px 0; border: none; outline: none; background: transparent; color: var(--cw-text-secondary); font-size: 14px; }
 .cw-input::placeholder { color: var(--cw-faint); }
