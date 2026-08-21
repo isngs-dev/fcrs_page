@@ -10,6 +10,7 @@
  * for the untouched structure/logic these rules target).
  */
 import geistLatinDataUri from "../assets/fonts/geist-latin.woff2?inline";
+import rebeccaAvatarDataUri from "../assets/rebecca-avatar.png?inline";
 
 /** The real SIL OFL-licensed Geist Latin variable font is inlined by Vite at
  * build time, so the visitor's host page never makes a font request. */
@@ -87,16 +88,10 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   width: 26px;
   height: 26px;
   flex: 0 0 auto;
-  border-radius: 8px;
-  background: conic-gradient(from 45deg, #38bdf8, #818cf8, #c084fc, #38bdf8);
-  animation: cw-orb-spin 6s linear infinite;
-}
-.cw-launcher-orb::after {
-  content: "";
-  position: absolute;
-  inset: 6px;
   border-radius: 50%;
-  background: rgba(255,255,255,.9);
+  background-image: url("${rebeccaAvatarDataUri}");
+  background-size: cover;
+  background-position: center;
 }
 /* Desktop uses an icon-and-text pill. The label collapses visually only on
    narrow screens, while the button's accessible name remains unchanged. */
@@ -189,13 +184,12 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   display: inline-block;
   position: relative;
   flex: 0 0 auto;
-  border-radius: 10px;
-  background: conic-gradient(from 45deg, #0ea5e9, #2563eb, #6366f1, #0ea5e9);
-  animation: cw-orb-spin 8s linear infinite;
+  border-radius: 50%;
+  background-image: url("${rebeccaAvatarDataUri}");
+  background-size: cover;
+  background-position: center;
 }
 .cw-assistant-mark { width: 34px; height: 34px; }
-.cw-assistant-mark::after, .cw-welcome-orb::after { content: ""; position: absolute; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff, rgba(255,255,255,.35)); }
-.cw-assistant-mark::after { inset: 9px; }
 .cw-panel-title { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 2px; font-size: 15px; font-weight: 700; line-height: 1.3; }
 .cw-panel-role { color: var(--cw-muted); font-size: 12.5px; font-weight: 500; }
 .cw-panel-presence { display: flex; align-items: center; gap: 5px; color: var(--cw-success); font-size: 12px; font-weight: 600; }
@@ -253,8 +247,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 
 /* Greeting state */
 .cw-welcome { display: flex; flex-direction: column; align-items: center; padding: 8px 0 2px; text-align: center; gap: 11px; }
-.cw-welcome-orb { width: 60px; height: 60px; border-radius: 16px; box-shadow: 0 10px 24px -8px rgba(37,99,235,.6); animation-duration: 9s; }
-.cw-welcome-orb::after { inset: 14px; }
+.cw-welcome-orb { width: 60px; height: 60px; border-radius: 50%; box-shadow: 0 10px 24px -8px rgba(37,99,235,.6); }
 .cw-welcome h2 { margin: 0; color: var(--cw-ink); font-size: 19px; font-weight: 700; line-height: 1.25; }
 .cw-welcome p { max-width: 290px; margin: 0; color: var(--cw-muted); font-size: 14px; line-height: 1.55; }
 .cw-suggestions { width: 100%; display: flex; flex-direction: column; gap: 9px; margin-top: 2px; }
@@ -635,11 +628,9 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 @keyframes cw-panel-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes cw-message-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes cw-launcher-pop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-@keyframes cw-orb-spin { to { transform: rotate(360deg); } }
 @keyframes cw-mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,.35); } 50% { box-shadow: 0 0 0 7px rgba(220,38,38,0); } }
 @media (prefers-reduced-motion: reduce) {
-  .cw-panel, .cw-placeholder, .cw-suggestion, .cw-send-button, .cw-bubble-row,
-  .cw-assistant-mark, .cw-welcome-orb, .cw-launcher-orb, .cw-voice-button { animation: none; transition: none; }
+  .cw-panel, .cw-placeholder, .cw-suggestion, .cw-send-button, .cw-bubble-row, .cw-voice-button { animation: none; transition: none; }
 }
 @media (max-width: 480px) {
   .cw-panel { inset: 0; width: 100vw; height: 100dvh; border-radius: 0; }
