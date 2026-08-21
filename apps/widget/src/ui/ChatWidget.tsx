@@ -602,7 +602,16 @@ export function ChatWidget({
 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      const active = panel.ownerDocument.activeElement;
+      // The widget mounts inside a Shadow DOM in production, where
+      // `document.activeElement` only ever resolves to the shadow HOST --
+      // never the real focused descendant -- which made every Tab press
+      // look like focus had left the panel and yank it back to `first`.
+      // `getRootNode()` returns the ShadowRoot when actually shadow-mounted
+      // (its own `.activeElement` reflects the true focus target) and falls
+      // back to the plain document in tests, which render without a shadow
+      // root.
+      const root = panel.getRootNode();
+      const active = root instanceof ShadowRoot ? root.activeElement : panel.ownerDocument.activeElement;
 
       if (event.shiftKey) {
         if (active === first || !panel.contains(active)) {
