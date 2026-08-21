@@ -274,19 +274,13 @@ _ESCALATE_REPLY = (
     "person. Happy to help with anything else in the meantime, too."
 )
 
-# Fixed off-topic template -- a DISTINCT reply from _ESCALATE_REPLY (used
-# only for scheduling_request + the sub-floor-confidence question escalate,
-# see the branches below), because the honest reason differs: off_topic
-# means "outside what I can help with here" (a scope mismatch), not "I'm
-# not confident enough" (a low-confidence-but-relevant answer). Same
-# dual-purpose schedule_cta/lead_form phrasing as _ESCALATE_REPLY -- the
-# widget renders whichever card `action` resolves to either way.
-_OFF_TOPIC_REPLY = (
-    "That's outside of what I can help with here. I'd recommend talking "
-    "with our sales team for more information -- book a call if that's "
-    "available, or share your name and email below and confirm you're "
-    "happy for us to contact you, and I'll pass it along."
-)
+# Fixed off-topic template. Kept as its own constant so a future divergence
+# from _ESCALATE_REPLY stays a one-line change, but currently set to the
+# SAME wording on explicit user request (both used to read differently --
+# off_topic as a scope-mismatch message, scheduling_request/sub-floor as a
+# not-confident-enough one -- but the visitor-facing voice should be
+# consistent regardless of which internal reason triggered the fallback).
+_OFF_TOPIC_REPLY = _ESCALATE_REPLY
 
 # Fixed turn-cap template (S10.4 decision 7; retuned once the reply text
 # actually reaches the screen instead of being overwritten by the widget's

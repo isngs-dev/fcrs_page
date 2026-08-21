@@ -707,8 +707,10 @@ async def test_chitchat_answers_without_rag() -> None:
 
 async def test_off_topic_escalates_no_rag_no_generate() -> None:
     """classify -> "off_topic" -> neither retrieve_hybrid nor generate called;
-    reply == _OFF_TOPIC_REPLY (its OWN copy, distinct from _ESCALATE_REPLY --
-    see the branch's own comment); decision="escalate", confidence=None."""
+    reply == _OFF_TOPIC_REPLY, which is now the SAME wording as _ESCALATE_REPLY
+    (explicit user request: one consistent visitor-facing voice regardless of
+    which internal reason triggered the fallback -- see _OFF_TOPIC_REPLY's own
+    comment); decision="escalate", confidence=None."""
     p = _Patched(classify_return="off_topic")
     with p:
         result = await answer_turn(db=object(), claims=_claims(), message="what is the capital of France?")
@@ -726,7 +728,7 @@ async def test_off_topic_escalates_no_rag_no_generate() -> None:
 
     assert result.decision == "escalate"
     assert result.reply == _OFF_TOPIC_REPLY
-    assert result.reply != _ESCALATE_REPLY
+    assert result.reply == _ESCALATE_REPLY
     assert result.confidence is None
 
     # Resource-leak fix: classify ran on `provider` but no _GeneratePlan
@@ -734,17 +736,16 @@ async def test_off_topic_escalates_no_rag_no_generate() -> None:
     p.provider.aclose.assert_awaited_once()
 
 
-def test_off_topic_reply_is_distinct_and_scope_forward() -> None:
-    """_OFF_TOPIC_REPLY communicates a scope mismatch ("outside what I can
-    help with"), not low confidence -- and is still consent/scheduling-
-    forward like the other fixed escalate templates, so the widget's
-    schedule_cta/lead_form rendering keeps working regardless of which
-    escalate reply is shown."""
+def test_off_topic_reply_is_scheduling_forward_and_matches_escalate_reply() -> None:
+    """_OFF_TOPIC_REPLY is still consent/scheduling-forward like the other
+    fixed escalate templates, so the widget's schedule_cta/lead_form
+    rendering keeps working -- and is now identical to _ESCALATE_REPLY by
+    explicit user request (previously it carried its own scope-mismatch
+    wording; that distinction was dropped in favor of one consistent voice)."""
     lowered = _OFF_TOPIC_REPLY.lower()
-    assert "outside" in lowered or "can't help" in lowered or "cannot help" in lowered
     assert "book" in lowered
     assert "email" in lowered or "contact" in lowered or "name" in lowered
-    assert _OFF_TOPIC_REPLY != _ESCALATE_REPLY
+    assert _OFF_TOPIC_REPLY == _ESCALATE_REPLY
 
 
 async def test_classify_is_called_with_intent_label_descriptions() -> None:
