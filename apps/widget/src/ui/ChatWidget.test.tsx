@@ -794,7 +794,7 @@ describe("ChatWidget", () => {
       expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("I want more qualified roofing leads");
     });
 
-    it("sends the roof-inspections chip's message as an explicit question (avoids scheduling_request misclassification) while keeping its label unchanged", async () => {
+    it("sends the roof-inspections chip's message as an explicit question (avoids scheduling_request misclassification), with the label matching the sent message exactly", async () => {
       sendTurnMock.mockResolvedValueOnce({
         ok: true,
         turn: {
@@ -814,7 +814,7 @@ describe("ChatWidget", () => {
       openPanel();
 
       const suggestion = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion")).find(
-        (button) => button.textContent?.includes("I want more roof inspections booked"),
+        (button) => button.textContent?.includes("How do you get me more roof inspections booked?"),
       );
       expect(suggestion).toBeDefined();
 
@@ -837,7 +837,9 @@ describe("ChatWidget", () => {
           conversationId: null,
         }),
       );
-      expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain("I want more roof inspections booked");
+      expect(container.querySelector(".cw-suggestion-selected")?.textContent).toContain(
+        "How do you get me more roof inspections booked?",
+      );
       expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe(
         "How do you get me more roof inspections booked?"
       );
