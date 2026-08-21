@@ -277,7 +277,16 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-bubble-row { display: flex; width: 100%; animation: cw-message-in 280ms ease-out both; }
 .cw-bubble-row-user { justify-content: flex-end; }
 .cw-bubble-row-bot { justify-content: flex-start; align-items: flex-end; gap: 9px; }
-.cw-bot-mark { position: relative; width: 26px; height: 26px; flex: 0 0 auto; border-radius: 8px; background: conic-gradient(from 45deg,#0ea5e9,#2563eb,#6366f1,#0ea5e9); }
+.cw-bot-mark {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background-image: url("${rebeccaAvatarDataUri}");
+  background-size: cover;
+  background-position: center;
+}
 .cw-bot-stack { width: calc(100% - 35px); min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .cw-bot-stack > .cw-bubble-bot { max-width: 100%; }
 .cw-bubble { max-width: 82%; padding: 11px 14px; border-radius: 14px; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
