@@ -18,6 +18,7 @@ from api.gateway.dependencies import get_visitor_claims
 from api.gateway.repository import get_launcher_label, get_resume_enabled, get_tenant_by_client_key
 from api.gateway.sessions import mint_visitor_session, origin_allowed
 from api.ratelimit import client_ip, enforce_rate_limit
+from api.voice.factory import asr_configured, tts_configured
 
 _log = get_logger(__name__)
 
@@ -89,6 +90,14 @@ async def widget_session(
         "visitor_token": token,
         "expires_at": expires_at,
         "resume_enabled": resume_enabled,
+        # Platform-global (env-var), NOT per-tenant -- see api.voice.factory's
+        # own docstring. Booleans only; the actual keys never leave the
+        # server. Lets the widget decide up front whether to attempt cloud
+        # ASR/TTS at all, rather than discovering NOT_CONFIGURED only after
+        # asking the visitor for microphone access or after a reply already
+        # needs to be spoken.
+        "voice_asr_enabled": asr_configured(settings),
+        "voice_tts_enabled": tts_configured(settings),
     }
     if launcher_label is not None:
         response["launcher_label"] = launcher_label

@@ -225,6 +225,37 @@ class ApiSettings(Settings):
     conversation_idle_timeout_minutes: int = 30
     conversation_idle_sweep_interval_seconds: int = 300
 
+    # Voice (ASR/TTS) -- env-var-only config, NOT per-tenant (unlike LLM/
+    # Calendar/Notification providers) -- a deliberate, smaller-scope choice
+    # for this integration given there is one active tenant in practice.
+    # Either key unset -> that provider's factory raises a deterministic
+    # VOICE_PROVIDER_NOT_CONFIGURED (422); the widget falls back to its own
+    # browser-native mechanism (SpeechRecognition / speechSynthesis) rather
+    # than surfacing that as a hard failure -- see the chat-widget skill.
+    # voice_openai_asr_model / voice_elevenlabs_model_id: overridable without
+    # a key rotation. voice_max_audio_upload_bytes mirrors
+    # ingestion_max_upload_bytes's role -- a cheap defensive cap on the
+    # transcribe endpoint's request body, since each accepted byte is a real
+    # cost against the OpenAI account, not just a memory concern.
+    openai_asr_api_key: str | None = None
+    voice_openai_asr_model: str = "whisper-1"
+    elevenlabs_api_key: str | None = None
+    elevenlabs_voice_id: str | None = None
+    # Flash v2.5, not Turbo v2.5: ElevenLabs bills Flash at half the
+    # per-character credit cost of Turbo/Multilingual models for
+    # comparable conversational-agent quality (verify the current rate on
+    # elevenlabs.io before relying on this number -- their pricing changes).
+    voice_elevenlabs_model_id: str = "eleven_flash_v2_5"
+    voice_asr_timeout_seconds: float = 20.0
+    voice_tts_timeout_seconds: float = 20.0
+    voice_max_audio_upload_bytes: int = 10_485_760
+    # Hard cost ceiling: cloud TTS is billed per character, so this caps how
+    # much text ever reaches the provider regardless of how well the
+    # orchestrator's own "keep replies concise" prompt was followed. Cuts at
+    # a sentence boundary (api.voice.provider.truncate_for_speech) -- never
+    # touches the displayed chat bubble, only what gets spoken.
+    voice_max_tts_chars: int = 1200
+
     # Notifications (S9.1).
     # notification_smtp_timeout_seconds: the smtplib.SMTP connect/send timeout
     #   used by SmtpEmailProvider. No default provider setting -- provider is

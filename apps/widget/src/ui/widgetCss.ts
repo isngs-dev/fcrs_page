@@ -342,6 +342,14 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-line { align-self: center; padding: 7px 10px; border-radius: 8px; font-size: 12px; text-align: center; }
 .cw-line-error, .cw-lead-error, .cw-sched-error, .cw-voice-error { border: 1px solid var(--cw-danger-line); background: var(--cw-danger-bg); color: var(--cw-danger-ink); }
 
+/* Type-or-voice mode gate -- shown once, before the welcome screen/composer. */
+.cw-mode-picker { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 32px 24px; text-align: center; }
+.cw-mode-picker-question { margin: 0; font-size: 15px; font-weight: 600; color: var(--cw-ink); }
+.cw-mode-picker-options { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 260px; }
+.cw-mode-picker-option { display: flex; align-items: center; justify-content: center; gap: 8px; height: 46px; border-radius: 12px; border: 1px solid #d8dce2; background: var(--cw-paper); color: var(--cw-ink); font-size: 14px; font-weight: 600; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
+.cw-mode-picker-option:hover { background: #f1f5f9; border-color: #93c5fd; }
+.cw-mode-picker-option svg { width: 18px; height: 18px; }
+
 /* Composer — pill input + 38px circular citron send (ink arrow); disabled = citron-soft/faint arrow */
 .cw-input-row { flex: 0 0 auto; display: flex; flex-direction: column; padding: 12px 16px 15px; border-top: 1px solid #eef0f2; background: var(--cw-paper); }
 .cw-composer { display: flex; align-items: center; gap: 6px; min-height: 50px; padding: 6px 6px 6px 14px; border: 1px solid #d8dce2; border-radius: 12px; background: var(--cw-paper); transition: border-color 160ms ease, box-shadow 160ms ease; }
@@ -388,6 +396,13 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-voice-button:hover { background: #f1f5f9; color: var(--cw-ink); }
 .cw-voice-button-active { background: #fef2f2; color: #dc2626; animation: cw-mic-pulse 1.3s infinite; }
 .cw-voice-button svg { width: 17px; height: 17px; }
+/* Voice-only composer (no text input): the mic is the sole control, so it's
+   bigger and centered rather than sitting beside a now-absent input field. */
+.cw-composer-voice-only { justify-content: center; padding: 8px; }
+.cw-composer-voice-only .cw-voice-button { width: 56px; height: 56px; border-radius: 50%; background: var(--cw-citron); color: var(--cw-paper); }
+.cw-composer-voice-only .cw-voice-button:hover { background: #1d4ed8; }
+.cw-composer-voice-only .cw-voice-button-active { background: #dc2626; color: #fff; }
+.cw-composer-voice-only .cw-voice-button svg { width: 22px; height: 22px; }
 .cw-send-button svg { width: 16px; height: 16px; }
 .cw-send-button:hover:not(:disabled) { background: #1d4ed8; }
 .cw-send-button:active:not(:disabled) { transform: scale(.95); }

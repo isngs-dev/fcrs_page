@@ -87,9 +87,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { WidgetConfig } from "../config";
 import { sendTurn, type TurnResult } from "../turn";
 import { clearResumeRecord, touchResumeRecord } from "../resume";
-import { isResumeEnabled, mintVisitorSession } from "../session";
+import { isResumeEnabled, isVoiceAsrEnabled, mintVisitorSession } from "../session";
 import { withRetry } from "../retry";
 import { fetchAvailabilitySummary } from "../schedule";
+import { transcribeAudio } from "../voice";
 import * as tts from "../tts";
 import type { ChatMessage } from "./Bubble";
 import { MessageList, BOOK_CALL_SUGGESTION_MESSAGE } from "./MessageList";
@@ -215,6 +216,33 @@ function voiceErrorMessage(code: string): string | null {
   }
 }
 
+/**
+ * Maps `getUserMedia`'s rejected `DOMException.name` (the cloud ASR
+ * recording path's own permission/device gate) to the SAME honest,
+ * visitor-facing messages `voiceErrorMessage` uses for the browser-native
+ * path -- one consistent voice-error vocabulary regardless of which
+ * mechanism is actually in use.
+ */
+function mediaRecorderErrorMessage(name: string): string {
+  switch (name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return "Microphone access was denied. Please allow microphone access in your browser to use voice input.";
+    case "NotFoundError":
+    case "DevicesNotFoundError":
+      return "No microphone was found. Please check your device and try again.";
+    default:
+      return "Voice input isn't available right now. Please type your message instead.";
+  }
+}
+
+function getMediaRecorderConstructor(): typeof MediaRecorder | null {
+  if (typeof window === "undefined") return null;
+  if (typeof window.MediaRecorder !== "function") return null;
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") return null;
+  return window.MediaRecorder;
+}
+
 type VoiceRecognitionConstructor = new () => VoiceRecognition;
 
 function getVoiceRecognitionConstructor(): VoiceRecognitionConstructor | null {
@@ -314,6 +342,16 @@ export function ChatWidget({
   // re-send twice.
   const pendingIdentityQuestionRef = useRef<{ message: string; conversationId: string | null } | null>(null);
   const voiceRecognitionRef = useRef<VoiceRecognition | null>(null);
+  // Cloud ASR recording state (OpenAI, via the backend) -- the PREFERRED
+  // path whenever both the backend has a key configured AND the browser
+  // supports MediaRecorder/getUserMedia; toggleVoiceInput falls back to the
+  // browser-native SpeechRecognition state above otherwise. mediaRecorderRef
+  // holds the in-progress recorder between start/stop taps; audioChunksRef
+  // collects its data; mediaStreamRef is stopped (releasing the mic) once
+  // recording ends, success or failure alike.
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const [listening, setListening] = useState(false);
   // Honest voice-input error (free, browser-native SpeechRecognition --
   // previously failed 100% silently: onerror just reset `listening` with
@@ -322,16 +360,54 @@ export function ChatWidget({
   // reading as "broken". "no-speech"/"aborted" are NOT real failures (no
   // speech detected in the window / the visitor's own stop) and never set
   // this -- only genuine problems (denied permission, no mic hardware, no
-  // network) do.
+  // network) do. Shared verbatim by the cloud-recording path below.
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const voiceSupported = getVoiceRecognitionConstructor() !== null;
+  const speechRecognitionSupported = getVoiceRecognitionConstructor() !== null;
+  const mediaRecorderSupported = getMediaRecorderConstructor() !== null;
+  const voiceSupported = speechRecognitionSupported || mediaRecorderSupported;
+
+  // Type-or-voice mode gate: the visitor picks once per conversation, before
+  // seeing the welcome screen. "type" keeps the existing text composer with
+  // no mic control at all; "voice" replaces the composer with a single mic
+  // button and no text input -- every recognized transcript auto-sends
+  // immediately (there is no field left to review/edit it in first).
+  const [interactionMode, setInteractionMode] = useState<"type" | "voice" | null>(null);
+
+  /**
+   * Stops whichever voice-capture mechanism is currently active -- cloud
+   * `MediaRecorder` or browser-native `SpeechRecognition` -- used by every
+   * cleanup site (unmount, close, reset, starting a typed send) that
+   * previously only knew about the `SpeechRecognition` ref.
+   *
+   * `discard: true` (every cleanup site) tears the capture down WITHOUT
+   * transcribing/auto-sending: `SpeechRecognition.abort()` (never fires a
+   * final `onresult`, unlike `.stop()`) and, for the recorder, clearing
+   * `onstop` before calling `.stop()` so a recording already in flight can
+   * never surface a transcript -- and therefore never auto-send a message
+   * -- after the visitor has already left the conversation. `discard:
+   * false` (the mic button's OWN "I'm done talking" second tap, handled
+   * inline in `toggleVoiceInput` below, not through this helper) is the
+   * one case that must still finish normally.
+   */
+  const stopVoiceCapture = useCallback(() => {
+    voiceRecognitionRef.current?.abort();
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+    audioChunksRef.current = [];
+    setListening(false);
+  }, []);
 
   useEffect(() => {
     return () => {
       unmountedRef.current = true;
-      voiceRecognitionRef.current?.abort();
+      stopVoiceCapture();
     };
-  }, []);
+  }, [stopVoiceCapture]);
 
   // SR-27: one-time existingBooking check on mount (the panel opens
   // automatically, see `open`'s own comment above -- there is no separate
@@ -356,6 +432,8 @@ export function ChatWidget({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const typeOptionRef = useRef<HTMLButtonElement | null>(null);
+  const micButtonRef = useRef<HTMLButtonElement | null>(null);
   // TTS: opt-in, in-memory-only mute preference (decision 5/6). Speaks only
   // once per page session, attempted from three possible triggers, in order
   // — mount (the panel auto-opens with no click required, see the effect
@@ -372,13 +450,13 @@ export function ChatWidget({
   const attemptGreeting = useCallback(() => {
     if (hasGreetedRef.current || muted) return;
     hasGreetedRef.current = true;
-    tts.speakGreeting(() => {
+    void tts.speakGreeting(config, () => {
       // Blocked (most commonly Chrome's "no speak() without prior user
       // activation on this frame" policy) — allow the next trigger (the
       // first-interaction listener below, or a manual open) to retry.
       hasGreetedRef.current = false;
     });
-  }, [muted]);
+  }, [muted, config]);
 
   useEffect(() => {
     if (open) {
@@ -424,9 +502,9 @@ export function ChatWidget({
     if (!last || last.id === lastSpokenIdRef.current) return;
     lastSpokenIdRef.current = last.id;
     if (last.role === "bot" && last.text.trim() && !muted) {
-      tts.speak(last.text);
+      void tts.speak(config, last.text);
     }
-  }, [messages, muted]);
+  }, [messages, muted, config]);
 
   /**
    * Show the exit confirmation instead of closing immediately. Every
@@ -443,10 +521,9 @@ export function ChatWidget({
    */
   const requestClose = useCallback(() => {
     tts.cancel();
-    voiceRecognitionRef.current?.stop();
-    setListening(false);
+    stopVoiceCapture();
     setConfirmingClose(true);
-  }, []);
+  }, [stopVoiceCapture]);
 
   /**
    * "Yes" on the exit confirmation -- the ONLY function that actually closes
@@ -530,16 +607,69 @@ export function ChatWidget({
     });
   }, []);
 
-  const toggleVoiceInput = useCallback(() => {
-    if (listening) {
-      voiceRecognitionRef.current?.stop();
+  /**
+   * Cloud ASR path (OpenAI, via the backend) -- the PREFERRED mechanism
+   * whenever `session.ts#isVoiceAsrEnabled()` says the backend has a key
+   * configured AND the browser supports `MediaRecorder`/`getUserMedia`.
+   * Records raw audio; on the visitor's second tap (`toggleVoiceInput`
+   * below calls `recorder.stop()`), `onstop` uploads the recording via
+   * `transcribeAudio` and auto-sends the transcript -- there is no text
+   * field to review it in first, same contract as the browser-native path.
+   */
+  const startCloudRecording = useCallback(async () => {
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      const name = err instanceof DOMException ? err.name : "";
+      setVoiceError(mediaRecorderErrorMessage(name));
+      return;
+    }
+    if (unmountedRef.current) {
+      stream.getTracks().forEach((track) => track.stop());
       return;
     }
 
+    mediaStreamRef.current = stream;
+    audioChunksRef.current = [];
+    const recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) audioChunksRef.current.push(event.data);
+    };
+    recorder.onstop = () => {
+      stream.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+      setListening(false);
+      if (unmountedRef.current) return;
+
+      const audio = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+      audioChunksRef.current = [];
+      void (async () => {
+        const result = await transcribeAudio(config, audio);
+        if (unmountedRef.current) return;
+        if (!result.ok) {
+          setVoiceError("Voice input isn't available right now. Please try again.");
+          return;
+        }
+        if (result.text.trim()) {
+          void sendMessageRef.current(result.text);
+        } else {
+          setVoiceError("Didn't catch that — try again.");
+        }
+      })();
+    };
+
+    mediaRecorderRef.current = recorder;
+    recorder.start();
+    setListening(true);
+  }, [config]);
+
+  /** Browser-native ASR path (Web Speech API) -- the fallback whenever cloud
+   * ASR isn't configured/supported. Unchanged from before cloud voice
+   * existed. */
+  const startBrowserRecognition = useCallback(() => {
     const Recognition = getVoiceRecognitionConstructor();
     if (!Recognition) return;
-    tts.cancel(); // barge-in: starting to talk stops any reply mid-speech
-    setVoiceError(null);
     const recognition = new Recognition();
     recognition.continuous = false;
     recognition.interimResults = false;
@@ -552,27 +682,60 @@ export function ChatWidget({
       if (message) setVoiceError(message);
     };
     recognition.onresult = (event) => {
+      // Voice mode has no text field to review the transcript in -- this
+      // control only ever renders when interactionMode === "voice" (see the
+      // composer below), so every recognized transcript sends immediately.
       const transcript = event.results[0]?.[0]?.transcript?.trim();
       if (transcript) {
-        setInputValue(transcript);
+        void sendMessageRef.current(transcript);
       } else {
-        setVoiceError("Didn't catch that — try again or type your question.");
+        setVoiceError("Didn't catch that — try again.");
       }
     };
     voiceRecognitionRef.current = recognition;
     recognition.start();
-  }, [listening]);
+  }, []);
 
-  // Focus-in on open (decision 1): move focus to the message input, the
-  // first sensible target, once the panel mounts -- also fires when
-  // returning to the normal panel view after "No"/dismissing the exit
-  // confirmation (confirmingClose: true -> false), since that view swaps
-  // the input out of the DOM entirely while showing.
-  useEffect(() => {
-    if (open && !confirmingClose) {
-      inputRef.current?.focus();
+  const toggleVoiceInput = useCallback(() => {
+    if (listening) {
+      // Finish normally (NOT a discard) -- whichever mechanism is active
+      // gracefully stops and its own onstop/onresult still fires, carrying
+      // the transcript through to auto-send.
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
+      } else {
+        voiceRecognitionRef.current?.stop();
+      }
+      return;
     }
-  }, [open, confirmingClose]);
+
+    tts.cancel(); // barge-in: starting to talk stops any reply mid-speech
+    setVoiceError(null);
+    if (isVoiceAsrEnabled() && mediaRecorderSupported) {
+      void startCloudRecording();
+    } else if (speechRecognitionSupported) {
+      startBrowserRecognition();
+    }
+  }, [listening, mediaRecorderSupported, speechRecognitionSupported, startCloudRecording, startBrowserRecognition]);
+
+  // Focus-in on open (decision 1): move focus to the first sensible target
+  // once the panel mounts -- also fires when returning to the normal panel
+  // view after "No"/dismissing the exit confirmation (confirmingClose:
+  // true -> false), since that view swaps the whole body out of the DOM
+  // while showing. The sensible target now depends on the mode gate: the
+  // "Type a message" option before a mode is chosen, the text input once
+  // "type" is picked, the mic button once "voice" is picked.
+  useEffect(() => {
+    if (!open || confirmingClose) return;
+    if (interactionMode === "type") {
+      inputRef.current?.focus();
+    } else if (interactionMode === "voice") {
+      micButtonRef.current?.focus();
+    } else {
+      typeOptionRef.current?.focus();
+    }
+  }, [open, confirmingClose, interactionMode]);
 
   // Focus-into the exit confirmation when it appears: the "No" (safe/
   // non-destructive) button, not "Yes" -- a defensive default so a stray
@@ -679,6 +842,14 @@ export function ChatWidget({
   const runSendRef = useRef<(trimmed: string, conversationId: string | null) => Promise<void>>(
     async () => {},
   );
+
+  // A stable ref to the latest `sendMessage` closure, same TDZ-avoidance
+  // rationale as `runSendRef` above: voice mode's `toggleVoiceInput` (defined
+  // earlier in this file) auto-sends a recognized transcript directly via
+  // `sendMessage`, which is itself defined later -- reading it through a ref
+  // synced by the effect near `sendMessage`'s own definition sidesteps the
+  // forward-reference entirely.
+  const sendMessageRef = useRef<(message: string) => Promise<void>>(async () => {});
 
   const runSend = useCallback(
     async (trimmed: string, conversationId: string | null) => {
@@ -841,13 +1012,16 @@ export function ChatWidget({
     await runSend(trimmed, conversationIdRef.current);
   }, [pending, runSend]);
 
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
+
   const handleSend = useCallback(async () => {
     const message = inputValue;
-    voiceRecognitionRef.current?.stop();
-    setListening(false);
+    stopVoiceCapture();
     setInputValue("");
     await sendMessage(message);
-  }, [inputValue, sendMessage]);
+  }, [inputValue, sendMessage, stopVoiceCapture]);
 
   /**
    * The persistent "Connect with a sales rep" CTA (SR-5 decisions 4/5): a
@@ -971,8 +1145,7 @@ export function ChatWidget({
   );
 
   const resetChat = useCallback(() => {
-    voiceRecognitionRef.current?.abort();
-    setListening(false);
+    stopVoiceCapture();
     setVoiceError(null);
     setMessages([]);
     setInputValue("");
@@ -984,8 +1157,12 @@ export function ChatWidget({
     lastFailedSendRef.current = null;
     pendingIdentityQuestionRef.current = null;
     if (isResumeEnabled()) clearResumeRecord();
-    inputRef.current?.focus();
-  }, []);
+    // Mode (type/voice), deliberately NOT reset here -- the visitor picked it
+    // once for this session; starting a fresh thread clears history, not
+    // that choice. inputRef.current?.focus() dropped along with it: in
+    // voice mode there is no input to focus, and in type mode the existing
+    // focus-in effect (keyed on interactionMode too) already covers it.
+  }, [stopVoiceCapture]);
 
   const resolvedLauncherLabel = launcherLabel?.trim()
     ? launcherLabel
@@ -1058,79 +1235,113 @@ export function ChatWidget({
                 </span>
               </div>
               <ConnectionStatus state={connectionState} onRetry={() => void handleManualRetry()} />
-              <MessageList
-                messages={messages}
-                pending={pending}
-                config={config}
-                onSuggestion={(message) => void handleSuggestion(message)}
-                onIdentityCaptured={handleIdentityCaptured}
-                onHandoffTalk={() => void startScheduling("Talk to a rep")}
-                onHandoffStay={stayWithRebecca}
-                onBooked={handleBooked}
-              />
-              {scheduleError && (
-                <div className="cw-sched-error" role="alert">
-                  We couldn&rsquo;t check appointment availability. <button type="button" className="cw-sched-retry" onClick={() => void startScheduling()}>Retry</button>
-                </div>
-              )}
-              {!hasBooking && !schedulingUiActive && (
-                <button
-                  type="button"
-                  className="cw-connect-sales-button"
-                  disabled={pending || schedulePending}
-                  onClick={() => void startScheduling()}
-                >
-                  {schedulePending ? "Connecting…" : "Connect with a sales rep"}
-                </button>
-              )}
-              {voiceError && (
-                <div className="cw-voice-error" role="alert">
-                  {voiceError}
-                </div>
-              )}
-              <div className="cw-input-row">
-                <div className="cw-composer">
-                  <input
-                  ref={inputRef}
-                  type="text"
-                  className="cw-input"
-                    placeholder={listening ? "Listening…" : "Message Rebecca…"}
-                  value={inputValue}
-                  disabled={pending}
-                  onChange={(e) => {
-                    tts.cancel(); // barge-in: typing stops any reply mid-speech
-                    setInputValue(e.target.value);
-                  }}
-                  onKeyDown={handleKeyDown}
-                    aria-label="Message"
-                  />
-                  {voiceSupported && (
+              {interactionMode === null ? (
+                <div className="cw-mode-picker">
+                  <p className="cw-mode-picker-question">How would you like to chat?</p>
+                  <div className="cw-mode-picker-options">
                     <button
                       type="button"
-                      className={`cw-voice-button${listening ? " cw-voice-button-active" : ""}`}
-                      onClick={toggleVoiceInput}
-                      aria-pressed={listening}
-                      aria-label={listening ? "Stop voice input" : "Start voice input"}
-                      title="Voice input"
+                      ref={typeOptionRef}
+                      className="cw-mode-picker-option"
+                      onClick={() => setInteractionMode("type")}
                     >
-                      <ChatGlyph name="mic" />
+                      <ChatGlyph name="chat" />
+                      Type a message
+                    </button>
+                    {voiceSupported && (
+                      <button
+                        type="button"
+                        className="cw-mode-picker-option"
+                        onClick={() => setInteractionMode("voice")}
+                      >
+                        <ChatGlyph name="mic" />
+                        Use your voice
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <MessageList
+                    messages={messages}
+                    pending={pending}
+                    config={config}
+                    onSuggestion={(message) => void handleSuggestion(message)}
+                    onIdentityCaptured={handleIdentityCaptured}
+                    onHandoffTalk={() => void startScheduling("Talk to a rep")}
+                    onHandoffStay={stayWithRebecca}
+                    onBooked={handleBooked}
+                  />
+                  {scheduleError && (
+                    <div className="cw-sched-error" role="alert">
+                      We couldn&rsquo;t check appointment availability. <button type="button" className="cw-sched-retry" onClick={() => void startScheduling()}>Retry</button>
+                    </div>
+                  )}
+                  {!hasBooking && !schedulingUiActive && (
+                    <button
+                      type="button"
+                      className="cw-connect-sales-button"
+                      disabled={pending || schedulePending}
+                      onClick={() => void startScheduling()}
+                    >
+                      {schedulePending ? "Connecting…" : "Connect with a sales rep"}
                     </button>
                   )}
-                <button
-                  type="button"
-                  className="cw-send-button"
-                  disabled={pending || inputValue.trim().length === 0}
-                  onClick={() => void handleSend()}
-                  aria-label="Send message"
-                >
-                  <ChatGlyph name="send" />
-                </button>
-                </div>
-                <p className="cw-disclaimer">
-                  Rebecca is AI and can make mistakes <span aria-hidden="true">&middot;</span>{" "}
-                  <a className="cw-privacy-link" href="/privacy">Privacy policy</a>
-                </p>
-              </div>
+                  {voiceError && (
+                    <div className="cw-voice-error" role="alert">
+                      {voiceError}
+                    </div>
+                  )}
+                  <div className="cw-input-row">
+                    {interactionMode === "type" ? (
+                      <div className="cw-composer">
+                        <input
+                        ref={inputRef}
+                        type="text"
+                        className="cw-input"
+                          placeholder="Message Rebecca…"
+                        value={inputValue}
+                        disabled={pending}
+                        onChange={(e) => {
+                          tts.cancel(); // barge-in: typing stops any reply mid-speech
+                          setInputValue(e.target.value);
+                        }}
+                        onKeyDown={handleKeyDown}
+                          aria-label="Message"
+                        />
+                      <button
+                        type="button"
+                        className="cw-send-button"
+                        disabled={pending || inputValue.trim().length === 0}
+                        onClick={() => void handleSend()}
+                        aria-label="Send message"
+                      >
+                        <ChatGlyph name="send" />
+                      </button>
+                      </div>
+                    ) : (
+                      <div className="cw-composer cw-composer-voice-only">
+                        <button
+                          type="button"
+                          ref={micButtonRef}
+                          className={`cw-voice-button${listening ? " cw-voice-button-active" : ""}`}
+                          onClick={toggleVoiceInput}
+                          disabled={pending}
+                          aria-pressed={listening}
+                          aria-label={listening ? "Stop voice input" : "Start voice input"}
+                          title="Voice input"
+                        >
+                          <ChatGlyph name="mic" />
+                        </button>
+                      </div>
+                    )}
+                    <p className="cw-disclaimer">
+                      Rebecca is AI and can make mistakes <span aria-hidden="true">&middot;</span>{" "}
+                      <a className="cw-privacy-link" href="/privacy">Privacy policy</a>
+                    </p>
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>

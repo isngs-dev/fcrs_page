@@ -28,6 +28,12 @@ const SessionResponseSchema = z.object({
   // SR-3 decision 8: absent -> false (a pre-SR-3 backend, or a tenant with
   // the flag unset, must behave exactly as S14.1/S14.2 shipped).
   resume_enabled: z.boolean().optional(),
+  // Cloud voice (ElevenLabs TTS / OpenAI ASR): platform-global (env-var,
+  // not per-tenant) booleans -- absent -> false, an older backend or one
+  // with neither key configured behaves exactly as before this existed
+  // (browser-native SpeechRecognition/speechSynthesis only).
+  voice_asr_enabled: z.boolean().optional(),
+  voice_tts_enabled: z.boolean().optional(),
 });
 
 export interface VisitorSession {
@@ -73,6 +79,13 @@ let currentSession: VisitorSession | null = null;
 // `hydrateFromResume`.
 let resumeEnabled = false;
 let resumeSeedConversationId: string | null = null;
+// Cloud voice capability flags (module-scoped, mirrors resumeEnabled's own
+// lifecycle) -- set from the admission response's voice_asr_enabled/
+// voice_tts_enabled; both default false, so a hydrated resume (which does
+// NOT go through mintVisitorSession, see hydrateFromResume below) or a pre-
+// this-existed backend leaves cloud voice off, never assumed on.
+let voiceAsrEnabled = false;
+let voiceTtsEnabled = false;
 
 /** The in-memory visitor token, if a session has been minted successfully. */
 export function getVisitorSession(): VisitorSession | null {
@@ -102,6 +115,18 @@ export function isResumeEnabled(): boolean {
 export function getResumeSeed(): { conversationId: string | null } | null {
   if (!resumeEnabled) return null;
   return { conversationId: resumeSeedConversationId };
+}
+
+/** Whether the backend has an OpenAI ASR key configured (platform-global,
+ * not per-tenant). `false` until a fresh `mintVisitorSession` succeeds. */
+export function isVoiceAsrEnabled(): boolean {
+  return voiceAsrEnabled;
+}
+
+/** Whether the backend has an ElevenLabs TTS key configured. See
+ * `isVoiceAsrEnabled`'s doc for the same "false until a fresh mint" caveat. */
+export function isVoiceTtsEnabled(): boolean {
+  return voiceTtsEnabled;
 }
 
 /**
@@ -234,6 +259,8 @@ export async function mintVisitorSession(config: WidgetConfig): Promise<Admissio
   // conversation yet (ChatWidget.tsx starts it on the first turn).
   resumeEnabled = parsed.data.resume_enabled ?? false;
   resumeSeedConversationId = null;
+  voiceAsrEnabled = parsed.data.voice_asr_enabled ?? false;
+  voiceTtsEnabled = parsed.data.voice_tts_enabled ?? false;
   if (resumeEnabled) {
     writeResumeRecord({
       token: currentSession.visitorToken,

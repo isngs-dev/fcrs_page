@@ -357,7 +357,56 @@ async def test_widget_session_valid_key_and_origin_default_tenant_resume_disable
     assert resp.status_code == 200
     body = resp.json()
     assert body["resume_enabled"] is False
-    assert set(body.keys()) == {"visitor_token", "expires_at", "resume_enabled"}
+    assert set(body.keys()) == {
+        "visitor_token",
+        "expires_at",
+        "resume_enabled",
+        "voice_asr_enabled",
+        "voice_tts_enabled",
+    }
+
+
+async def test_widget_session_voice_flags_false_when_no_provider_keys_configured() -> None:
+    """Real test settings carry no OPENAI_ASR_API_KEY/ELEVENLABS_API_KEY --
+    both flags are false, platform-global (not per-tenant) booleans."""
+    app = _build_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/widget/session",
+            json={"client_key": _CLIENT_KEY_A},
+            headers={"Origin": "http://localhost:3000"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["voice_asr_enabled"] is False
+    assert body["voice_tts_enabled"] is False
+
+
+async def test_widget_session_voice_flags_true_when_provider_keys_configured() -> None:
+    """Setting both env vars flips both flags true -- proves the route reads
+    live settings, not a hardcoded false."""
+    from unittest.mock import patch
+
+    app = _build_app()
+    with patch("api.gateway.routes.get_api_settings") as mock_settings:
+        from api.config import ApiSettings
+
+        real = ApiSettings()  # type: ignore[call-arg]
+        real.openai_asr_api_key = "sk-fake"
+        real.elevenlabs_api_key = "sk-fake"
+        real.elevenlabs_voice_id = "voice-123"
+        mock_settings.return_value = real
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/widget/session",
+                json={"client_key": _CLIENT_KEY_A},
+                headers={"Origin": "http://localhost:3000"},
+            )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["voice_asr_enabled"] is True
+    assert body["voice_tts_enabled"] is True
 
 
 async def test_widget_session_resume_enabled_tenant_echoes_true() -> None:

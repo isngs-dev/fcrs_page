@@ -8,6 +8,8 @@ import {
   getVisitorSession,
   hydrateFromResume,
   isResumeEnabled,
+  isVoiceAsrEnabled,
+  isVoiceTtsEnabled,
   mintVisitorSession,
 } from "./session";
 
@@ -299,6 +301,53 @@ describe("mintVisitorSession", () => {
     expect(parsed.token).toBe("jwt.abc.def");
     expect(parsed.expiresAt).toBe("2026-07-16T12:30:00Z");
     expect(parsed.conversationId).toBeNull();
+  });
+
+  // =====================================================================
+  // Cloud voice (ASR/TTS) capability flags -- platform-global, not per-tenant
+  // =====================================================================
+
+  it("parses voice_asr_enabled/voice_tts_enabled true from the admission response", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        voice_asr_enabled: true,
+        voice_tts_enabled: true,
+      }),
+    );
+
+    await mintVisitorSession(baseConfig);
+
+    expect(isVoiceAsrEnabled()).toBe(true);
+    expect(isVoiceTtsEnabled()).toBe(true);
+  });
+
+  it("absent voice_asr_enabled/voice_tts_enabled fields are treated as false (an older backend, or neither key configured)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { visitor_token: "jwt.abc.def", expires_at: "2026-07-16T12:30:00Z" }),
+    );
+
+    await mintVisitorSession(baseConfig);
+
+    expect(isVoiceAsrEnabled()).toBe(false);
+    expect(isVoiceTtsEnabled()).toBe(false);
+  });
+
+  it("the two voice flags are independent -- ASR configured without TTS reports exactly that", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        voice_asr_enabled: true,
+        voice_tts_enabled: false,
+      }),
+    );
+
+    await mintVisitorSession(baseConfig);
+
+    expect(isVoiceAsrEnabled()).toBe(true);
+    expect(isVoiceTtsEnabled()).toBe(false);
   });
 
   it("a failed mint writes no resume record even when a prior resume_enabled was true", async () => {

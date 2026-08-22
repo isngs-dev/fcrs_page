@@ -1,22 +1,29 @@
 /**
- * Opt-in browser TTS greeting (S14.5 decision 5, scope item 6).
+ * TTS: cloud (ElevenLabs, via the backend) with a browser-native fallback
+ * (S14.5 decision 5, scope item 6; extended for cloud voice).
  *
- * Thin wrapper over the native Web Speech API (`window.speechSynthesis` +
- * `SpeechSynthesisUtterance`) — zero-dependency, zero-backend, purely
- * client-side. No third-party TTS service, no audio assets, no autoplay.
+ * `speak`/`speakGreeting` try `synthesizeSpeech` (voice.ts, ->
+ * `POST /public/chat/speak`) first, IFF `session.ts#isVoiceTtsEnabled()`
+ * says the backend has an ElevenLabs key configured. On ANY failure of that
+ * call (not configured, network error, upstream failure) they fall back to
+ * the ORIGINAL browser-native mechanism below (`window.speechSynthesis` +
+ * `SpeechSynthesisUtterance`) -- zero-dependency, zero-backend, purely
+ * client-side. This means: today (no key set) this module's behavior is
+ * byte-for-byte what it was before cloud voice existed; once a key is set,
+ * it upgrades automatically with no further widget change or redeploy.
  *
  * `ChatWidget` attempts `speakGreeting()` on mount (the panel opens
  * automatically, no click required — user request). Chrome (and
- * Chromium-based browsers) actively enforce "no `speechSynthesis.speak()`
- * without prior user activation on this frame" and silently produce no
- * audio at all when that hasn't happened yet — there is a real chance mount
- * time is too early. That block is invisible to the caller: `speak()` does
- * not throw or reject synchronously, it just never starts, so the only
- * signal is the utterance's own `error` event firing instead of `start`.
- * `speakGreeting` accepts an optional `onBlocked` callback specifically so
- * `ChatWidget` can notice this and retry once the visitor's first real
- * interaction with the page has granted activation — see the effect above
- * `toggleOpen` in ChatWidget.tsx.
+ * Chromium-based browsers) actively enforce "no `speechSynthesis.speak()` /
+ * `<audio>.play()` without prior user activation on this frame" and
+ * silently produce no audio at all when that hasn't happened yet — there is
+ * a real chance mount time is too early. That block is invisible to the
+ * caller either way: neither mechanism throws or rejects synchronously on
+ * this specific failure, so the only signal is an error/rejection event
+ * firing instead of a genuine start. `speakGreeting` accepts an optional
+ * `onBlocked` callback specifically so `ChatWidget` can notice this and
+ * retry once the visitor's first real interaction with the page has
+ * granted activation — see the effect above `toggleOpen` in ChatWidget.tsx.
  *
  * Capability check + try/catch is load-bearing regardless: `window.speechSynthesis`
  * may be absent (older/locked-down browsers), and `speak()`/`cancel()` can
@@ -24,12 +31,17 @@
  * degrade to a harmless no-op and never throw into the host page or affect
  * chat.
  *
- * Voice: `pickFemaleVoice` below best-effort-selects a female voice (the
- * Web Speech API has no gender field, only free-text `.name`, so this is a
- * name-hint heuristic, not a guarantee — some browsers/OSes may not ship
- * any voice matching a hint, in which case this silently falls back to
- * the browser/OS default voice, same as before this existed).
+ * Voice: `pickFemaleVoice` below best-effort-selects a female voice for the
+ * BROWSER-NATIVE path only (the Web Speech API has no gender field, only
+ * free-text `.name`, so this is a name-hint heuristic, not a guarantee —
+ * some browsers/OSes may not ship any voice matching a hint, in which case
+ * this silently falls back to the browser/OS default voice). The CLOUD path
+ * has no equivalent concept -- its voice is a fixed choice made server-side
+ * (`ELEVENLABS_VOICE_ID`), not selected per-utterance here.
  */
+import { synthesizeSpeech } from "./voice";
+import { isVoiceTtsEnabled } from "./session";
+import type { WidgetConfig } from "./config";
 
 /** Baked-in greeting text (decision 5) — no server-driven/per-tenant config yet (flagged). */
 export const TTS_GREETING_TEXT = "Hi, I'm Rebecca, how can I help?";
@@ -88,22 +100,32 @@ function pickFemaleVoice(synth: SpeechSynthesis): SpeechSynthesisVoice | null {
   return null;
 }
 
-/**
- * Speak arbitrary text once, if the Web Speech API is available. Callers
- * gate this on "not muted" — this function itself does not track that; it
- * only guarantees capability-checked, exception-safe speech. Shared by the
- * greeting (`speakGreeting` below) and by spoken bot replies (ChatWidget's
- * "hear it back" effect).
- *
- * `onBlocked`, if given, fires when the capability check fails outright OR
- * when the utterance's `error` event fires with a genuine block reason (e.g.
- * Chrome's "not-allowed" — no prior user activation on this frame). It does
- * NOT fire for "canceled"/"interrupted" — those mean `cancel()` (below) or a
- * newer `speak()` call stopped an utterance that was already genuinely
- * playing/queued (panel close, barge-in), which must not be treated as a
- * block worth retrying.
- */
-export function speak(text: string, onBlocked?: () => void): void {
+/** Currently-playing cloud `<audio>` element + its object URL, if any (module-
+ * scoped, mirrors `speechSynthesis`'s own single-utterance-at-a-time model).
+ * Tracked so `cancel()` can stop cloud playback too, not just `speechSynthesis`. */
+let currentAudio: HTMLAudioElement | null = null;
+let currentObjectUrl: string | null = null;
+
+function stopCloudAudio(): void {
+  if (currentAudio) {
+    try {
+      currentAudio.pause();
+    } catch {
+      // Silent degradation, same rationale as the rest of this module.
+    }
+    currentAudio.onended = null;
+    currentAudio.src = "";
+  }
+  currentAudio = null;
+  if (currentObjectUrl) {
+    URL.revokeObjectURL(currentObjectUrl);
+    currentObjectUrl = null;
+  }
+}
+
+/** The original, fully browser-native speak path — unchanged from before
+ * cloud voice existed. See the module doc comment for the fallback contract. */
+function speakBrowserNative(text: string, onBlocked?: () => void): void {
   const synth = getSpeechSynthesis();
   if (!synth) {
     onBlocked?.();
@@ -141,20 +163,72 @@ export function speak(text: string, onBlocked?: () => void): void {
   }
 }
 
-/** Speak the baked-in greeting exactly once — see `speak` above for the
- * shared mechanics and `onBlocked` semantics. */
-export function speakGreeting(onBlocked?: () => void): void {
-  speak(TTS_GREETING_TEXT, onBlocked);
+/**
+ * Speak arbitrary text once. Tries cloud TTS first when
+ * `isVoiceTtsEnabled()`, falls back to the browser-native mechanism on any
+ * failure (not configured, network error, upstream failure, or the
+ * cloud audio being blocked by the same autoplay policy `speechSynthesis`
+ * is subject to). Callers gate this on "not muted" — this function itself
+ * does not track that; it only guarantees capability-checked,
+ * exception-safe speech. Shared by the greeting (`speakGreeting` below) and
+ * by spoken bot replies (ChatWidget's "hear it back" effect).
+ *
+ * `onBlocked`, if given, fires when EITHER mechanism's capability check
+ * fails outright, or a genuine block reason occurs (Chrome's "not-allowed"
+ * for `speechSynthesis`, or a rejected `<audio>.play()` for cloud audio —
+ * both mean "no prior user activation on this frame yet"). It does NOT fire
+ * for "canceled"/"interrupted" (`speechSynthesis`) — those mean `cancel()`
+ * (below) or a newer `speak()` call stopped an utterance that was already
+ * genuinely playing/queued (panel close, barge-in), which must not be
+ * treated as a block worth retrying.
+ */
+export async function speak(config: WidgetConfig, text: string, onBlocked?: () => void): Promise<void> {
+  if (isVoiceTtsEnabled()) {
+    const result = await synthesizeSpeech(config, text);
+    if (result.ok) {
+      stopCloudAudio();
+      const url = URL.createObjectURL(result.audio);
+      const audio = new Audio(url);
+      currentAudio = audio;
+      currentObjectUrl = url;
+      audio.onended = () => {
+        if (currentAudio === audio) stopCloudAudio();
+      };
+      try {
+        await audio.play();
+      } catch {
+        // Autoplay-policy block (or any other play() failure) -- same
+        // "no activation yet" contract as speechSynthesis's onerror, NOT a
+        // reason to also try the browser-native path (it would almost
+        // certainly be blocked for the identical reason).
+        stopCloudAudio();
+        onBlocked?.();
+      }
+      return;
+    }
+    // Cloud call itself failed (not configured / network / upstream) --
+    // fall through to the browser-native mechanism below.
+  }
+  speakBrowserNative(text, onBlocked);
 }
 
-/** Cancel any in-progress/queued speech (e.g. on mute toggle or panel close). */
+/** Speak the baked-in greeting exactly once — see `speak` above for the
+ * shared mechanics and `onBlocked` semantics. */
+export async function speakGreeting(config: WidgetConfig, onBlocked?: () => void): Promise<void> {
+  await speak(config, TTS_GREETING_TEXT, onBlocked);
+}
+
+/** Cancel any in-progress/queued speech, cloud or browser-native (e.g. on
+ * mute toggle, panel close, or barge-in) — always both, unconditionally
+ * safe/idempotent when the other mechanism was never in use. */
 export function cancel(): void {
+  stopCloudAudio();
+
   const synth = getSpeechSynthesis();
   if (!synth) return;
-
   try {
     synth.cancel();
   } catch {
-    // Silent degradation, same rationale as speakGreeting.
+    // Silent degradation, same rationale as speakBrowserNative.
   }
 }

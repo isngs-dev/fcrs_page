@@ -8,6 +8,7 @@ import type { FetchSlotsResult, FetchAvailabilitySummaryResult, PostHandoffInten
 import type { AdmissionResult } from "../session";
 import type { IdentityResult } from "../identity";
 import type { LeadResult } from "../lead";
+import type { TranscribeResult } from "../voice";
 
 // React 19's `act()` only batches/flushes updates when this flag is set —
 // unlike mount.test.tsx's synchronous-only assertions, this suite drives
@@ -23,8 +24,13 @@ const bookSlotMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<Boo
 const postHandoffIntentMock = vi.fn<(config: WidgetConfig, input: { email: string }) => Promise<PostHandoffIntentResult>>();
 const submitLeadMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<LeadResult>>();
 const mintVisitorSessionMock = vi.fn<(config: WidgetConfig) => Promise<AdmissionResult>>();
-const speakGreetingMock = vi.fn<(onBlocked?: () => void) => void>();
-const speakMock = vi.fn<(text: string, onBlocked?: () => void) => void>();
+// Default false: every pre-existing test in this file (none of which opt
+// into cloud ASR) exercises the browser-native SpeechRecognition path
+// unchanged, exactly as before cloud voice existed.
+const isVoiceAsrEnabledMock = vi.fn<() => boolean>(() => false);
+const transcribeAudioMock = vi.fn<(config: WidgetConfig, audio: Blob) => Promise<TranscribeResult>>();
+const speakGreetingMock = vi.fn<(config: WidgetConfig, onBlocked?: () => void) => void>();
+const speakMock = vi.fn<(config: WidgetConfig, text: string, onBlocked?: () => void) => void>();
 const ttsCancelMock = vi.fn<() => void>();
 // SR-3: isResumeEnabled defaults false so every pre-existing test above
 // (none of which opt into resume) sees byte-for-byte the same behavior —
@@ -57,6 +63,7 @@ vi.mock("../identity", async () => {
 vi.mock("../session", () => ({
   mintVisitorSession: (config: WidgetConfig) => mintVisitorSessionMock(config),
   isResumeEnabled: () => isResumeEnabledMock(),
+  isVoiceAsrEnabled: () => isVoiceAsrEnabledMock(),
 }));
 
 // SR-3: mock resume.ts's write-side helpers so ChatWidget's touch/clear
@@ -72,9 +79,17 @@ vi.mock("../resume", () => ({
 // without depending on jsdom having a real Web Speech API (it doesn't). The
 // `onBlocked` callback is forwarded so tests can simulate Chrome's
 // autoplay-policy block (see tts.ts) by invoking it themselves.
+// Cloud ASR client (voice.ts) -- mocked so tests that opt into cloud ASR
+// (isVoiceAsrEnabledMock true) can assert on transcribeAudio without a real
+// fetch; pre-existing tests never call this (default false above routes
+// them through the browser-native SpeechRecognition mock instead).
+vi.mock("../voice", () => ({
+  transcribeAudio: (config: WidgetConfig, audio: Blob) => transcribeAudioMock(config, audio),
+}));
+
 vi.mock("../tts", () => ({
-  speak: (text: string, onBlocked?: () => void) => speakMock(text, onBlocked),
-  speakGreeting: (onBlocked?: () => void) => speakGreetingMock(onBlocked),
+  speak: (config: WidgetConfig, text: string, onBlocked?: () => void) => speakMock(config, text, onBlocked),
+  speakGreeting: (config: WidgetConfig, onBlocked?: () => void) => speakGreetingMock(config, onBlocked),
   cancel: () => ttsCancelMock(),
   TTS_GREETING_TEXT: "Hi! How can we help?",
 }));
@@ -160,6 +175,9 @@ beforeEach(() => {
   submitLeadMock.mockReset();
   submitLeadMock.mockResolvedValue({ ok: true, lead: { leadId: "lead-1", status: "new" } });
   mintVisitorSessionMock.mockReset();
+  isVoiceAsrEnabledMock.mockReset();
+  isVoiceAsrEnabledMock.mockReturnValue(false);
+  transcribeAudioMock.mockReset();
   speakGreetingMock.mockReset();
   speakMock.mockReset();
   ttsCancelMock.mockReset();
@@ -192,14 +210,50 @@ function getSendButton(): HTMLButtonElement {
 /** Idempotent: the panel now opens automatically on mount, so most callers
  * just need "the panel to be open" and this is a no-op in that case. Tests
  * about the open/close TOGGLE itself use `closePanel()` + a direct
- * `launcher.click()` to exercise a real gesture. */
+ * `launcher.click()` to exercise a real gesture.
+ *
+ * Also picks "Type a message" on the type/voice mode gate if it's showing --
+ * every pre-existing test in this file was written against the composer
+ * (text input + send button) that only renders in type mode, so defaulting
+ * the choice here keeps all of them unchanged. Voice-mode-specific tests use
+ * `openPanelVoiceMode()` instead. A no-op once a mode is already chosen. */
 function openPanel(): void {
   const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder");
   if (!launcher) throw new Error("launcher not found");
-  if (launcher.getAttribute("aria-expanded") === "true") return;
-  act(() => {
-    launcher.click();
-  });
+  if (launcher.getAttribute("aria-expanded") !== "true") {
+    act(() => {
+      launcher.click();
+    });
+  }
+  const typeOption = Array.from(
+    container.querySelectorAll<HTMLButtonElement>(".cw-mode-picker-option"),
+  ).find((button) => button.textContent?.includes("Type a message"));
+  if (typeOption) {
+    act(() => {
+      typeOption.click();
+    });
+  }
+}
+
+/** Counterpart to `openPanel()` for voice-mode-specific tests: opens the
+ * panel (if not already) and picks "Use your voice" on the mode gate,
+ * rendering the mic-only composer instead of the text composer. */
+function openPanelVoiceMode(): void {
+  const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder");
+  if (!launcher) throw new Error("launcher not found");
+  if (launcher.getAttribute("aria-expanded") !== "true") {
+    act(() => {
+      launcher.click();
+    });
+  }
+  const voiceOption = Array.from(
+    container.querySelectorAll<HTMLButtonElement>(".cw-mode-picker-option"),
+  ).find((button) => button.textContent?.includes("Use your voice"));
+  if (voiceOption) {
+    act(() => {
+      voiceOption.click();
+    });
+  }
 }
 
 /** Idempotent counterpart to `openPanel()` -- closes via the launcher
@@ -252,6 +306,315 @@ function typeAndSend(text: string): void {
 }
 
 describe("ChatWidget", () => {
+  describe("type-or-voice mode gate", () => {
+    it("shows the mode picker on open, with neither the text composer nor the mic visible yet", () => {
+      class FakeRecognition {
+        continuous = true;
+        interimResults = true;
+        lang = "";
+        onstart: (() => void) | null = null;
+        onend: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        onresult: (() => void) | null = null;
+        start = vi.fn();
+        stop = vi.fn();
+        abort = vi.fn();
+      }
+      Object.defineProperty(window, "webkitSpeechRecognition", {
+        configurable: true,
+        value: FakeRecognition,
+      });
+
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+
+        const options = Array.from(
+          container.querySelectorAll<HTMLButtonElement>(".cw-mode-picker-option"),
+        ).map((button) => button.textContent?.trim());
+        expect(options).toEqual(
+          expect.arrayContaining([expect.stringContaining("Type a message"), expect.stringContaining("Use your voice")]),
+        );
+        expect(container.querySelector(".cw-input")).toBeNull();
+        expect(container.querySelector(".cw-voice-button")).toBeNull();
+      } finally {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      }
+    });
+
+    it("offers only 'Type a message' when speech recognition is unsupported -- no dead voice option", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+
+      const options = Array.from(
+        container.querySelectorAll<HTMLButtonElement>(".cw-mode-picker-option"),
+      ).map((button) => button.textContent?.trim());
+      expect(options).toEqual([expect.stringContaining("Type a message")]);
+    });
+
+    it("picking 'Type a message' shows the text input + send button, and no mic control at all", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      expect(container.querySelector(".cw-input")).not.toBeNull();
+      expect(container.querySelector(".cw-send-button")).not.toBeNull();
+      expect(container.querySelector(".cw-voice-button")).toBeNull();
+      expect(container.querySelector(".cw-mode-picker")).toBeNull();
+    });
+
+    it("picking 'Use your voice' shows only a mic button -- no text input, no send button", () => {
+      class FakeRecognition {
+        continuous = true;
+        interimResults = true;
+        lang = "";
+        onstart: (() => void) | null = null;
+        onend: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        onresult: (() => void) | null = null;
+        start = vi.fn();
+        stop = vi.fn();
+        abort = vi.fn();
+      }
+      Object.defineProperty(window, "webkitSpeechRecognition", {
+        configurable: true,
+        value: FakeRecognition,
+      });
+
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+
+        expect(container.querySelector(".cw-voice-button")).not.toBeNull();
+        expect(container.querySelector(".cw-input")).toBeNull();
+        expect(container.querySelector(".cw-send-button")).toBeNull();
+        expect(container.querySelector(".cw-mode-picker")).toBeNull();
+      } finally {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      }
+    });
+  });
+
+  describe("cloud ASR (OpenAI, via the backend) -- the preferred mic mechanism when configured+supported", () => {
+    class FakeMediaRecorder {
+      static instances: FakeMediaRecorder[] = [];
+      state: "inactive" | "recording" = "inactive";
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      mimeType = "audio/webm";
+      start = vi.fn(() => {
+        this.state = "recording";
+      });
+      stop = vi.fn(() => {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["fake-audio-chunk"]) });
+        this.onstop?.();
+      });
+      constructor() {
+        FakeMediaRecorder.instances.push(this);
+      }
+    }
+
+    function stubMediaRecorderSupport(getUserMediaImpl?: () => Promise<unknown>) {
+      FakeMediaRecorder.instances = [];
+      const fakeTrack = { stop: vi.fn() };
+      const fakeStream = { getTracks: () => [fakeTrack] };
+      const getUserMedia = vi.fn(getUserMediaImpl ?? (() => Promise.resolve(fakeStream)));
+      Object.defineProperty(window, "MediaRecorder", {
+        value: FakeMediaRecorder,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(navigator, "mediaDevices", {
+        value: { getUserMedia },
+        configurable: true,
+        writable: true,
+      });
+      return { getUserMedia, fakeTrack };
+    }
+
+    function getVoiceButton(): HTMLButtonElement {
+      const button = container.querySelector<HTMLButtonElement>(".cw-voice-button");
+      if (!button) throw new Error("voice button not found");
+      return button;
+    }
+
+    afterEach(() => {
+      Reflect.deleteProperty(window, "MediaRecorder");
+      Reflect.deleteProperty(navigator, "mediaDevices");
+    });
+
+    it("records via MediaRecorder and auto-sends the transcript, never touching SpeechRecognition, when cloud ASR is enabled", async () => {
+      isVoiceAsrEnabledMock.mockReturnValue(true);
+      const { getUserMedia } = stubMediaRecorderSupport();
+      class FakeRecognition {
+        start = vi.fn();
+        stop = vi.fn();
+        abort = vi.fn();
+      }
+      Object.defineProperty(window, "webkitSpeechRecognition", {
+        configurable: true,
+        writable: true,
+        value: FakeRecognition,
+      });
+      transcribeAudioMock.mockResolvedValue({ ok: true, text: "how much does an inspection cost" });
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-asr-1",
+          messageId: "msg-asr-1",
+          reply: "Inspections are free.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+
+        await act(async () => {
+          getVoiceButton().click();
+          await Promise.resolve();
+        });
+        expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+        expect(getVoiceButton().getAttribute("aria-pressed")).toBe("true");
+
+        await act(async () => {
+          getVoiceButton().click(); // second tap: stop recording
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        await flush();
+
+        expect(transcribeAudioMock).toHaveBeenCalledWith(baseConfig, expect.any(Blob));
+        expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe(
+          "how much does an inspection cost",
+        );
+      } finally {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      }
+    });
+
+    it("falls back to browser SpeechRecognition when MediaRecorder is unsupported, even if cloud ASR is enabled", () => {
+      isVoiceAsrEnabledMock.mockReturnValue(true);
+      // Deliberately no MediaRecorder/mediaDevices stub here.
+      class FakeRecognition {
+        static latest: FakeRecognition | null = null;
+        onstart: (() => void) | null = null;
+        start = vi.fn(() => this.onstart?.());
+        stop = vi.fn();
+        abort = vi.fn();
+        constructor() {
+          FakeRecognition.latest = this;
+        }
+      }
+      Object.defineProperty(window, "webkitSpeechRecognition", {
+        configurable: true,
+        writable: true,
+        value: FakeRecognition,
+      });
+
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        expect(FakeRecognition.latest).not.toBeNull();
+        expect(transcribeAudioMock).not.toHaveBeenCalled();
+      } finally {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      }
+    });
+
+    it("shows an honest message when the browser denies microphone permission (getUserMedia rejects)", async () => {
+      isVoiceAsrEnabledMock.mockReturnValue(true);
+      stubMediaRecorderSupport(() =>
+        Promise.reject(new DOMException("denied", "NotAllowedError")),
+      );
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanelVoiceMode();
+
+      await act(async () => {
+        getVoiceButton().click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(container.querySelector(".cw-voice-error")?.textContent).toMatch(/microphone access was denied/i);
+    });
+
+    it("shows an honest message when transcribeAudio itself fails (not configured / network / upstream)", async () => {
+      isVoiceAsrEnabledMock.mockReturnValue(true);
+      stubMediaRecorderSupport();
+      transcribeAudioMock.mockResolvedValue({
+        ok: false,
+        error: { type: "VOICE_CALL_ERROR", errorCode: "VOICE_PROVIDER_NOT_CONFIGURED", message: "not configured" },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanelVoiceMode();
+
+      await act(async () => {
+        getVoiceButton().click();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        getVoiceButton().click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await flush();
+
+      expect(container.querySelector(".cw-voice-error")?.textContent).toMatch(/isn't available right now/i);
+      expect(sendTurnMock).not.toHaveBeenCalled();
+    });
+
+    it("shows 'didn't catch that' when transcribeAudio succeeds with empty/whitespace text", async () => {
+      isVoiceAsrEnabledMock.mockReturnValue(true);
+      stubMediaRecorderSupport();
+      transcribeAudioMock.mockResolvedValue({ ok: true, text: "   " });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanelVoiceMode();
+
+      await act(async () => {
+        getVoiceButton().click();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        getVoiceButton().click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await flush();
+
+      expect(container.querySelector(".cw-voice-error")?.textContent).toMatch(/didn't catch that/i);
+      expect(sendTurnMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("renders a configured launcher label as literal text while preserving the launcher ARIA state", () => {
     act(() => {
       root.render(
@@ -728,18 +1091,29 @@ describe("ChatWidget", () => {
   });
 
   describe("S14.5 focus management + live region + TTS gesture gating", () => {
-    it("is open with focus in it (the message input) immediately on mount, and re-opening after a close moves focus back in", () => {
+    it("is open with focus on the mode gate's 'Type a message' option immediately on mount, moves into the input once that's picked, and re-opening after a close returns to the mode gate", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
 
       const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
       expect(launcher.getAttribute("aria-expanded")).toBe("true");
+      const typeOption = Array.from(
+        container.querySelectorAll<HTMLButtonElement>(".cw-mode-picker-option"),
+      ).find((button) => button.textContent?.includes("Type a message"))!;
+      expect(document.activeElement).toBe(typeOption);
+
+      act(() => {
+        typeOption.click();
+      });
       expect(document.activeElement).toBe(getInput());
 
       closePanel();
       openPanel();
 
+      // The mode choice persists across close/reopen (confirmCloseYes clears
+      // messages/history, not the type-or-voice choice) -- still "type",
+      // so the input exists again immediately and gets refocused.
       expect(launcher.getAttribute("aria-expanded")).toBe("true");
       expect(document.activeElement).toBe(getInput());
     });
@@ -848,7 +1222,7 @@ describe("ChatWidget", () => {
       );
     });
 
-    it("uses browser speech recognition when available and stops it when the panel closes", () => {
+    it("uses browser speech recognition when available, auto-sends the transcript (voice mode has no field to review it in), and stops listening when the panel closes", async () => {
       type ResultHandler = (event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void;
 
       class FakeRecognition {
@@ -875,10 +1249,23 @@ describe("ChatWidget", () => {
       });
 
       try {
+        sendTurnMock.mockResolvedValueOnce({
+          ok: true,
+          turn: {
+            conversationId: "conv-voice-1",
+            messageId: "msg-voice-1",
+            reply: "Sure, let's get that booked.",
+            decision: "answer",
+            confidence: 0.9,
+            sources: [],
+            action: null,
+          },
+        });
+
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
 
         const voiceButton = container.querySelector<HTMLButtonElement>('.cw-voice-button[aria-label="Start voice input"]');
         expect(voiceButton).not.toBeNull();
@@ -891,13 +1278,22 @@ describe("ChatWidget", () => {
         act(() => {
           FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "Book a demo" } }] });
         });
-        expect(getInput().value).toBe("Book a demo");
+        await flush();
+
+        expect(sendTurnMock).toHaveBeenCalledWith(
+          baseConfig,
+          expect.objectContaining({ message: "Book a demo" }),
+        );
+        expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Book a demo");
 
         const closeButton = container.querySelector<HTMLButtonElement>('.cw-close-button[aria-label="Close chat"]');
         act(() => {
           closeButton?.click();
         });
-        expect(FakeRecognition.latest?.stop).toHaveBeenCalled();
+        // .abort() (discard), not .stop() -- closing must never let a
+        // stray in-flight recognition fire a final onresult and auto-send
+        // after the visitor has already left (see stopVoiceCapture's doc).
+        expect(FakeRecognition.latest?.abort).toHaveBeenCalled();
       } finally {
         Reflect.deleteProperty(window, "webkitSpeechRecognition");
       }
@@ -952,7 +1348,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
         act(() => {
           getVoiceButton().click();
         });
@@ -969,7 +1365,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
         act(() => {
           getVoiceButton().click();
         });
@@ -985,7 +1381,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
         act(() => {
           getVoiceButton().click();
         });
@@ -1001,7 +1397,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
         act(() => {
           getVoiceButton().click();
         });
@@ -1017,7 +1413,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
         act(() => {
           getVoiceButton().click();
         });
@@ -1033,11 +1429,23 @@ describe("ChatWidget", () => {
         expect(container.querySelector(".cw-voice-error")).toBeNull();
       });
 
-      it("a successful result never shows an error", () => {
+      it("a successful result never shows an error, and sends the transcript (voice mode auto-sends)", async () => {
+        sendTurnMock.mockResolvedValueOnce({
+          ok: true,
+          turn: {
+            conversationId: "conv-voice-2",
+            messageId: "msg-voice-2",
+            reply: "Hi there!",
+            decision: "answer",
+            confidence: 0.9,
+            sources: [],
+            action: null,
+          },
+        });
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
         act(() => {
           getVoiceButton().click();
         });
@@ -1045,16 +1453,17 @@ describe("ChatWidget", () => {
         act(() => {
           FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "Hello there" } }] });
         });
+        await flush();
 
         expect(container.querySelector(".cw-voice-error")).toBeNull();
-        expect(getInput().value).toBe("Hello there");
+        expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Hello there");
       });
 
       it("shows 'didn't catch that' on an empty/no-match transcript instead of silently doing nothing (AC-6)", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
         act(() => {
           getVoiceButton().click();
         });
@@ -1064,14 +1473,14 @@ describe("ChatWidget", () => {
         });
 
         expect(container.querySelector(".cw-voice-error")?.textContent).toMatch(/didn't catch that/i);
-        expect(getInput().value).toBe("");
+        expect(sendTurnMock).not.toHaveBeenCalled();
       });
 
       it("cancels any in-progress spoken reply when the visitor starts talking (barge-in, AC-4)", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel();
+        openPanelVoiceMode();
         ttsCancelMock.mockClear();
 
         act(() => {
@@ -1307,7 +1716,7 @@ describe("ChatWidget", () => {
       // synchronously here in place of the utterance's real async onerror,
       // see tts.ts) -- the retry after a real interaction then succeeds,
       // matching Chrome's actual behavior once activation has been granted.
-      speakGreetingMock.mockImplementationOnce((onBlocked) => onBlocked?.());
+      speakGreetingMock.mockImplementationOnce((_config, onBlocked) => onBlocked?.());
 
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
@@ -1344,7 +1753,7 @@ describe("ChatWidget", () => {
     });
 
     it("TTS: a first-interaction retry does not fire once muted", () => {
-      speakGreetingMock.mockImplementation((onBlocked) => onBlocked?.());
+      speakGreetingMock.mockImplementation((_config, onBlocked) => onBlocked?.());
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
@@ -1389,7 +1798,7 @@ describe("ChatWidget", () => {
       typeAndSend("What are your hours?");
       await flush();
 
-      expect(speakMock).toHaveBeenCalledWith("We're open Monday through Friday, 9 to 6.", undefined);
+      expect(speakMock).toHaveBeenCalledWith(baseConfig, "We're open Monday through Friday, 9 to 6.", undefined);
     });
 
     it("never speaks a bot reply while muted", async () => {

@@ -238,6 +238,7 @@ def create_app() -> FastAPI:
     from api.tenants.routes import router as tenants_router
     from api.timeline.admin_routes import router as timeline_router
     from api.timeline.admin_routes import tenant_scoped_router as timeline_tenant_router
+    from api.voice.routes import router as voice_router
 
     app.include_router(accounts_admin_router)
     app.include_router(admin_api_keys_router)
@@ -263,6 +264,7 @@ def create_app() -> FastAPI:
     app.include_router(notifications_admin_router)
     app.include_router(opportunities_admin_router)
     app.include_router(chat_router)
+    app.include_router(voice_router)
     app.include_router(rag_router)
     app.include_router(rbac_router)
     app.include_router(scheduling_admin_router)
