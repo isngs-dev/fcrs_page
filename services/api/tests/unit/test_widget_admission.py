@@ -383,8 +383,8 @@ async def test_widget_session_voice_flags_false_when_no_provider_keys_configured
 
 
 async def test_widget_session_voice_flags_true_when_provider_keys_configured() -> None:
-    """Setting both env vars flips both flags true -- proves the route reads
-    live settings, not a hardcoded false."""
+    """Setting the one shared OpenAI key flips BOTH flags true -- proves the
+    route reads live settings, not a hardcoded false."""
     from unittest.mock import patch
 
     app = _build_app()
@@ -392,9 +392,7 @@ async def test_widget_session_voice_flags_true_when_provider_keys_configured() -
         from api.config import ApiSettings
 
         real = ApiSettings()  # type: ignore[call-arg]
-        real.openai_asr_api_key = "sk-fake"
-        real.elevenlabs_api_key = "sk-fake"
-        real.elevenlabs_voice_id = "voice-123"
+        real.openai_api_key = "sk-fake"
         mock_settings.return_value = real
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:

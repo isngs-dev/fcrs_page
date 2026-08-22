@@ -465,7 +465,7 @@ describe("tts", () => {
     });
   });
 
-  describe("cloud TTS (ElevenLabs, via the backend)", () => {
+  describe("cloud TTS (OpenAI, via the backend)", () => {
     class FakeAudio {
       static instances: FakeAudio[] = [];
       onended: (() => void) | null = null;

@@ -434,21 +434,25 @@ export function ChatWidget({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const typeOptionRef = useRef<HTMLButtonElement | null>(null);
   const micButtonRef = useRef<HTMLButtonElement | null>(null);
-  // TTS: opt-in, in-memory-only mute preference (decision 5/6). Speaks only
-  // once per page session, attempted from three possible triggers, in order
-  // — mount (the panel auto-opens with no click required, see the effect
-  // below), the visitor's first interaction ANYWHERE on the page (the
-  // document-level effect further below — Chrome requires this before
-  // `speechSynthesis.speak()` will actually produce audio, see tts.ts), or a
-  // manual open, whichever happens first. `hasGreetedRef` gates all three so
-  // only one genuinely fires; `tts.speakGreeting`'s `onBlocked` callback
-  // resets it when an attempt was silently blocked, so a later trigger still
-  // gets a real chance.
+  // TTS: opt-in, in-memory-only mute preference (decision 5/6). Voice-mode-
+  // only, same as the "hear it back" reply-speaking effect below -- the
+  // greeting never plays before a mode is chosen, and never at all in type
+  // mode. Attempted from three possible triggers, in order — the moment
+  // "Use your voice" is picked while the panel is open (the effect below,
+  // keyed on `[open, interactionMode]` -- this doubles as the click gesture
+  // itself typically already granting the activation Chrome requires), the
+  // visitor's first interaction ANYWHERE on the page after that (the
+  // document-level effect further below, in case the mode-pick attempt was
+  // still blocked), or a manual reopen while already in voice mode. Whichever
+  // happens first; `hasGreetedRef` gates all three so only one genuinely
+  // fires; `tts.speakGreeting`'s `onBlocked` callback resets it when an
+  // attempt was silently blocked, so a later trigger still gets a real
+  // chance.
   const [muted, setMuted] = useState(false);
   const hasGreetedRef = useRef(false);
 
   const attemptGreeting = useCallback(() => {
-    if (hasGreetedRef.current || muted) return;
+    if (hasGreetedRef.current || muted || interactionMode !== "voice") return;
     hasGreetedRef.current = true;
     void tts.speakGreeting(config, () => {
       // Blocked (most commonly Chrome's "no speak() without prior user
@@ -456,26 +460,22 @@ export function ChatWidget({
       // first-interaction listener below, or a manual open) to retry.
       hasGreetedRef.current = false;
     });
-  }, [muted, config]);
+  }, [muted, config, interactionMode]);
 
   useEffect(() => {
-    if (open) {
+    if (open && interactionMode === "voice") {
       attemptGreeting();
     }
-    // Mount-only: a later `open`/`muted` change must never retroactively
-    // speak or re-trigger this effect — attemptGreeting's own callers
-    // (handleLauncherClick, the interaction listener below) own everything
-    // after mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [open, interactionMode, attemptGreeting]);
 
-  // Fallback for browsers (Chrome) that block the mount-time attempt above
-  // for lack of prior user activation: the visitor's first click, keypress,
-  // or tap anywhere on the page — not necessarily on the widget — grants
-  // that activation, so retry at that moment. `attemptGreeting` itself
-  // no-ops if a prior attempt already genuinely spoke, so this is a no-op
-  // in browsers where the mount-time attempt already worked. Capture phase
-  // so this fires even if some other handler stops bubble-phase propagation.
+  // Fallback for browsers (Chrome) that block the "just picked voice mode"
+  // attempt above for lack of prior user activation: the visitor's first
+  // click, keypress, or tap anywhere on the page — not necessarily on the
+  // widget — grants that activation, so retry at that moment.
+  // `attemptGreeting` itself no-ops if a prior attempt already genuinely
+  // spoke, or if voice mode isn't active, so this is a harmless no-op the
+  // rest of the time. Capture phase so this fires even if some other
+  // handler stops bubble-phase propagation.
   useEffect(() => {
     const events: Array<keyof DocumentEventMap> = ["click", "keydown", "touchstart"];
     const handleFirstInteraction = () => attemptGreeting();

@@ -225,27 +225,26 @@ class ApiSettings(Settings):
     conversation_idle_timeout_minutes: int = 30
     conversation_idle_sweep_interval_seconds: int = 300
 
-    # Voice (ASR/TTS) -- env-var-only config, NOT per-tenant (unlike LLM/
+    # Voice (ASR/TTS) -- ONE OpenAI account/key covers both directions (a
+    # single provider, unlike the ElevenLabs-for-TTS/OpenAI-for-ASR split
+    # this replaced). Env-var-only config, NOT per-tenant (unlike LLM/
     # Calendar/Notification providers) -- a deliberate, smaller-scope choice
-    # for this integration given there is one active tenant in practice.
-    # Either key unset -> that provider's factory raises a deterministic
+    # for this integration given there is one active tenant in practice. An
+    # unset key -> both factories raise a deterministic
     # VOICE_PROVIDER_NOT_CONFIGURED (422); the widget falls back to its own
     # browser-native mechanism (SpeechRecognition / speechSynthesis) rather
     # than surfacing that as a hard failure -- see the chat-widget skill.
-    # voice_openai_asr_model / voice_elevenlabs_model_id: overridable without
-    # a key rotation. voice_max_audio_upload_bytes mirrors
-    # ingestion_max_upload_bytes's role -- a cheap defensive cap on the
-    # transcribe endpoint's request body, since each accepted byte is a real
-    # cost against the OpenAI account, not just a memory concern.
-    openai_asr_api_key: str | None = None
+    # voice_openai_asr_model / voice_openai_tts_model / voice_openai_tts_voice:
+    # overridable without a key rotation. tts-1 (not tts-1-hd) is OpenAI's
+    # lower-cost tier; "nova" is a clear, warm default voice -- both swap via
+    # env alone. voice_max_audio_upload_bytes mirrors ingestion_max_upload_bytes's
+    # role -- a cheap defensive cap on the transcribe endpoint's request body,
+    # since each accepted byte is a real cost against the OpenAI account, not
+    # just a memory concern.
+    openai_api_key: str | None = None
     voice_openai_asr_model: str = "whisper-1"
-    elevenlabs_api_key: str | None = None
-    elevenlabs_voice_id: str | None = None
-    # Flash v2.5, not Turbo v2.5: ElevenLabs bills Flash at half the
-    # per-character credit cost of Turbo/Multilingual models for
-    # comparable conversational-agent quality (verify the current rate on
-    # elevenlabs.io before relying on this number -- their pricing changes).
-    voice_elevenlabs_model_id: str = "eleven_flash_v2_5"
+    voice_openai_tts_model: str = "tts-1"
+    voice_openai_tts_voice: str = "nova"
     voice_asr_timeout_seconds: float = 20.0
     voice_tts_timeout_seconds: float = 20.0
     voice_max_audio_upload_bytes: int = 10_485_760

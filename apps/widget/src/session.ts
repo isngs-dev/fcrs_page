@@ -28,9 +28,9 @@ const SessionResponseSchema = z.object({
   // SR-3 decision 8: absent -> false (a pre-SR-3 backend, or a tenant with
   // the flag unset, must behave exactly as S14.1/S14.2 shipped).
   resume_enabled: z.boolean().optional(),
-  // Cloud voice (ElevenLabs TTS / OpenAI ASR): platform-global (env-var,
-  // not per-tenant) booleans -- absent -> false, an older backend or one
-  // with neither key configured behaves exactly as before this existed
+  // Cloud voice (OpenAI ASR + TTS, one shared key): platform-global
+  // (env-var, not per-tenant) booleans -- absent -> false, an older backend
+  // or one with no key configured behaves exactly as before this existed
   // (browser-native SpeechRecognition/speechSynthesis only).
   voice_asr_enabled: z.boolean().optional(),
   voice_tts_enabled: z.boolean().optional(),
@@ -123,7 +123,7 @@ export function isVoiceAsrEnabled(): boolean {
   return voiceAsrEnabled;
 }
 
-/** Whether the backend has an ElevenLabs TTS key configured. See
+/** Whether the backend has an OpenAI TTS key configured. See
  * `isVoiceAsrEnabled`'s doc for the same "false until a fresh mint" caveat. */
 export function isVoiceTtsEnabled(): boolean {
   return voiceTtsEnabled;

@@ -1,10 +1,10 @@
 /**
- * TTS: cloud (ElevenLabs, via the backend) with a browser-native fallback
+ * TTS: cloud (OpenAI, via the backend) with a browser-native fallback
  * (S14.5 decision 5, scope item 6; extended for cloud voice).
  *
  * `speak`/`speakGreeting` try `synthesizeSpeech` (voice.ts, ->
  * `POST /public/chat/speak`) first, IFF `session.ts#isVoiceTtsEnabled()`
- * says the backend has an ElevenLabs key configured. On ANY failure of that
+ * says the backend has an OpenAI key configured. On ANY failure of that
  * call (not configured, network error, upstream failure) they fall back to
  * the ORIGINAL browser-native mechanism below (`window.speechSynthesis` +
  * `SpeechSynthesisUtterance`) -- zero-dependency, zero-backend, purely

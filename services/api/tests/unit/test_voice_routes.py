@@ -154,7 +154,7 @@ async def test_transcribe_non_visitor_token_403() -> None:
 
 
 async def test_transcribe_not_configured_422() -> None:
-    """Real test settings carry no OPENAI_ASR_API_KEY -- a deterministic 422,
+    """Real test settings carry no OPENAI_API_KEY -- a deterministic 422,
     never a silent fallback or a crash."""
     app = _build_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:

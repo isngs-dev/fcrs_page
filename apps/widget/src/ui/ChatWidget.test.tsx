@@ -1654,125 +1654,174 @@ describe("ChatWidget", () => {
       });
     });
 
-    it("TTS: speaks exactly once automatically on the mount-time auto-open, when not muted", () => {
-      act(() => {
-        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    describe("greeting (voice-mode-only, same gate as spoken replies)", () => {
+      // Minimal stub so `voiceSupported` is true and the mode picker's
+      // "Use your voice" option renders -- these tests are about WHEN the
+      // greeting fires relative to the mode gate, not about recognition
+      // behavior itself, so the class needs no real functionality.
+      class FakeRecognition {
+        start = vi.fn();
+        stop = vi.fn();
+        abort = vi.fn();
+      }
+
+      beforeEach(() => {
+        Object.defineProperty(window, "webkitSpeechRecognition", {
+          configurable: true,
+          writable: true,
+          value: FakeRecognition,
+        });
       });
 
-      // The panel opens automatically on mount, and the greeting is
-      // attempted right along with it (user request) -- no click required.
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
-
-      // Closing and reopening again in the same page session must not speak again.
-      closePanel();
-      openPanel();
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("TTS: re-opening after muting does not speak again (mute suppresses future opens)", () => {
-      act(() => {
-        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      afterEach(() => {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
       });
 
-      // Mount-time auto-open already greeted once.
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+      it("never speaks on mount/auto-open -- only once a mode is picked", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
 
-      const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
-      act(() => {
-        muteToggle.click();
+        // The panel opens automatically on mount, but the mode gate is
+        // showing -- no mode chosen yet, so the greeting must stay silent.
+        expect(speakGreetingMock).not.toHaveBeenCalled();
       });
 
-      closePanel();
-      openPanel(); // reopen while muted
-      // Greeting only ever fires once per page session (decision 5), so
-      // this also confirms mute doesn't retroactively matter for the
-      // already-consumed mount-time call — the important invariant is no
-      // *additional* speak call happens.
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
-    });
+      it("speaks exactly once, the moment 'Use your voice' is picked, when not muted", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        expect(speakGreetingMock).not.toHaveBeenCalled();
 
-    it("TTS: the mute toggle mutes future opens and is visible with aria-pressed", () => {
-      // Mount-time auto-open already consumes the once-per-session
-      // greeting; mute, close, reopen — no further speak calls, and the
-      // toggle communicates state via aria-pressed.
-      act(() => {
-        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        openPanelVoiceMode();
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+
+        // Closing and reopening again in the same page session must not speak again.
+        closePanel();
+        openPanel(); // mode persists across close/reopen -- still "voice"
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
-      const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
-      expect(muteToggle.getAttribute("aria-pressed")).toBe("false");
+      it("picking 'Type a message' instead never speaks the greeting at all", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel(); // "Type a message"
 
-      act(() => {
-        muteToggle.click();
+        expect(speakGreetingMock).not.toHaveBeenCalled();
+
+        act(() => {
+          document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+        });
+        expect(speakGreetingMock).not.toHaveBeenCalled();
       });
-      expect(muteToggle.getAttribute("aria-pressed")).toBe("true");
-      expect(ttsCancelMock).toHaveBeenCalled();
-    });
 
-    it("TTS: retries on the visitor's first interaction anywhere on the page after a blocked mount-time attempt", () => {
-      // Simulate Chrome's "no speak() without prior user activation"
-      // autoplay policy: the mount-time attempt is blocked (onBlocked fires
-      // synchronously here in place of the utterance's real async onerror,
-      // see tts.ts) -- the retry after a real interaction then succeeds,
-      // matching Chrome's actual behavior once activation has been granted.
-      speakGreetingMock.mockImplementationOnce((_config, onBlocked) => onBlocked?.());
+      it("re-opening after muting does not speak again (mute suppresses future opens)", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
-      act(() => {
-        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
+        act(() => {
+          muteToggle.click();
+        });
+
+        closePanel();
+        openPanel(); // reopen while muted
+        // Greeting only ever fires once per page session (decision 5), so
+        // this also confirms mute doesn't retroactively matter for the
+        // already-consumed call — the important invariant is no
+        // *additional* speak call happens.
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
-      // Mount-time attempt, blocked.
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
-      // The visitor's first interaction anywhere on the page -- not the
-      // widget itself -- grants the activation Chrome requires and should
-      // trigger a genuine retry.
-      act(() => {
-        document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
-      });
-      expect(speakGreetingMock).toHaveBeenCalledTimes(2);
+      it("the mute toggle mutes future opens and is visible with aria-pressed", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
-      // That retry succeeded (no onBlocked this time), so a further
-      // interaction must not speak a third time.
-      act(() => {
-        document.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true }));
-      });
-      expect(speakGreetingMock).toHaveBeenCalledTimes(2);
-    });
+        const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
+        expect(muteToggle.getAttribute("aria-pressed")).toBe("false");
 
-    it("TTS: does not retry on interaction once the mount-time attempt genuinely spoke", () => {
-      act(() => {
-        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        act(() => {
+          muteToggle.click();
+        });
+        expect(muteToggle.getAttribute("aria-pressed")).toBe("true");
+        expect(ttsCancelMock).toHaveBeenCalled();
       });
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
-      act(() => {
-        document.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      });
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
-    });
+      it("retries on the visitor's first interaction anywhere on the page after a blocked mode-pick attempt", () => {
+        // Simulate Chrome's "no speak() without prior user activation"
+        // autoplay policy: the mode-pick attempt is blocked (onBlocked
+        // fires synchronously here in place of the utterance's real async
+        // onerror, see tts.ts) -- the retry after a real interaction then
+        // succeeds, matching Chrome's actual behavior once activation has
+        // been granted.
+        speakGreetingMock.mockImplementationOnce((_config, onBlocked) => onBlocked?.());
 
-    it("TTS: a first-interaction retry does not fire once muted", () => {
-      speakGreetingMock.mockImplementation((_config, onBlocked) => onBlocked?.());
-      act(() => {
-        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
-      });
-      expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+        // Mode-pick attempt, blocked.
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
-      const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
-      act(() => {
-        muteToggle.click();
-      });
-      // The mute click itself is a real page interaction and may already
-      // trigger one more (still-blocked) attempt before the `muted` state
-      // update lands -- assert relative to that, not a fixed count, so this
-      // test is only about what happens AFTER muting has genuinely landed.
-      const callsAfterMuting = speakGreetingMock.mock.calls.length;
+        // The visitor's first interaction anywhere on the page -- not the
+        // widget itself -- grants the activation Chrome requires and should
+        // trigger a genuine retry.
+        act(() => {
+          document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+        });
+        expect(speakGreetingMock).toHaveBeenCalledTimes(2);
 
-      act(() => {
-        document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+        // That retry succeeded (no onBlocked this time), so a further
+        // interaction must not speak a third time.
+        act(() => {
+          document.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true }));
+        });
+        expect(speakGreetingMock).toHaveBeenCalledTimes(2);
       });
-      expect(speakGreetingMock).toHaveBeenCalledTimes(callsAfterMuting);
+
+      it("does not retry on interaction once the mode-pick attempt genuinely spoke", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+
+        act(() => {
+          document.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        });
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("a first-interaction retry does not fire once muted", () => {
+        speakGreetingMock.mockImplementation((_config, onBlocked) => onBlocked?.());
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+
+        const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
+        act(() => {
+          muteToggle.click();
+        });
+        // The mute click itself is a real page interaction and may already
+        // trigger one more (still-blocked) attempt before the `muted` state
+        // update lands -- assert relative to that, not a fixed count, so this
+        // test is only about what happens AFTER muting has genuinely landed.
+        const callsAfterMuting = speakGreetingMock.mock.calls.length;
+
+        act(() => {
+          document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+        });
+        expect(speakGreetingMock).toHaveBeenCalledTimes(callsAfterMuting);
+      });
     });
 
     it("never speaks a bot reply in Type mode, even unmuted -- TTS is voice-mode-only", async () => {

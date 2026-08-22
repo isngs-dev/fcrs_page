@@ -1,37 +1,36 @@
 """Unit tests for the voice (ASR/TTS) provider boundary.
 
 Covers:
-- asr_provider_for / tts_provider_for raise VoiceConfigError when the
-  relevant env var(s) are unset -- never construct a provider against a
-  missing key.
+- asr_provider_for / tts_provider_for raise VoiceConfigError when
+  OPENAI_API_KEY is unset -- never construct a provider against a missing
+  key. Both directions share the same key (one OpenAI account).
 - asr_configured / tts_configured booleans reflect settings truthfully.
 - OpenAIASRProvider.transcribe: happy path (stub client) + openai.APIError ->
   VoiceProviderError (no fabricated transcript).
-- ElevenLabsTTSProvider.synthesize: happy path (mocked httpx.AsyncClient.post)
-  + non-2xx status -> VoiceProviderError + network error -> VoiceProviderError.
+- OpenAITTSProvider.synthesize: happy path (stub client) + openai.APIError ->
+  VoiceProviderError (no fabricated audio).
+- truncate_for_speech: the per-message TTS cost ceiling.
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
-import httpx
 import pytest
 from openai import APIError
 
-from api.voice.elevenlabs_tts_provider import ElevenLabsTTSProvider
 from api.voice.factory import asr_configured, asr_provider_for, tts_configured, tts_provider_for
 from api.voice.openai_asr_provider import OpenAIASRProvider
+from api.voice.openai_tts_provider import OpenAITTSProvider
 from api.voice.provider import VoiceConfigError, VoiceProviderError, truncate_for_speech
 
 
 def _settings(**overrides: object) -> object:
     base = {
-        "openai_asr_api_key": None,
+        "openai_api_key": None,
         "voice_openai_asr_model": "whisper-1",
-        "elevenlabs_api_key": None,
-        "elevenlabs_voice_id": None,
-        "voice_elevenlabs_model_id": "eleven_turbo_v2_5",
+        "voice_openai_tts_model": "tts-1",
+        "voice_openai_tts_voice": "nova",
         "voice_asr_timeout_seconds": 20.0,
         "voice_tts_timeout_seconds": 20.0,
     }
@@ -54,36 +53,31 @@ def test_tts_provider_for_raises_config_error_when_key_unset() -> None:
         tts_provider_for(_settings())
 
 
-def test_tts_provider_for_raises_config_error_when_voice_id_unset() -> None:
-    """The API key alone is not enough -- a voice_id is required too."""
-    with pytest.raises(VoiceConfigError):
-        tts_provider_for(_settings(elevenlabs_api_key="sk-fake"))
-
-
 def test_asr_provider_for_returns_provider_when_configured() -> None:
-    provider = asr_provider_for(_settings(openai_asr_api_key="sk-fake"))
+    provider = asr_provider_for(_settings(openai_api_key="sk-fake"))
     assert isinstance(provider, OpenAIASRProvider)
 
 
 def test_tts_provider_for_returns_provider_when_configured() -> None:
-    provider = tts_provider_for(
-        _settings(elevenlabs_api_key="sk-fake", elevenlabs_voice_id="voice-123")
-    )
-    assert isinstance(provider, ElevenLabsTTSProvider)
+    provider = tts_provider_for(_settings(openai_api_key="sk-fake"))
+    assert isinstance(provider, OpenAITTSProvider)
 
 
 def test_asr_configured_reflects_settings() -> None:
     assert asr_configured(_settings()) is False
-    assert asr_configured(_settings(openai_asr_api_key="sk-fake")) is True
+    assert asr_configured(_settings(openai_api_key="sk-fake")) is True
 
 
 def test_tts_configured_reflects_settings() -> None:
     assert tts_configured(_settings()) is False
-    assert tts_configured(_settings(elevenlabs_api_key="sk-fake")) is False
-    assert (
-        tts_configured(_settings(elevenlabs_api_key="sk-fake", elevenlabs_voice_id="voice-123"))
-        is True
-    )
+    assert tts_configured(_settings(openai_api_key="sk-fake")) is True
+
+
+def test_asr_and_tts_configured_track_the_same_single_key() -> None:
+    """One OpenAI account covers both directions -- there is no way to
+    configure one without the other, unlike the old ElevenLabs split."""
+    settings = _settings(openai_api_key="sk-fake")
+    assert asr_configured(settings) == tts_configured(settings) is True
 
 
 # ==============================================================================
@@ -148,55 +142,49 @@ async def test_transcribe_derives_filename_extension_from_content_type() -> None
 
 
 # ==============================================================================
-# ElevenLabsTTSProvider
+# OpenAITTSProvider
 # ==============================================================================
 
 
-class _FakeAudioResponse:
-    def __init__(self, status_code: int, content: bytes = b"") -> None:
-        self.status_code = status_code
-        self.content = content
+class _StubSpeech:
+    def __init__(self, *, audio: bytes = b"fake-mp3-bytes", raise_error: Exception | None = None) -> None:
+        self._audio = audio
+        self._raise_error = raise_error
+        self.last_kwargs: dict[str, object] = {}
+
+    async def create(self, **kwargs: object) -> SimpleNamespace:
+        self.last_kwargs = kwargs
+        if self._raise_error is not None:
+            raise self._raise_error
+        return SimpleNamespace(content=self._audio)
+
+
+def _make_stub_tts_client(speech: _StubSpeech) -> MagicMock:
+    client = MagicMock()
+    client.audio = SimpleNamespace(speech=speech)
+    return client
 
 
 async def test_synthesize_returns_audio_bytes_on_success() -> None:
-    fake_response = _FakeAudioResponse(200, content=b"fake-mp3-bytes")
-    mock_post = AsyncMock(return_value=fake_response)
+    stub = _StubSpeech(audio=b"fake-mp3-bytes")
+    client = _make_stub_tts_client(stub)
+    provider = OpenAITTSProvider(model="tts-1", voice="nova", client=client)
 
-    with patch.object(httpx.AsyncClient, "post", mock_post):
-        provider = ElevenLabsTTSProvider(
-            api_key="sk-fake", voice_id="voice-123", model_id="eleven_turbo_v2_5", timeout=5.0
-        )
-        result = await provider.synthesize("Hello there")
+    result = await provider.synthesize("Hello there")
 
     assert result == b"fake-mp3-bytes"
-    call_args, call_kwargs = mock_post.call_args
-    assert call_args[0] == "https://api.elevenlabs.io/v1/text-to-speech/voice-123"
-    assert call_kwargs["headers"]["xi-api-key"] == "sk-fake"
-    assert call_kwargs["json"] == {"text": "Hello there", "model_id": "eleven_turbo_v2_5"}
+    assert stub.last_kwargs == {"model": "tts-1", "voice": "nova", "input": "Hello there"}
 
 
-@pytest.mark.parametrize("status_code", [401, 422, 429, 500, 503])
-async def test_synthesize_non_2xx_raises_voice_provider_error(status_code: int) -> None:
-    fake_response = _FakeAudioResponse(status_code)
-    mock_post = AsyncMock(return_value=fake_response)
+async def test_synthesize_wraps_api_error_in_voice_provider_error() -> None:
+    mock_request = MagicMock()
+    api_err = APIError(message="upstream error", request=mock_request, body={"error": "fail"})
+    stub = _StubSpeech(raise_error=api_err)
+    client = _make_stub_tts_client(stub)
+    provider = OpenAITTSProvider(model="tts-1", voice="nova", client=client)
 
-    with patch.object(httpx.AsyncClient, "post", mock_post):
-        provider = ElevenLabsTTSProvider(
-            api_key="sk-fake", voice_id="voice-123", model_id="eleven_turbo_v2_5", timeout=5.0
-        )
-        with pytest.raises(VoiceProviderError):
-            await provider.synthesize("Hello there")
-
-
-async def test_synthesize_network_error_raises_voice_provider_error() -> None:
-    mock_post = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
-
-    with patch.object(httpx.AsyncClient, "post", mock_post):
-        provider = ElevenLabsTTSProvider(
-            api_key="sk-fake", voice_id="voice-123", model_id="eleven_turbo_v2_5", timeout=5.0
-        )
-        with pytest.raises(VoiceProviderError):
-            await provider.synthesize("Hello there")
+    with pytest.raises(VoiceProviderError):
+        await provider.synthesize("Hello there")
 
 
 # ==============================================================================
