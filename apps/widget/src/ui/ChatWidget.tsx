@@ -489,22 +489,25 @@ export function ChatWidget({
     };
   }, [attemptGreeting]);
 
-  // "Hear it back": speak each new bot reply once, gated on !muted -- the
-  // single choke point for every branch that appends a bot message (normal
-  // reply, error fallback, scheduling handoff, support-stay, ...), rather
-  // than a `tts.speak()` call duplicated at each of those call sites.
-  // `lastSpokenIdRef` always advances to the latest message's id (even when
-  // muted/non-bot) so a later unmute never retroactively speaks a reply
-  // that already scrolled by.
+  // "Hear it back": speak each new bot reply once, gated on !muted AND on
+  // voice mode -- typing a message never triggers spoken output, only
+  // "Use your voice" does (the mode gate's own point: type-mode is a
+  // silent, read-only text conversation). Single choke point for every
+  // branch that appends a bot message (normal reply, error fallback,
+  // scheduling handoff, support-stay, ...), rather than a `tts.speak()`
+  // call duplicated at each of those call sites. `lastSpokenIdRef` always
+  // advances to the latest message's id (even when muted/non-bot/type-mode)
+  // so switching mode or unmuting never retroactively speaks a reply that
+  // already scrolled by.
   const lastSpokenIdRef = useRef<string | null>(null);
   useEffect(() => {
     const last = messages[messages.length - 1];
     if (!last || last.id === lastSpokenIdRef.current) return;
     lastSpokenIdRef.current = last.id;
-    if (last.role === "bot" && last.text.trim() && !muted) {
+    if (last.role === "bot" && last.text.trim() && !muted && interactionMode === "voice") {
       void tts.speak(config, last.text);
     }
-  }, [messages, muted, config]);
+  }, [messages, muted, config, interactionMode]);
 
   /**
    * Show the exit confirmation instead of closing immediately. Every

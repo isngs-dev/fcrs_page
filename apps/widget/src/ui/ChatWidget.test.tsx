@@ -1775,7 +1775,7 @@ describe("ChatWidget", () => {
       expect(speakGreetingMock).toHaveBeenCalledTimes(callsAfterMuting);
     });
 
-    it("speaks a bot reply aloud once it arrives ('hear it back')", async () => {
+    it("never speaks a bot reply in Type mode, even unmuted -- TTS is voice-mode-only", async () => {
       sendTurnMock.mockResolvedValueOnce({
         ok: true,
         turn: {
@@ -1792,16 +1792,85 @@ describe("ChatWidget", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
-      openPanel();
+      openPanel(); // defaults to "Type a message"
       speakMock.mockClear();
 
       typeAndSend("What are your hours?");
       await flush();
 
-      expect(speakMock).toHaveBeenCalledWith(baseConfig, "We're open Monday through Friday, 9 to 6.", undefined);
+      expect(container.querySelector(".cw-bubble-row")?.textContent).toContain("What are your hours?");
+      expect(speakMock).not.toHaveBeenCalled();
     });
 
-    it("never speaks a bot reply while muted", async () => {
+    it("speaks a bot reply aloud once it arrives in voice mode ('hear it back')", async () => {
+      class FakeRecognition {
+        static latest: FakeRecognition | null = null;
+        onstart: (() => void) | null = null;
+        onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null = null;
+        start = vi.fn(() => this.onstart?.());
+        stop = vi.fn();
+        abort = vi.fn();
+        constructor() {
+          FakeRecognition.latest = this;
+        }
+      }
+      Object.defineProperty(window, "webkitSpeechRecognition", {
+        configurable: true,
+        writable: true,
+        value: FakeRecognition,
+      });
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-tts-1",
+          messageId: "msg-tts-1",
+          reply: "We're open Monday through Friday, 9 to 6.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+        speakMock.mockClear();
+
+        const voiceButton = container.querySelector<HTMLButtonElement>(".cw-voice-button")!;
+        act(() => {
+          voiceButton.click();
+        });
+        act(() => {
+          FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "What are your hours?" } }] });
+        });
+        await flush();
+
+        expect(speakMock).toHaveBeenCalledWith(baseConfig, "We're open Monday through Friday, 9 to 6.", undefined);
+      } finally {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      }
+    });
+
+    it("never speaks a bot reply while muted, even in voice mode", async () => {
+      class FakeRecognition {
+        static latest: FakeRecognition | null = null;
+        onstart: (() => void) | null = null;
+        onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null = null;
+        start = vi.fn(() => this.onstart?.());
+        stop = vi.fn();
+        abort = vi.fn();
+        constructor() {
+          FakeRecognition.latest = this;
+        }
+      }
+      Object.defineProperty(window, "webkitSpeechRecognition", {
+        configurable: true,
+        writable: true,
+        value: FakeRecognition,
+      });
       sendTurnMock.mockResolvedValueOnce({
         ok: true,
         turn: {
@@ -1815,20 +1884,30 @@ describe("ChatWidget", () => {
         },
       });
 
-      act(() => {
-        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
-      });
-      openPanel();
-      const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
-      act(() => {
-        muteToggle.click();
-      });
-      speakMock.mockClear();
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+        const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
+        act(() => {
+          muteToggle.click();
+        });
+        speakMock.mockClear();
 
-      typeAndSend("What are your hours?");
-      await flush();
+        const voiceButton = container.querySelector<HTMLButtonElement>(".cw-voice-button")!;
+        act(() => {
+          voiceButton.click();
+        });
+        act(() => {
+          FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "What are your hours?" } }] });
+        });
+        await flush();
 
-      expect(speakMock).not.toHaveBeenCalled();
+        expect(speakMock).not.toHaveBeenCalled();
+      } finally {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      }
     });
 
     it("cancels any in-progress spoken reply the instant the visitor starts typing (barge-in, AC-4)", () => {

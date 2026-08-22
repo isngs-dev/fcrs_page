@@ -227,10 +227,10 @@ _FORMATTING_RULES = (
     "(- or *), headings (#), blockquotes (>), or numbered-list markdown; when "
     "listing or comparing options, write them as short sentences or as plain "
     'lines like "1) ..." on separate lines. Keep the whole reply concise -- '
-    "roughly 3-5 sentences, or a short paragraph of similar length. Cover "
-    "only what directly answers the question; do not restate the question, "
-    "pad with filler, or add generic caveats. Still give a specific, useful "
-    "answer -- do not cut real substance just to hit a shorter length."
+    "roughly 3-5 sentences, and well under 1000 characters. Cover only what "
+    "directly answers the question; do not restate the question, pad with "
+    "filler, or add generic caveats. Still give a specific, useful answer -- "
+    "do not cut real substance just to hit a shorter length."
 )
 
 _GROUNDING_SYSTEM_PROMPT = (
