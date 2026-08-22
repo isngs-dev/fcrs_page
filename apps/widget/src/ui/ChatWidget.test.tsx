@@ -24,6 +24,7 @@ const postHandoffIntentMock = vi.fn<(config: WidgetConfig, input: { email: strin
 const submitLeadMock = vi.fn<(config: WidgetConfig, input: unknown) => Promise<LeadResult>>();
 const mintVisitorSessionMock = vi.fn<(config: WidgetConfig) => Promise<AdmissionResult>>();
 const speakGreetingMock = vi.fn<(onBlocked?: () => void) => void>();
+const speakMock = vi.fn<(text: string, onBlocked?: () => void) => void>();
 const ttsCancelMock = vi.fn<() => void>();
 // SR-3: isResumeEnabled defaults false so every pre-existing test above
 // (none of which opt into resume) sees byte-for-byte the same behavior —
@@ -72,6 +73,7 @@ vi.mock("../resume", () => ({
 // `onBlocked` callback is forwarded so tests can simulate Chrome's
 // autoplay-policy block (see tts.ts) by invoking it themselves.
 vi.mock("../tts", () => ({
+  speak: (text: string, onBlocked?: () => void) => speakMock(text, onBlocked),
   speakGreeting: (onBlocked?: () => void) => speakGreetingMock(onBlocked),
   cancel: () => ttsCancelMock(),
   TTS_GREETING_TEXT: "Hi! How can we help?",
@@ -159,6 +161,7 @@ beforeEach(() => {
   submitLeadMock.mockResolvedValue({ ok: true, lead: { leadId: "lead-1", status: "new" } });
   mintVisitorSessionMock.mockReset();
   speakGreetingMock.mockReset();
+  speakMock.mockReset();
   ttsCancelMock.mockReset();
   isResumeEnabledMock.mockReset();
   isResumeEnabledMock.mockReturnValue(false);
@@ -1046,6 +1049,37 @@ describe("ChatWidget", () => {
         expect(container.querySelector(".cw-voice-error")).toBeNull();
         expect(getInput().value).toBe("Hello there");
       });
+
+      it("shows 'didn't catch that' on an empty/no-match transcript instead of silently doing nothing (AC-6)", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        act(() => {
+          FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "   " } }] });
+        });
+
+        expect(container.querySelector(".cw-voice-error")?.textContent).toMatch(/didn't catch that/i);
+        expect(getInput().value).toBe("");
+      });
+
+      it("cancels any in-progress spoken reply when the visitor starts talking (barge-in, AC-4)", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanel();
+        ttsCancelMock.mockClear();
+
+        act(() => {
+          getVoiceButton().click();
+        });
+
+        expect(ttsCancelMock).toHaveBeenCalled();
+      });
     });
 
     it("has an in-panel close control that shows the exit confirmation, then closes + restores launcher focus on Yes", () => {
@@ -1330,6 +1364,78 @@ describe("ChatWidget", () => {
         document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
       });
       expect(speakGreetingMock).toHaveBeenCalledTimes(callsAfterMuting);
+    });
+
+    it("speaks a bot reply aloud once it arrives ('hear it back')", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-tts-1",
+          messageId: "msg-tts-1",
+          reply: "We're open Monday through Friday, 9 to 6.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+      speakMock.mockClear();
+
+      typeAndSend("What are your hours?");
+      await flush();
+
+      expect(speakMock).toHaveBeenCalledWith("We're open Monday through Friday, 9 to 6.", undefined);
+    });
+
+    it("never speaks a bot reply while muted", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-tts-2",
+          messageId: "msg-tts-2",
+          reply: "We're open Monday through Friday, 9 to 6.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+      const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
+      act(() => {
+        muteToggle.click();
+      });
+      speakMock.mockClear();
+
+      typeAndSend("What are your hours?");
+      await flush();
+
+      expect(speakMock).not.toHaveBeenCalled();
+    });
+
+    it("cancels any in-progress spoken reply the instant the visitor starts typing (barge-in, AC-4)", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+      ttsCancelMock.mockClear();
+
+      const input = getInput();
+      act(() => {
+        setNativeInputValue(input, "h");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+
+      expect(ttsCancelMock).toHaveBeenCalled();
     });
   });
 

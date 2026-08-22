@@ -411,6 +411,23 @@ export function ChatWidget({
     };
   }, [attemptGreeting]);
 
+  // "Hear it back": speak each new bot reply once, gated on !muted -- the
+  // single choke point for every branch that appends a bot message (normal
+  // reply, error fallback, scheduling handoff, support-stay, ...), rather
+  // than a `tts.speak()` call duplicated at each of those call sites.
+  // `lastSpokenIdRef` always advances to the latest message's id (even when
+  // muted/non-bot) so a later unmute never retroactively speaks a reply
+  // that already scrolled by.
+  const lastSpokenIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.id === lastSpokenIdRef.current) return;
+    lastSpokenIdRef.current = last.id;
+    if (last.role === "bot" && last.text.trim() && !muted) {
+      tts.speak(last.text);
+    }
+  }, [messages, muted]);
+
   /**
    * Show the exit confirmation instead of closing immediately. Every
    * close-intent trigger (header X, the launcher-as-X, Escape) calls this,
@@ -521,6 +538,7 @@ export function ChatWidget({
 
     const Recognition = getVoiceRecognitionConstructor();
     if (!Recognition) return;
+    tts.cancel(); // barge-in: starting to talk stops any reply mid-speech
     setVoiceError(null);
     const recognition = new Recognition();
     recognition.continuous = false;
@@ -535,7 +553,11 @@ export function ChatWidget({
     };
     recognition.onresult = (event) => {
       const transcript = event.results[0]?.[0]?.transcript?.trim();
-      if (transcript) setInputValue(transcript);
+      if (transcript) {
+        setInputValue(transcript);
+      } else {
+        setVoiceError("Didn't catch that — try again or type your question.");
+      }
     };
     voiceRecognitionRef.current = recognition;
     recognition.start();
@@ -1075,7 +1097,10 @@ export function ChatWidget({
                     placeholder={listening ? "Listening…" : "Message Rebecca…"}
                   value={inputValue}
                   disabled={pending}
-                  onChange={(e) => setInputValue(e.target.value)}
+                  onChange={(e) => {
+                    tts.cancel(); // barge-in: typing stops any reply mid-speech
+                    setInputValue(e.target.value);
+                  }}
                   onKeyDown={handleKeyDown}
                     aria-label="Message"
                   />

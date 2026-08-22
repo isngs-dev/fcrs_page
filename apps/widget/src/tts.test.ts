@@ -1,8 +1,32 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { TTS_GREETING_TEXT, cancel, speakGreeting } from "./tts";
+import { TTS_GREETING_TEXT, cancel, speak, speakGreeting } from "./tts";
 
 describe("tts", () => {
+  describe("speak", () => {
+    it("speaks arbitrary text (a bot reply), not just the baked-in greeting", () => {
+      const speakFn = vi.fn();
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak: speakFn, cancel: vi.fn() },
+        configurable: true,
+        writable: true,
+      });
+      class FakeUtterance {
+        constructor(public text: string) {}
+      }
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: FakeUtterance,
+        configurable: true,
+        writable: true,
+      });
+
+      speak("We're open Monday through Friday, 9 to 6.");
+
+      const uttered = speakFn.mock.calls[0]?.[0] as FakeUtterance;
+      expect(uttered.text).toBe("We're open Monday through Friday, 9 to 6.");
+    });
+  });
+
   const originalSpeechSynthesis = window.speechSynthesis;
   const originalUtterance = window.SpeechSynthesisUtterance;
 

@@ -89,24 +89,21 @@ function pickFemaleVoice(synth: SpeechSynthesis): SpeechSynthesisVoice | null {
 }
 
 /**
- * Speak the baked-in greeting exactly once, if the Web Speech API is
- * available. Callers gate this on "first open in this page session" and
- * "not muted" — this function itself does not track either; it only
- * guarantees capability-checked, exception-safe speech.
+ * Speak arbitrary text once, if the Web Speech API is available. Callers
+ * gate this on "not muted" — this function itself does not track that; it
+ * only guarantees capability-checked, exception-safe speech. Shared by the
+ * greeting (`speakGreeting` below) and by spoken bot replies (ChatWidget's
+ * "hear it back" effect).
  *
  * `onBlocked`, if given, fires when the capability check fails outright OR
  * when the utterance's `error` event fires with a genuine block reason (e.g.
  * Chrome's "not-allowed" — no prior user activation on this frame). It does
  * NOT fire for "canceled"/"interrupted" — those mean `cancel()` (below) or a
  * newer `speak()` call stopped an utterance that was already genuinely
- * playing/queued, which is expected on panel close and must not be treated
- * as a block worth retrying (that previously caused the greeting to replay
- * on every reopen: close cuts the greeting off mid-sentence -> "blocked" ->
- * the next open's retry speaks it again, repeatedly). Callers use a genuine
- * `onBlocked` to know a retry (from a later, real user gesture) is worth
- * attempting.
+ * playing/queued (panel close, barge-in), which must not be treated as a
+ * block worth retrying.
  */
-export function speakGreeting(onBlocked?: () => void): void {
+export function speak(text: string, onBlocked?: () => void): void {
   const synth = getSpeechSynthesis();
   if (!synth) {
     onBlocked?.();
@@ -119,7 +116,7 @@ export function speakGreeting(onBlocked?: () => void): void {
       onBlocked?.();
       return;
     }
-    const utterance = new Utterance(TTS_GREETING_TEXT);
+    const utterance = new Utterance(text);
     const femaleVoice = pickFemaleVoice(synth);
     if (femaleVoice) {
       utterance.voice = femaleVoice;
@@ -142,6 +139,12 @@ export function speakGreeting(onBlocked?: () => void): void {
     // constraint 2).
     onBlocked?.();
   }
+}
+
+/** Speak the baked-in greeting exactly once — see `speak` above for the
+ * shared mechanics and `onBlocked` semantics. */
+export function speakGreeting(onBlocked?: () => void): void {
+  speak(TTS_GREETING_TEXT, onBlocked);
 }
 
 /** Cancel any in-progress/queued speech (e.g. on mute toggle or panel close). */
