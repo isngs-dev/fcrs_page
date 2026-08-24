@@ -1732,10 +1732,10 @@ describe("ChatWidget", () => {
       });
     });
 
-    describe("greeting (voice-mode-only, same gate as spoken replies)", () => {
+    describe("greeting (plays on load, regardless of mode)", () => {
       // Minimal stub so `voiceSupported` is true and the mode picker's
       // "Use your voice" option renders -- these tests are about WHEN the
-      // greeting fires relative to the mode gate, not about recognition
+      // greeting fires relative to opening the panel, not about recognition
       // behavior itself, so the class needs no real functionality.
       class FakeRecognition {
         start = vi.fn();
@@ -1755,50 +1755,62 @@ describe("ChatWidget", () => {
         Reflect.deleteProperty(window, "webkitSpeechRecognition");
       });
 
-      it("never speaks on mount/auto-open -- only once a mode is picked", () => {
+      /** Opens the panel via the launcher WITHOUT picking a mode on the
+       * gate -- isolates "does opening alone speak the greeting" from any
+       * mode-pick interaction. */
+      function openPanelNoModePicked(): void {
+        const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder");
+        if (!launcher) throw new Error("launcher not found");
+        act(() => {
+          launcher.click();
+        });
+      }
+
+      it("speaks as soon as the panel opens, before any mode is picked", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-
-        // The panel opens automatically on mount, but the mode gate is
-        // showing -- no mode chosen yet, so the greeting must stay silent.
-        expect(speakGreetingMock).not.toHaveBeenCalled();
+        // The panel opens automatically on mount -- the greeting is no
+        // longer gated behind the mode picker, so it should already have
+        // been attempted with no further interaction needed.
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
 
-      it("speaks exactly once, the moment 'Use your voice' is picked, when not muted", () => {
+      it("picking either mode afterward does not speak a second time", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        expect(speakGreetingMock).not.toHaveBeenCalled();
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+
+        openPanel(); // picks "Type a message"
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("picking 'Use your voice' afterward does not speak a second time either", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         openPanelVoiceMode();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+      });
 
-        // Closing and reopening again in the same page session must not speak again.
+      it("closing and reopening in the same page session does not speak again", () => {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
+
         closePanel();
-        openPanel(); // mode persists across close/reopen -- still "voice"
+        openPanelNoModePicked();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
 
-      it("picking 'Type a message' instead never speaks the greeting at all", () => {
+      it("does not speak at all when muted before the panel ever opens", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanel(); // "Type a message"
-
-        expect(speakGreetingMock).not.toHaveBeenCalled();
-
-        act(() => {
-          document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
-        });
-        expect(speakGreetingMock).not.toHaveBeenCalled();
-      });
-
-      it("re-opening after muting does not speak again (mute suppresses future opens)", () => {
-        act(() => {
-          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
-        });
-        openPanelVoiceMode();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
@@ -1807,19 +1819,18 @@ describe("ChatWidget", () => {
         });
 
         closePanel();
-        openPanel(); // reopen while muted
-        // Greeting only ever fires once per page session (decision 5), so
-        // this also confirms mute doesn't retroactively matter for the
-        // already-consumed call — the important invariant is no
-        // *additional* speak call happens.
+        openPanelNoModePicked();
+        // Greeting only ever fires once per page session, so this also
+        // confirms mute doesn't retroactively matter for the already-
+        // consumed call — the important invariant is no *additional* speak
+        // call happens after muting.
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
 
-      it("the mute toggle mutes future opens and is visible with aria-pressed", () => {
+      it("the mute toggle is visible with aria-pressed and cancels in-flight speech", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanelVoiceMode();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
@@ -1832,9 +1843,9 @@ describe("ChatWidget", () => {
         expect(ttsCancelMock).toHaveBeenCalled();
       });
 
-      it("retries on the visitor's first interaction anywhere on the page after a blocked mode-pick attempt", () => {
+      it("retries on the visitor's first interaction anywhere on the page after a blocked open-time attempt", () => {
         // Simulate Chrome's "no speak() without prior user activation"
-        // autoplay policy: the mode-pick attempt is blocked (onBlocked
+        // autoplay policy: the open-time attempt is blocked (onBlocked
         // fires synchronously here in place of the utterance's real async
         // onerror, see tts.ts) -- the retry after a real interaction then
         // succeeds, matching Chrome's actual behavior once activation has
@@ -1844,8 +1855,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanelVoiceMode();
-        // Mode-pick attempt, blocked.
+        // Mount-time attempt, blocked.
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         // The visitor's first interaction anywhere on the page -- not the
@@ -1864,11 +1874,10 @@ describe("ChatWidget", () => {
         expect(speakGreetingMock).toHaveBeenCalledTimes(2);
       });
 
-      it("does not retry on interaction once the mode-pick attempt genuinely spoke", () => {
+      it("does not retry on interaction once the open-time attempt genuinely spoke", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanelVoiceMode();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         act(() => {
@@ -1882,7 +1891,6 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanelVoiceMode();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;

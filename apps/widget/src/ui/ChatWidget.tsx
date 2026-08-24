@@ -509,25 +509,23 @@ export function ChatWidget({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const typeOptionRef = useRef<HTMLButtonElement | null>(null);
   const micButtonRef = useRef<HTMLButtonElement | null>(null);
-  // TTS: opt-in, in-memory-only mute preference (decision 5/6). Voice-mode-
-  // only, same as the "hear it back" reply-speaking effect below -- the
-  // greeting never plays before a mode is chosen, and never at all in type
-  // mode. Attempted from three possible triggers, in order — the moment
-  // "Use your voice" is picked while the panel is open (the effect below,
-  // keyed on `[open, interactionMode]` -- this doubles as the click gesture
-  // itself typically already granting the activation Chrome requires), the
-  // visitor's first interaction ANYWHERE on the page after that (the
-  // document-level effect further below, in case the mode-pick attempt was
-  // still blocked), or a manual reopen while already in voice mode. Whichever
-  // happens first; `hasGreetedRef` gates all three so only one genuinely
-  // fires; `tts.speakGreeting`'s `onBlocked` callback resets it when an
-  // attempt was silently blocked, so a later trigger still gets a real
-  // chance.
+  // TTS: opt-in, in-memory-only mute preference (decision 5/6). Plays on
+  // load regardless of which mode (type/voice) the visitor ends up picking
+  // -- unlike the "hear it back" reply-speaking effect below (still
+  // voice-mode-only, unchanged), the greeting itself is not mode-gated.
+  // Attempted from three possible triggers, in order — as soon as the panel
+  // is open (the effect below, keyed on `[open]`), the visitor's first
+  // interaction ANYWHERE on the page after that (the document-level effect
+  // further below, in case the open-time attempt was blocked by the
+  // browser's autoplay policy), or a manual reopen. Whichever happens
+  // first; `hasGreetedRef` gates all three so only one genuinely fires;
+  // `tts.speakGreeting`'s `onBlocked` callback resets it when an attempt was
+  // silently blocked, so a later trigger still gets a real chance.
   const [muted, setMuted] = useState(false);
   const hasGreetedRef = useRef(false);
 
   const attemptGreeting = useCallback(() => {
-    if (hasGreetedRef.current || muted || interactionMode !== "voice") return;
+    if (hasGreetedRef.current || muted) return;
     hasGreetedRef.current = true;
     void tts.speakGreeting(config, () => {
       // Blocked (most commonly Chrome's "no speak() without prior user
@@ -535,13 +533,13 @@ export function ChatWidget({
       // first-interaction listener below, or a manual open) to retry.
       hasGreetedRef.current = false;
     });
-  }, [muted, config, interactionMode]);
+  }, [muted, config]);
 
   useEffect(() => {
-    if (open && interactionMode === "voice") {
+    if (open) {
       attemptGreeting();
     }
-  }, [open, interactionMode, attemptGreeting]);
+  }, [open, attemptGreeting]);
 
   // Fallback for browsers (Chrome) that block the "just picked voice mode"
   // attempt above for lack of prior user activation: the visitor's first
