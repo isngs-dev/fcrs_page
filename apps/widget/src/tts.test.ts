@@ -4,14 +4,16 @@ import type { WidgetConfig } from "./config";
 import type { SpeakResult } from "./voice";
 
 const isVoiceTtsEnabledMock = vi.fn<() => boolean>(() => false);
-const synthesizeSpeechMock = vi.fn<(config: WidgetConfig, text: string) => Promise<SpeakResult>>();
+const synthesizeSpeechMock =
+  vi.fn<(config: WidgetConfig, text: string, speed?: number) => Promise<SpeakResult>>();
 
 vi.mock("./session", () => ({
   isVoiceTtsEnabled: () => isVoiceTtsEnabledMock(),
 }));
 
 vi.mock("./voice", () => ({
-  synthesizeSpeech: (config: WidgetConfig, text: string) => synthesizeSpeechMock(config, text),
+  synthesizeSpeech: (config: WidgetConfig, text: string, speed?: number) =>
+    synthesizeSpeechMock(config, text, speed),
 }));
 
 // Imported AFTER the mocks above so tts.ts picks them up.
@@ -109,8 +111,11 @@ describe("tts", () => {
       await speakGreeting(baseConfig);
 
       expect(speak).toHaveBeenCalledTimes(1);
-      const uttered = speak.mock.calls[0]?.[0] as FakeUtterance;
+      const uttered = speak.mock.calls[0]?.[0] as FakeUtterance & { rate?: number };
       expect(uttered.text).toBe(TTS_GREETING_TEXT);
+      // Slightly slower than the reply-speaking default (0.95) -- warmer,
+      // easier to catch on first listen.
+      expect(uttered.rate).toBe(0.85);
     });
 
     it("does not call speak when the caller does not invoke speakGreeting (muted path is the caller's responsibility)", () => {
@@ -460,8 +465,7 @@ describe("tts", () => {
       await speakGreeting(baseConfig);
 
       const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
-      expect(uttered.rate).toBeLessThan(1);
-      expect(uttered.rate).toBeGreaterThanOrEqual(0.9);
+      expect(uttered.rate).toBe(0.85);
     });
   });
 
@@ -524,10 +528,19 @@ describe("tts", () => {
 
       await speak(baseConfig, "Hello there");
 
-      expect(synthesizeSpeechMock).toHaveBeenCalledWith(baseConfig, "Hello there");
+      expect(synthesizeSpeechMock).toHaveBeenCalledWith(baseConfig, "Hello there", undefined);
       expect(FakeAudio.instances).toHaveLength(1);
       expect(FakeAudio.instances[0]?.play).toHaveBeenCalledTimes(1);
       expect(browserSpeak).not.toHaveBeenCalled();
+    });
+
+    it("passes the greeting's slightly-slower rate through to cloud TTS too", async () => {
+      isVoiceTtsEnabledMock.mockReturnValue(true);
+      synthesizeSpeechMock.mockResolvedValue({ ok: true, audio: new Blob(["fake-mp3"]) });
+
+      await speakGreeting(baseConfig);
+
+      expect(synthesizeSpeechMock).toHaveBeenCalledWith(baseConfig, TTS_GREETING_TEXT, 0.85);
     });
 
     it("falls back to the browser-native path when synthesizeSpeech itself fails (not configured / network / upstream)", async () => {

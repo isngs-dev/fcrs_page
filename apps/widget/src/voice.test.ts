@@ -128,6 +128,21 @@ describe("voice", () => {
       expect(JSON.parse(init.body as string)).toEqual({ text: "We're open Monday through Friday." });
     });
 
+    it("includes speed in the JSON body when a caller passes one (e.g. the slower greeting)", async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(new Blob(["fake-mp3-bytes"]), { status: 200 }),
+      );
+      const { synthesizeSpeech } = await import("./voice");
+
+      await synthesizeSpeech(baseConfig, "Hi, I'm Rebecca, how can I help?", 0.85);
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(init.body as string)).toEqual({
+        text: "Hi, I'm Rebecca, how can I help?",
+        speed: 0.85,
+      });
+    });
+
     it("returns NO_SESSION and issues no fetch when authHeader() is null", async () => {
       authHeaderMock.mockReturnValue(null);
       const { synthesizeSpeech } = await import("./voice");

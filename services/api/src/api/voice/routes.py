@@ -33,12 +33,23 @@ class SpeakRequest(BaseModel):
     """Body for POST /public/chat/speak."""
 
     text: str
+    # 1.0 = normal rate; matches OpenAI's own accepted range (0.25-4.0) --
+    # the widget only ever sends a value here for the greeting (slightly
+    # slower), omitting it (default 1.0) for ordinary spoken replies.
+    speed: float = 1.0
 
     @field_validator("text")
     @classmethod
     def validate_text(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("text must not be blank")
+        return v
+
+    @field_validator("speed")
+    @classmethod
+    def validate_speed(cls, v: float) -> float:
+        if not 0.25 <= v <= 4.0:
+            raise ValueError("speed must be between 0.25 and 4.0")
         return v
 
 
@@ -94,7 +105,7 @@ async def post_speak(
     settings = get_api_settings()
     provider = tts_provider_for(settings)
     text = truncate_for_speech(body.text, settings.voice_max_tts_chars)
-    audio = await provider.synthesize(text)
+    audio = await provider.synthesize(text, speed=body.speed)
 
     _log.info(
         "voice speak",

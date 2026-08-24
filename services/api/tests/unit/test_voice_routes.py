@@ -121,9 +121,11 @@ class _StubTTSProvider:
         self._audio = audio
         self._raise_error = raise_error
         self.received_text: str | None = None
+        self.received_speed: float | None = None
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, *, speed: float = 1.0) -> bytes:
         self.received_text = text
+        self.received_speed = speed
         if self._raise_error is not None:
             raise self._raise_error
         return self._audio
@@ -303,6 +305,36 @@ async def test_speak_happy_path_returns_audio_mpeg() -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "audio/mpeg"
     assert resp.content == b"fake-mp3-bytes"
+    assert stub.received_speed == 1.0
+
+
+async def test_speak_passes_a_custom_speed_through_to_the_provider() -> None:
+    app = _build_app()
+    stub = _StubTTSProvider(audio=b"fake-mp3-bytes")
+
+    with patch("api.voice.routes.tts_provider_for", return_value=stub):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/public/chat/speak",
+                json={"text": "Hi, I'm Rebecca, how can I help?", "speed": 0.85},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert resp.status_code == 200
+    assert stub.received_speed == 0.85
+
+
+async def test_speak_rejects_speed_out_of_openais_accepted_range() -> None:
+    app = _build_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/public/chat/speak",
+            json={"text": "hello", "speed": 5.0},
+            headers={"Authorization": f"Bearer {_visitor_token()}"},
+        )
+
+    assert resp.status_code == 422
 
 
 async def test_speak_truncates_text_before_it_ever_reaches_the_provider() -> None:

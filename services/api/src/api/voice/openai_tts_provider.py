@@ -38,12 +38,13 @@ class OpenAITTSProvider:
             from openai import AsyncOpenAI
             self._client = AsyncOpenAI(api_key=api_key, timeout=timeout)
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, *, speed: float = 1.0) -> bytes:
         try:
             response = await self._client.audio.speech.create(
                 model=self._model,
                 voice=self._voice,
                 input=text,
+                speed=speed,
             )
         except APIError as exc:
             _log.warning(

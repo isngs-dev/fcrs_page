@@ -106,8 +106,15 @@ export async function transcribeAudio(config: WidgetConfig, audio: Blob): Promis
 }
 
 /** Synthesize speech for `text`. Returns the raw audio as a `Blob`
- * (`audio/mpeg`) for the caller to play via an `<audio>` element. */
-export async function synthesizeSpeech(config: WidgetConfig, text: string): Promise<SpeakResult> {
+ * (`audio/mpeg`) for the caller to play via an `<audio>` element. `speed`
+ * (1.0 = normal, matches `api.voice.routes.SpeakRequest`'s own default)
+ * is only ever overridden by the greeting -- ordinary spoken replies omit
+ * it and get the backend's normal-rate default. */
+export async function synthesizeSpeech(
+  config: WidgetConfig,
+  text: string,
+  speed?: number,
+): Promise<SpeakResult> {
   const auth = authHeader();
   if (!auth) {
     return {
@@ -122,7 +129,7 @@ export async function synthesizeSpeech(config: WidgetConfig, text: string): Prom
       method: "POST",
       headers: { "Content-Type": "application/json", ...auth },
       credentials: "omit",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(speed === undefined ? { text } : { text, speed }),
     });
   } catch (err) {
     return {

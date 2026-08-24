@@ -173,7 +173,19 @@ async def test_synthesize_returns_audio_bytes_on_success() -> None:
     result = await provider.synthesize("Hello there")
 
     assert result == b"fake-mp3-bytes"
-    assert stub.last_kwargs == {"model": "tts-1", "voice": "nova", "input": "Hello there"}
+    assert stub.last_kwargs == {
+        "model": "tts-1", "voice": "nova", "input": "Hello there", "speed": 1.0,
+    }
+
+
+async def test_synthesize_passes_a_custom_speed_through_to_openai() -> None:
+    stub = _StubSpeech(audio=b"fake-mp3-bytes")
+    client = _make_stub_tts_client(stub)
+    provider = OpenAITTSProvider(model="tts-1", voice="nova", client=client)
+
+    await provider.synthesize("Hello there", speed=0.85)
+
+    assert stub.last_kwargs["speed"] == 0.85
 
 
 async def test_synthesize_wraps_api_error_in_voice_provider_error() -> None:

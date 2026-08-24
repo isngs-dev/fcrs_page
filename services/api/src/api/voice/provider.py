@@ -26,9 +26,14 @@ class ASRProvider(Protocol):
 
 
 class TTSProvider(Protocol):
-    """Text-to-speech contract. Reply text in, audio bytes out."""
+    """Text-to-speech contract. Reply text in, audio bytes out.
 
-    async def synthesize(self, text: str) -> bytes: ...
+    ``speed`` (1.0 = normal) is a synthesis-rate multiplier, not a
+    per-tenant setting -- the caller (e.g. a slightly slower greeting)
+    decides it per call.
+    """
+
+    async def synthesize(self, text: str, *, speed: float = 1.0) -> bytes: ...
 
 
 class VoiceConfigError(ValidationError):

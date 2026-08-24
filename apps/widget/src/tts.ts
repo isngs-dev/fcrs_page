@@ -124,8 +124,9 @@ function stopCloudAudio(): void {
 }
 
 /** The original, fully browser-native speak path — unchanged from before
- * cloud voice existed. See the module doc comment for the fallback contract. */
-function speakBrowserNative(text: string, onBlocked?: () => void): void {
+ * cloud voice existed, aside from `speed` (see `speak` below). See the
+ * module doc comment for the fallback contract. */
+function speakBrowserNative(text: string, onBlocked?: () => void, speed?: number): void {
   const synth = getSpeechSynthesis();
   if (!synth) {
     onBlocked?.();
@@ -146,8 +147,9 @@ function speakBrowserNative(text: string, onBlocked?: () => void): void {
     // Warm/clear/professional delivery: a slightly unhurried pace reads as
     // warmer and is easier to follow than the default rate. Pitch is left
     // at the selected voice's own default — forcing an artificial pitch
-    // shift on a synthetic voice tends to sound worse, not warmer.
-    utterance.rate = 0.95;
+    // shift on a synthetic voice tends to sound worse, not warmer. `speed`
+    // (only ever passed by the greeting) overrides this baseline rate.
+    utterance.rate = speed ?? 0.95;
     if (onBlocked) {
       utterance.onerror = (event) => {
         if (event.error === "canceled" || event.error === "interrupted") return;
@@ -181,10 +183,20 @@ function speakBrowserNative(text: string, onBlocked?: () => void): void {
  * (below) or a newer `speak()` call stopped an utterance that was already
  * genuinely playing/queued (panel close, barge-in), which must not be
  * treated as a block worth retrying.
+ *
+ * `speed` (1.0 = normal) is an optional override applied to BOTH mechanisms
+ * identically -- omitted by the "hear it back" reply-speaking call site
+ * (each mechanism keeps its own existing default), passed explicitly only
+ * by `speakGreeting` below for a slightly slower, warmer welcome.
  */
-export async function speak(config: WidgetConfig, text: string, onBlocked?: () => void): Promise<void> {
+export async function speak(
+  config: WidgetConfig,
+  text: string,
+  onBlocked?: () => void,
+  speed?: number,
+): Promise<void> {
   if (isVoiceTtsEnabled()) {
-    const result = await synthesizeSpeech(config, text);
+    const result = await synthesizeSpeech(config, text, speed);
     if (result.ok) {
       stopCloudAudio();
       const url = URL.createObjectURL(result.audio);
@@ -209,13 +221,18 @@ export async function speak(config: WidgetConfig, text: string, onBlocked?: () =
     // Cloud call itself failed (not configured / network / upstream) --
     // fall through to the browser-native mechanism below.
   }
-  speakBrowserNative(text, onBlocked);
+  speakBrowserNative(text, onBlocked, speed);
 }
+
+/** A slightly slower-than-normal rate for the one-time greeting only —
+ * warmer and easier to catch on first listen. Ordinary spoken replies are
+ * unaffected (they never pass a `speed` to `speak`). */
+const GREETING_SPEED = 0.85;
 
 /** Speak the baked-in greeting exactly once — see `speak` above for the
  * shared mechanics and `onBlocked` semantics. */
 export async function speakGreeting(config: WidgetConfig, onBlocked?: () => void): Promise<void> {
-  await speak(config, TTS_GREETING_TEXT, onBlocked);
+  await speak(config, TTS_GREETING_TEXT, onBlocked, GREETING_SPEED);
 }
 
 /** Cancel any in-progress/queued speech, cloud or browser-native (e.g. on
