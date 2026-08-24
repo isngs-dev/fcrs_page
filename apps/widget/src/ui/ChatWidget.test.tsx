@@ -505,6 +505,84 @@ describe("ChatWidget", () => {
       }
     });
 
+    it("auto-stops and sends once the visitor goes quiet after speaking, with no second tap needed", async () => {
+      isVoiceAsrEnabledMock.mockReturnValue(true);
+      stubMediaRecorderSupport();
+      transcribeAudioMock.mockResolvedValue({ ok: true, text: "when can you come out" });
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-asr-silence-1",
+          messageId: "msg-asr-silence-1",
+          reply: "We can come out tomorrow.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      // Fake Web Audio plumbing driving watchForSilence: `loud` toggles what
+      // every getByteTimeDomainData poll reports, standing in for a real mic
+      // going from "speaking" to "quiet".
+      let loud = false;
+      class FakeAnalyserNode {
+        fftSize = 512;
+        frequencyBinCount = 4;
+        getByteTimeDomainData(array: Uint8Array) {
+          array.fill(loud ? 200 : 128);
+        }
+      }
+      class FakeAudioContext {
+        createMediaStreamSource() {
+          return { connect: vi.fn() };
+        }
+        createAnalyser() {
+          return new FakeAnalyserNode();
+        }
+        close() {
+          return Promise.resolve();
+        }
+      }
+      Object.defineProperty(window, "AudioContext", {
+        value: FakeAudioContext,
+        configurable: true,
+        writable: true,
+      });
+
+      vi.useFakeTimers();
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        openPanelVoiceMode();
+
+        await act(async () => {
+          getVoiceButton().click();
+          await Promise.resolve();
+        });
+        expect(getVoiceButton().getAttribute("aria-pressed")).toBe("true");
+
+        loud = true;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(200);
+        });
+
+        // No second click anywhere in this test -- silence alone must finish
+        // the recording and auto-send the transcript.
+        loud = false;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1400);
+        });
+
+        expect(transcribeAudioMock).toHaveBeenCalledWith(baseConfig, expect.any(Blob));
+        expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("when can you come out");
+      } finally {
+        vi.useRealTimers();
+        Reflect.deleteProperty(window, "AudioContext");
+      }
+    });
+
     it("falls back to browser SpeechRecognition when MediaRecorder is unsupported, even if cloud ASR is enabled", () => {
       isVoiceAsrEnabledMock.mockReturnValue(true);
       // Deliberately no MediaRecorder/mediaDevices stub here.

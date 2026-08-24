@@ -243,6 +243,75 @@ function getMediaRecorderConstructor(): typeof MediaRecorder | null {
   return window.MediaRecorder;
 }
 
+/**
+ * Voice-activity thresholds for the cloud recording path's auto-stop-on-
+ * silence (below). `MediaRecorder` has no built-in "stop when the visitor
+ * stops talking" like `SpeechRecognition` does, so this drives it off a
+ * simple RMS level read from a Web Audio `AnalyserNode`.
+ * ponytail: fixed threshold/timings, not calibrated per-device/mic gain --
+ * revisit if real users report cutting off too early/late.
+ */
+const SPEECH_RMS_THRESHOLD = 12;
+const SILENCE_STOP_MS = 1200;
+const MAX_RECORDING_MS = 15000;
+
+/**
+ * Watches `stream` for "the visitor stopped talking" and calls `onSilence`
+ * once (stopping only after real speech was heard, so it never fires before
+ * the visitor has said anything). Also fires `onSilence` at `MAX_RECORDING_MS`
+ * regardless, as a safety cap against a stuck-open mic. Returns a cleanup
+ * function that tears down the analyser and audio context.
+ */
+function watchForSilence(stream: MediaStream, onSilence: () => void): () => void {
+  const AudioContextCtor = window.AudioContext || (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return () => {};
+
+  const audioContext = new AudioContextCtor();
+  const source = audioContext.createMediaStreamSource(stream);
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+
+  let hasSpoken = false;
+  let silenceStartedAt: number | null = null;
+  const startedAt = Date.now();
+  let stopped = false;
+
+  const intervalId = window.setInterval(() => {
+    if (stopped) return;
+    analyser.getByteTimeDomainData(data);
+    let sumSquares = 0;
+    for (const sample of data) {
+      const deviation = sample - 128;
+      sumSquares += deviation * deviation;
+    }
+    const rms = Math.sqrt(sumSquares / data.length);
+
+    if (rms > SPEECH_RMS_THRESHOLD) {
+      hasSpoken = true;
+      silenceStartedAt = null;
+    } else if (hasSpoken) {
+      silenceStartedAt ??= Date.now();
+      if (Date.now() - silenceStartedAt > SILENCE_STOP_MS) {
+        stopped = true;
+        onSilence();
+        return;
+      }
+    }
+    if (Date.now() - startedAt > MAX_RECORDING_MS) {
+      stopped = true;
+      onSilence();
+    }
+  }, 100);
+
+  return () => {
+    stopped = true;
+    window.clearInterval(intervalId);
+    void audioContext.close();
+  };
+}
+
 type VoiceRecognitionConstructor = new () => VoiceRecognition;
 
 function getVoiceRecognitionConstructor(): VoiceRecognitionConstructor | null {
@@ -352,6 +421,10 @@ export function ChatWidget({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  // Cleanup for the cloud path's auto-stop-on-silence watch (watchForSilence
+  // above) -- torn down whenever recording ends, either by silence itself,
+  // the visitor's own tap, or a discard, so it never outlives its recorder.
+  const silenceWatchRef = useRef<(() => void) | null>(null);
   const [listening, setListening] = useState(false);
   // Honest voice-input error (free, browser-native SpeechRecognition --
   // previously failed 100% silently: onerror just reset `listening` with
@@ -391,6 +464,8 @@ export function ChatWidget({
    */
   const stopVoiceCapture = useCallback(() => {
     voiceRecognitionRef.current?.abort();
+    silenceWatchRef.current?.();
+    silenceWatchRef.current = null;
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== "inactive") {
       recorder.onstop = null;
@@ -614,8 +689,12 @@ export function ChatWidget({
    * Cloud ASR path (OpenAI, via the backend) -- the PREFERRED mechanism
    * whenever `session.ts#isVoiceAsrEnabled()` says the backend has a key
    * configured AND the browser supports `MediaRecorder`/`getUserMedia`.
-   * Records raw audio; on the visitor's second tap (`toggleVoiceInput`
-   * below calls `recorder.stop()`), `onstop` uploads the recording via
+   * Records raw audio; recording stops itself automatically once
+   * `watchForSilence` detects the visitor has gone quiet after speaking (or,
+   * as a safety cap, after `MAX_RECORDING_MS` regardless) -- there is no
+   * requirement to tap the mic again to finish. A tap while `listening`
+   * (`toggleVoiceInput` below) still works as an early manual stop. Either
+   * way `recorder.stop()` fires `onstop`, which uploads the recording via
    * `transcribeAudio` and auto-sends the transcript -- there is no text
    * field to review it in first, same contract as the browser-native path.
    */
@@ -640,6 +719,8 @@ export function ChatWidget({
       if (event.data.size > 0) audioChunksRef.current.push(event.data);
     };
     recorder.onstop = () => {
+      silenceWatchRef.current?.();
+      silenceWatchRef.current = null;
       stream.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
       setListening(false);
@@ -665,6 +746,9 @@ export function ChatWidget({
     mediaRecorderRef.current = recorder;
     recorder.start();
     setListening(true);
+    silenceWatchRef.current = watchForSilence(stream, () => {
+      if (recorder.state !== "inactive") recorder.stop();
+    });
   }, [config]);
 
   /** Browser-native ASR path (Web Speech API) -- the fallback whenever cloud
@@ -701,9 +785,14 @@ export function ChatWidget({
 
   const toggleVoiceInput = useCallback(() => {
     if (listening) {
-      // Finish normally (NOT a discard) -- whichever mechanism is active
-      // gracefully stops and its own onstop/onresult still fires, carrying
-      // the transcript through to auto-send.
+      // A tap while listening is now just an EARLY manual stop -- both
+      // mechanisms already finish themselves automatically once the visitor
+      // stops talking (browser-native SpeechRecognition via its own silence
+      // detection with continuous=false; the cloud recorder via
+      // watchForSilence above). Finish normally here too (NOT a discard) --
+      // whichever mechanism is active gracefully stops and its own
+      // onstop/onresult still fires, carrying the transcript through to
+      // auto-send.
       const recorder = mediaRecorderRef.current;
       if (recorder && recorder.state !== "inactive") {
         recorder.stop();
