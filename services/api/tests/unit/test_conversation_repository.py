@@ -27,10 +27,11 @@ from api.conversation_store.repository import (
     get_conversation,
     get_last_assistant_decision,
     get_message,
-    get_recent_assistant_decisions,
     get_messages,
+    get_recent_assistant_decisions,
     get_window,
     get_working_memory,
+    list_low_confidence_messages,
     purge_expired,
     roll_summary,
 )
@@ -2002,3 +2003,62 @@ async def test_get_message_unaffected_by_source_count_still_returns_full_sources
     assert msg is not None
     assert msg.sources == [{"doc_id": "d1", "chunk_id": "c1", "score": 0.9, "matched_by": ["vector"]}]
     assert msg.source_count == 0
+
+
+# -- list_low_confidence_messages (Train the Agent coverage gaps) --------------
+
+
+def _gap_row(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "message_id": "bot-1",
+        "decision": "escalate",
+        "confidence": 0.1,
+        "created_at": datetime.now(UTC),
+        "question": "How much does an inspection cost?",
+        "question_message_id": "user-1",
+    }
+    base.update(overrides)
+    return base
+
+
+async def test_list_low_confidence_messages_filters_by_tenant_id() -> None:
+    db = _RecordingDatabase(rows=[_gap_row()])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await list_low_confidence_messages(db, claims)
+
+    assert "tenant_id" in db.last_sql
+    assert db.last_params[0] == "tenant-a"
+
+
+async def test_list_low_confidence_messages_binds_decision_filter() -> None:
+    db = _RecordingDatabase(rows=[_gap_row()])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await list_low_confidence_messages(db, claims, decisions=("escalate",))
+
+    assert db.last_params[1] == ["escalate"]
+
+
+async def test_list_low_confidence_messages_maps_rows_to_coverage_gap() -> None:
+    row = _gap_row(question="What are your hours?", question_message_id="user-9")
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    gaps = await list_low_confidence_messages(db, claims)
+
+    assert len(gaps) == 1
+    gap = gaps[0]
+    assert gap.message_id == "bot-1"
+    assert gap.decision == "escalate"
+    assert gap.confidence == 0.1
+    assert gap.question == "What are your hours?"
+    assert gap.question_message_id == "user-9"
+
+
+async def test_list_low_confidence_messages_rejects_global_caller() -> None:
+    db = _RecordingDatabase(rows=[_gap_row()])
+    claims = _claims(None, Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError):
+        await list_low_confidence_messages(db, claims)

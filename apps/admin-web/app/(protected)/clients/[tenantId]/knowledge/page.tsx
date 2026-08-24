@@ -12,10 +12,15 @@
  * a fresh upload (bound via `.bind(null, tenantId)`), so the list below
  * reflects the new item immediately without a manual reload -- mirrors
  * `/knowledge`'s own header comment for the full rationale.
+ *
+ * Train the Agent feature: `listCoverageGaps(tenantId)`/`<TestBotChat
+ * tenantId>` mirror the same PLATFORM_ADMIN tenant-scoped surface pattern.
  */
-import { listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
-import { UploadForm, CoverageCheckCard, TestBotCard } from "@/app/(protected)/knowledge/upload-form";
+import { listCoverageGaps, listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
+import { UploadForm } from "@/app/(protected)/knowledge/upload-form";
 import { KnowledgeDocList } from "@/app/(protected)/knowledge/doc-list";
+import { CoverageGaps } from "@/app/(protected)/knowledge/coverage-gaps";
+import { TestBotChat } from "@/app/(protected)/knowledge/test-bot-chat";
 
 export default async function ClientKnowledgePage({
   params,
@@ -24,6 +29,7 @@ export default async function ClientKnowledgePage({
 }) {
   const { tenantId } = await params;
   const docsResult = await listKnowledgeDocs(tenantId);
+  const gapsResult = await listCoverageGaps(tenantId);
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-5 sm:p-7">
@@ -46,8 +52,8 @@ export default async function ClientKnowledgePage({
         </div>
 
         <div className="flex flex-col gap-3.5">
-          <CoverageCheckCard />
-          <TestBotCard />
+          <CoverageGaps result={gapsResult} tenantId={tenantId} />
+          <TestBotChat tenantId={tenantId} />
         </div>
       </div>
 

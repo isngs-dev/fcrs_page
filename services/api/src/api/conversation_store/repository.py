@@ -58,6 +58,19 @@ class Message:
 
 
 @dataclass(frozen=True)
+class CoverageGap:
+    """A bot turn that didn't really answer the visitor, paired with the
+    question that triggered it (Train the Agent feature)."""
+
+    message_id: str
+    decision: str
+    confidence: float | None
+    created_at: datetime
+    question: str
+    question_message_id: str
+
+
+@dataclass(frozen=True)
 class ConversationSummaryRow:
     """A single row in the ``GET /admin/conversations`` list (S12.4)."""
 
@@ -579,6 +592,57 @@ async def list_conversations(
         )
         for r in rows
     ], total
+
+
+async def list_low_confidence_messages(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    decisions: tuple[str, ...] = ("escalate", "clarify"),
+    limit: int = 50,
+) -> list[CoverageGap]:
+    """Fetch recent bot turns that didn't answer, paired with the question
+    that triggered them (Train the Agent's "Coverage check" feed).
+
+    Admin/agent-only surface (reached via ``require_roles(CLIENT_ADMIN)``,
+    which excludes VISITOR), tenant-scoped only -- mirrors ``list_conversations``,
+    no VISITOR scoping branch. For each matching bot message, a ``LATERAL``
+    join finds the most recent preceding ``role='user'`` message in the same
+    conversation -- that pairing is best-effort (the actual question, not
+    always guaranteed to exist, e.g. a bot turn with no prior user message)
+    so rows with no match are simply excluded (``JOIN LATERAL ... ON true``
+    still requires the subquery to return a row).
+    """
+    _reject_global(claims)
+
+    clamped_limit = max(1, min(limit, 200))
+    rows = await db.fetch(
+        "SELECT bot.message_id, bot.decision, bot.confidence, bot.created_at, "
+        "       usr.content AS question, usr.message_id AS question_message_id "
+        "FROM messages bot "
+        "JOIN LATERAL ( "
+        "    SELECT content, message_id FROM messages u "
+        "    WHERE u.tenant_id = bot.tenant_id AND u.conversation_id = bot.conversation_id "
+        "      AND u.role = 'user' AND u.created_at <= bot.created_at "
+        "    ORDER BY u.created_at DESC, u.message_id DESC LIMIT 1 "
+        ") usr ON true "
+        "WHERE bot.tenant_id = $1 AND bot.role = 'bot' AND bot.decision = ANY($2::text[]) "
+        "ORDER BY bot.created_at DESC LIMIT $3",
+        claims.tenant_id,
+        list(decisions),
+        clamped_limit,
+    )
+    return [
+        CoverageGap(
+            message_id=str(r["message_id"]),
+            decision=str(r["decision"]),
+            confidence=r["confidence"],
+            created_at=r["created_at"],
+            question=str(r["question"]),
+            question_message_id=str(r["question_message_id"]),
+        )
+        for r in rows
+    ]
 
 
 def _estimate_tokens(content: str) -> int:

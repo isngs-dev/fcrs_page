@@ -238,6 +238,8 @@ def create_app() -> FastAPI:
     from api.tenants.routes import router as tenants_router
     from api.timeline.admin_routes import router as timeline_router
     from api.timeline.admin_routes import tenant_scoped_router as timeline_tenant_router
+    from api.training.routes import router as training_router
+    from api.training.routes import tenant_scoped_router as training_tenant_router
     from api.voice.routes import router as voice_router
 
     app.include_router(accounts_admin_router)
@@ -273,6 +275,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router)
     app.include_router(tenants_router)
     app.include_router(timeline_router)
+    app.include_router(training_router)
 
     # -- Platform-admin tenant-explicit routers (S12.7) -------------------------
     # /admin/tenants/{tenant_id}/... -- same business logic as the routers
@@ -295,6 +298,7 @@ def create_app() -> FastAPI:
     app.include_router(notifications_admin_tenant_router)
     app.include_router(opportunities_admin_tenant_router)
     app.include_router(timeline_tenant_router)
+    app.include_router(training_tenant_router)
 
     # -- Routes ----------------------------------------------------------------
     @app.get("/healthz")

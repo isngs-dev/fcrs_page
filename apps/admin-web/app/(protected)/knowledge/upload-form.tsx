@@ -39,9 +39,10 @@
  * oversight. Retiring this status card in favor of per-row polling inside
  * the list is an explicit non-goal.
  *
- * "Coverage check" and "Test the bot" have no backend behind them at all
- * (see `CoverageCheckCard`/`TestBotCard` below) -- both render honest
- * unavailable/coming-soon states, not invented data.
+ * "Coverage check" and "Test the bot" (Train the Agent feature) now have a
+ * real backend behind them -- see `coverage-gaps.tsx`/`test-bot-chat.tsx`,
+ * rendered by `page.tsx` in place of what used to be honest coming-soon
+ * placeholders here.
  */
 import { useEffect, useId, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { useActionState } from "react";
@@ -540,88 +541,3 @@ export function UploadForm({ tenantId }: { tenantId?: string } = {}) {
     </form>
   );
 }
-
-/**
- * "Coverage check" card per HANDOFF-SPEC.md §3 "5a" (ink background,
- * unanswered questions ×count list, "Answer these →" CTA -- SR-15 D1: the
- * CTA's citron accent, unbuilt today anyway since there is no backend for
- * it, is not being introduced; see the honest empty state below).
- *
- * NO BACKEND EXISTS for this today: grepped
- * services/api/src/api/{ingestion,rag,orchestrator,conversation_store}/**
- * for unanswered/coverage/no_answer/low_confidence/fallback_count/gap --
- * the only hits are internal RAG confidence-scoring variable names
- * (rag/service.py's `w_coverage` term in the confidence formula) and code
- * comments, not an admin-facing endpoint or count. Per CLAUDE.md's
- * no-silent-fallback rule, this renders an honest "not available yet"
- * empty state instead of inventing question text/counts to match the mock.
- * Flagged gap: needs a new backend aggregate (e.g. over low-confidence /
- * fallback-triggering conversation turns) before this card can show real
- * data -- out of scope for this UI-only sprint.
- */
-function CoverageCheckCard() {
-  return (
-    <div className="flex flex-col gap-2 rounded-[14px] bg-primary px-[22px] py-5">
-      <p className="text-[15px] font-semibold text-primary-foreground">Coverage check</p>
-      <p className="text-[12.5px] leading-relaxed text-[#c9c9c9]">
-        Questions your bot couldn&apos;t answer this week -- add content to fix.
-      </p>
-      <div
-        role="status"
-        className="mt-1 rounded-[10px] bg-white/[.08] px-3.5 py-3.5 text-[12px] text-primary-foreground/80"
-      >
-        Not available yet. This needs a backend endpoint that surfaces low-confidence /
-        fallback-triggering questions from conversation history -- it doesn&apos;t exist yet.
-      </div>
-    </div>
-  );
-}
-
-/**
- * "Test the bot" card per HANDOFF-SPEC.md §3 "5a" (bordered card, query
- * input, "Run test" pill).
- *
- * NO BACKEND EXISTS for an admin-authenticated ad-hoc query endpoint:
- * services/api/src/api/orchestrator/routes.py exposes exactly two routes,
- * `POST /public/chat/message` and `POST /public/chat/message/stream`, both
- * gated on `get_visitor_claims` (a signed VISITOR session) -- there is no
- * admin/CLIENT_ADMIN-authenticated preview/simulate/sandbox route. Wiring
- * this to the visitor endpoint would be both a scope violation (this
- * sprint is UI-only, no backend/API changes) and a role-model violation
- * (CLIENT_ADMIN using a VISITOR-only route). Renders a disabled "coming
- * soon" state instead of a fabricated bot reply. Flagged gap: needs a new
- * admin-authenticated query-preview endpoint that runs the real RAG/
- * orchestrator pipeline without persisting a conversation.
- */
-function TestBotCard() {
-  const inputId = useId();
-  return (
-    <div className="flex flex-col gap-2 rounded-[14px] border border-[var(--line)] px-[22px] py-5">
-      <p className="text-[15px] font-semibold text-foreground">Test the bot</p>
-      <Label htmlFor={inputId} className="sr-only">
-        Test question
-      </Label>
-      <input
-        id={inputId}
-        type="text"
-        disabled
-        placeholder="Ask a question to preview the answer…"
-        aria-describedby={`${inputId}-hint`}
-        className="h-[42px] rounded-[10px] border border-[var(--line)] px-3 text-[12px] text-muted-foreground disabled:cursor-not-allowed disabled:bg-background"
-      />
-      <button
-        type="button"
-        disabled
-        className="mt-3 min-h-11 w-fit self-start rounded-full border border-[var(--line)] px-3 text-[11.5px] font-semibold text-muted-foreground disabled:cursor-not-allowed"
-      >
-        Run test
-      </button>
-      <p id={`${inputId}-hint`} className="text-[11px] text-muted-foreground">
-        Coming soon -- needs an admin-authenticated query-preview endpoint (not built yet; the
-        only live query path today is the visitor widget&apos;s session-gated chat endpoint).
-      </p>
-    </div>
-  );
-}
-
-export { CoverageCheckCard, TestBotCard };

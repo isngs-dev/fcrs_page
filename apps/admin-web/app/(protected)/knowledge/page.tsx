@@ -17,21 +17,31 @@
  * the new item immediately without a manual reload -- no client-side
  * polling/fetching needed here, this stays a plain server-rendered list.
  *
+ * Train the Agent feature: the former "Coverage check"/"Test the bot"
+ * honest-placeholder cards are now real. `listCoverageGaps` fetches recent
+ * unanswered visitor questions server-side and feeds `<CoverageGaps>`;
+ * `<TestBotChat>` is a client component driving the stateless preview chat
+ * itself. Teaching an answer (either surface) calls
+ * `submitTrainedAnswer`, which `revalidatePath("/knowledge")`s -- same
+ * refresh contract as `uploadKnowledge`.
+ *
  * SR-27 slice 3: geometry-only restyle to `Console.dc.html:458-499` -- fixed
  * 360px right column (was a fractional `2.2fr_1fr` track), 22px/24px card
- * padding, 28px/600 title. Both honest gap states (Coverage check, Test the
- * bot) preserved verbatim -- only their card geometry changed.
+ * padding, 28px/600 title.
  */
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
-import { listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
-import { UploadForm, CoverageCheckCard, TestBotCard } from "@/app/(protected)/knowledge/upload-form";
+import { listCoverageGaps, listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
+import { UploadForm } from "@/app/(protected)/knowledge/upload-form";
 import { KnowledgeDocList } from "@/app/(protected)/knowledge/doc-list";
+import { CoverageGaps } from "@/app/(protected)/knowledge/coverage-gaps";
+import { TestBotChat } from "@/app/(protected)/knowledge/test-bot-chat";
 import { SoftCard } from "@/components/admin/soft-card";
 
 export default async function KnowledgePage() {
   await requireRole("CLIENT_ADMIN");
   const docsResult = await listKnowledgeDocs();
+  const gapsResult = await listCoverageGaps();
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-5 sm:p-7">
@@ -63,8 +73,8 @@ export default async function KnowledgePage() {
         </SoftCard>
 
         <div className="flex w-full flex-none flex-col gap-[18px] lg:w-[360px]">
-          <CoverageCheckCard />
-          <TestBotCard />
+          <CoverageGaps result={gapsResult} />
+          <TestBotChat />
         </div>
       </div>
 

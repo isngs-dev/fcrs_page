@@ -1187,3 +1187,115 @@ async def answer_turn_stream(
         intent=plan.intent,
         guardrail_flag=final.guardrail_flag,
     )
+
+
+@dataclass(frozen=True)
+class PreviewResult:
+    """The outcome of one stateless preview turn (Train the Agent's admin-only
+    "Test the bot") -- same public shape as ``TurnResult``, minus everything
+    that only makes sense for a real, persisted conversation."""
+
+    reply: str
+    decision: str
+    confidence: float | None
+    sources: list[Source]
+
+
+async def preview_answer(db: Database, claims: AuthClaims, message: str) -> PreviewResult:
+    """Stateless, single-turn preview of the real RAG/orchestrator pipeline
+    (Train the Agent's admin-only "Test the bot"). Reuses the SAME tenant
+    config resolution, intent classification, RAG retrieval, prompt-building,
+    confidence-band decision, and post-generate guardrail scan as a real
+    visitor turn (``_resolve_turn``'s steps 1-2/7/8 + ``_finalize_generation``)
+    -- but writes NOTHING to ``conversation_store``: no conversation, no
+    message rows, ever (the test suite spies on ``append_message``/
+    ``create_conversation`` and asserts zero calls).
+
+    Deliberately simpler than a real turn in one respect: no conversation
+    history. Each call is independent (empty working memory), so there is no
+    turn-cap, no low-confidence-streak early escalate, and no identity gate --
+    all three depend on conversation state a stateless preview has none of.
+    This answers "what would the bot say to this ONE question right now",
+    which is what an admin verifying a taught answer needs -- it is not a
+    multi-turn conversation simulator.
+
+    Raises ``ValidationError`` (``LLM_NOT_CONFIGURED``) exactly like
+    ``answer_turn``. ``RAG_EMBEDDING_NOT_CONFIGURED``/``LLMError`` propagate
+    untouched, same as a real turn's runtime failures.
+    """
+    config = await get_llm_config(db, claims)
+    if config is None:
+        raise ValidationError(
+            "LLM is not configured for this tenant.",
+            code="LLM_NOT_CONFIGURED",
+        )
+    cfg = await get_orchestrator_config(db, claims)
+    settings = get_api_settings()
+    empty_wm: dict[str, Any] = {"summary": None, "summary_message_count": 0, "messages": []}
+
+    provider = provider_for(config)
+    try:
+        intent = await provider.classify(
+            message,
+            _INTENT_LABELS,
+            model=config.model,
+            label_descriptions=_INTENT_LABEL_DESCRIPTIONS,
+        )
+
+        if intent in ("scheduling_request", "off_topic"):
+            reply = _OFF_TOPIC_REPLY if intent == "off_topic" else _ESCALATE_REPLY
+            return PreviewResult(reply=reply, decision="escalate", confidence=None, sources=[])
+
+        if intent == "chitchat" or not config.embedding_model:
+            plan = _GeneratePlan(
+                conversation_id="",
+                assistant_id=None,
+                prompt=_build_chitchat_prompt(empty_wm),
+                grounded=False,
+                decision="answer",
+                confidence=None,
+                sources=[],
+                intent=intent,
+                model=config.model,
+                provider=provider,
+                turns=1,
+                prev_decision=None,
+            )
+        else:
+            result = await retrieve_hybrid(db, claims, message, k=settings.orchestrator_rag_k)
+            decision = _decide(result.confidence, cfg)
+            if decision != "answer":
+                reply = _CLARIFY_REPLY if decision == "clarify" else _ESCALATE_REPLY
+                return PreviewResult(
+                    reply=reply, decision=decision, confidence=result.confidence, sources=[],
+                )
+            plan = _GeneratePlan(
+                conversation_id="",
+                assistant_id=None,
+                prompt=_build_prompt(empty_wm, result.chunks),
+                grounded=True,
+                decision="answer",
+                confidence=result.confidence,
+                sources=_sources_from_chunks(result.chunks),
+                intent=intent,
+                model=config.model,
+                provider=provider,
+                turns=1,
+                prev_decision=None,
+            )
+
+        completion = await provider.generate(
+            plan.prompt, model=plan.model, max_tokens=settings.llm_max_tokens,
+        )
+        finalized = _finalize_generation(completion.text, plan)
+        # Mirrors answer_turn's own TurnResult construction: confidence is
+        # always the ORIGINALLY computed value, even when finalize flips the
+        # decision (guardrail block / no-answer sentinel) -- never blanked.
+        return PreviewResult(
+            reply=finalized.reply,
+            decision=finalized.decision,
+            confidence=plan.confidence,
+            sources=finalized.sources,
+        )
+    finally:
+        await provider.aclose()

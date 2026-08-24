@@ -381,3 +381,296 @@ export async function listKnowledgeDocs(tenantId?: string): Promise<ListKnowledg
     })),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Train the Agent: previewChat, listCoverageGaps, submitTrainedAnswer
+// ---------------------------------------------------------------------------
+
+export interface ChatSource {
+  docId: string;
+  chunkId: string;
+  score: number | null;
+  matchedBy: string[];
+}
+
+export interface PreviewChatOk {
+  status: "ok";
+  reply: string;
+  decision: "answer" | "clarify" | "escalate" | "blocked";
+  confidence: number | null;
+  sources: ChatSource[];
+}
+
+export interface PreviewChatError {
+  status: "error";
+  message: string;
+  correlationId: string | null;
+}
+
+export type PreviewChatResult = PreviewChatOk | PreviewChatError;
+
+interface AdminChatSourceBody {
+  doc_id: string;
+  chunk_id: string;
+  score: number | null;
+  matched_by: string[];
+}
+
+interface AdminChatResponseBody {
+  reply: string;
+  decision: "answer" | "clarify" | "escalate" | "blocked";
+  confidence: number | null;
+  sources: AdminChatSourceBody[];
+}
+
+/**
+ * "Test the bot" -- runs one STATELESS preview turn through the real
+ * RAG/orchestrator pipeline (`POST /admin/training/chat`, `preview_answer`).
+ * Nothing is persisted server-side; each call is independent (no
+ * conversation history), so the caller (test-bot-chat.tsx) owns the visible
+ * message list entirely client-side.
+ */
+export async function previewChat(message: string, tenantId?: string): Promise<PreviewChatResult> {
+  const path = tenantId
+    ? `/admin/tenants/${encodeURIComponent(tenantId)}/training/chat`
+    : "/admin/training/chat";
+
+  let response: Response;
+  try {
+    response = await adminApiFetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      return {
+        status: "error",
+        message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
+        correlationId: err.correlationId || null,
+      };
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: null };
+  }
+
+  const body = (await response.json()) as AdminChatResponseBody;
+
+  return {
+    status: "ok",
+    reply: body.reply,
+    decision: body.decision,
+    confidence: body.confidence,
+    sources: body.sources.map((s) => ({
+      docId: s.doc_id,
+      chunkId: s.chunk_id,
+      score: s.score,
+      matchedBy: s.matched_by,
+    })),
+  };
+}
+
+export interface CoverageGapItem {
+  messageId: string;
+  question: string;
+  questionMessageId: string;
+  decision: string;
+  confidence: number | null;
+  createdAt: string;
+}
+
+export interface ListGapsOk {
+  status: "ok";
+  gaps: CoverageGapItem[];
+}
+
+export interface ListGapsError {
+  status: "error";
+  message: string;
+  correlationId: string | null;
+}
+
+export type ListGapsResult = ListGapsOk | ListGapsError;
+
+interface AdminGapBody {
+  message_id: string;
+  question: string;
+  question_message_id: string;
+  decision: string;
+  confidence: number | null;
+  created_at: string;
+}
+
+interface AdminGapsResponseBody {
+  gaps: AdminGapBody[];
+}
+
+/**
+ * "Coverage check" -- recent real visitor turns the bot didn't answer,
+ * excluding anything already taught (`GET /admin/training/gaps`). Called
+ * server-side from the RSC page, same honest-error convention as
+ * `listKnowledgeDocs`.
+ */
+export async function listCoverageGaps(tenantId?: string): Promise<ListGapsResult> {
+  const path = tenantId
+    ? `/admin/tenants/${encodeURIComponent(tenantId)}/training/gaps`
+    : "/admin/training/gaps";
+
+  let response: Response;
+  try {
+    response = await adminApiFetch(path, { method: "GET" });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      return {
+        status: "error",
+        message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
+        correlationId: err.correlationId || null,
+      };
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: null };
+  }
+
+  const body = (await response.json()) as AdminGapsResponseBody;
+
+  return {
+    status: "ok",
+    gaps: body.gaps.map((g) => ({
+      messageId: g.message_id,
+      question: g.question,
+      questionMessageId: g.question_message_id,
+      decision: g.decision,
+      confidence: g.confidence,
+      createdAt: g.created_at,
+    })),
+  };
+}
+
+export interface SubmitAnswerOk {
+  status: "ok";
+  docId: string;
+  runId: string | null;
+  trainingAnswerId: string;
+}
+
+export interface SubmitAnswerError {
+  status: "error";
+  message: string;
+  correlationId: string | null;
+}
+
+export type SubmitAnswerResult = SubmitAnswerOk | SubmitAnswerError;
+
+interface AdminAnswerResponseBody {
+  doc_id: string;
+  run_id: string | null;
+  training_answer_id: string;
+}
+
+/**
+ * "Teach the correct answer" -- pushes the Q&A through the real ingestion
+ * pipeline (`POST /admin/training/answer`) so it becomes retrievable
+ * knowledge within a few seconds. Revalidates `/knowledge` on success (same
+ * pattern as `uploadKnowledge`) so both the gaps list and the doc list
+ * reflect the change without a manual reload.
+ */
+export async function submitTrainedAnswer(
+  question: string,
+  answer: string,
+  sourceMessageId?: string,
+  tenantId?: string
+): Promise<SubmitAnswerResult> {
+  const path = tenantId
+    ? `/admin/tenants/${encodeURIComponent(tenantId)}/training/answer`
+    : "/admin/training/answer";
+
+  let response: Response;
+  try {
+    response = await adminApiFetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        answer,
+        source_message_id: sourceMessageId ?? null,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      return {
+        status: "error",
+        message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
+        correlationId: err.correlationId || null,
+      };
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: null };
+  }
+
+  const body = (await response.json()) as AdminAnswerResponseBody;
+
+  revalidatePath(tenantId ? `/clients/${tenantId}/knowledge` : "/knowledge");
+
+  return {
+    status: "ok",
+    docId: body.doc_id,
+    runId: body.run_id,
+    trainingAnswerId: body.training_answer_id,
+  };
+}
+
+export interface DismissGapOk {
+  status: "ok";
+  trainingAnswerId: string;
+}
+
+export interface DismissGapError {
+  status: "error";
+  message: string;
+  correlationId: string | null;
+}
+
+export type DismissGapResult = DismissGapOk | DismissGapError;
+
+interface AdminDismissResponseBody {
+  training_answer_id: string;
+}
+
+/**
+ * "Not a real gap" -- dismisses a coverage-check question without teaching
+ * an answer or touching the knowledge base (`POST /admin/training/dismiss`).
+ * Revalidates `/knowledge` on success, same pattern as `submitTrainedAnswer`.
+ */
+export async function dismissGap(
+  question: string,
+  sourceMessageId?: string,
+  tenantId?: string
+): Promise<DismissGapResult> {
+  const path = tenantId
+    ? `/admin/tenants/${encodeURIComponent(tenantId)}/training/dismiss`
+    : "/admin/training/dismiss";
+
+  let response: Response;
+  try {
+    response = await adminApiFetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        source_message_id: sourceMessageId ?? null,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      return {
+        status: "error",
+        message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
+        correlationId: err.correlationId || null,
+      };
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: null };
+  }
+
+  const body = (await response.json()) as AdminDismissResponseBody;
+
+  revalidatePath(tenantId ? `/clients/${tenantId}/knowledge` : "/knowledge");
+
+  return { status: "ok", trainingAnswerId: body.training_answer_id };
+}

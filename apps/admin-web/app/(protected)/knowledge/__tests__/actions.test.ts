@@ -15,9 +15,15 @@ vi.mock("next/cache", () => ({
   revalidatePath: (...args: unknown[]) => revalidatePathMock(...args),
 }));
 
-const { uploadKnowledge, getDocStatus, listKnowledgeDocs } = await import(
-  "@/app/(protected)/knowledge/actions"
-);
+const {
+  uploadKnowledge,
+  getDocStatus,
+  listKnowledgeDocs,
+  previewChat,
+  listCoverageGaps,
+  submitTrainedAnswer,
+  dismissGap,
+} = await import("@/app/(protected)/knowledge/actions");
 const { AdminApiError } = await import("@/lib/api");
 
 function jsonResponse(body: Record<string, unknown>, status: number): Response {
@@ -485,6 +491,321 @@ describe("getDocStatus", () => {
     adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
 
     const result = await getDocStatus("doc-3");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/unable to reach the server/i);
+    }
+  });
+});
+
+describe("previewChat (Train the Agent: test the bot)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+  });
+
+  it("maps a 200 body to an ok result with camelCase fields", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          reply: "We're open Monday through Friday.",
+          decision: "answer",
+          confidence: 0.82,
+          sources: [{ doc_id: "doc-1", chunk_id: "c1", score: 0.9, matched_by: ["vector"] }],
+        },
+        200
+      )
+    );
+
+    const result = await previewChat("what are your hours?");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.reply).toBe("We're open Monday through Friday.");
+      expect(result.decision).toBe("answer");
+      expect(result.confidence).toBe(0.82);
+      expect(result.sources).toEqual([
+        { docId: "doc-1", chunkId: "c1", score: 0.9, matchedBy: ["vector"] },
+      ]);
+    }
+  });
+
+  it("posts the message as JSON to the implicit path when tenantId is omitted", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ reply: "hi", decision: "answer", confidence: null, sources: [] }, 200)
+    );
+
+    await previewChat("hello");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/training/chat",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ message: "hello" }) })
+    );
+  });
+
+  it("targets the tenant-scoped path when tenantId is provided", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ reply: "hi", decision: "answer", confidence: null, sources: [] }, 200)
+    );
+
+    await previewChat("hello", "tenant-x");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/tenants/tenant-x/training/chat",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("maps an AdminApiError to an error result", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(422, {
+        error_code: "LLM_NOT_CONFIGURED",
+        message: "LLM is not configured.",
+        correlation_id: "corr-chat-1",
+      })
+    );
+
+    const result = await previewChat("hello");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.correlationId).toBe("corr-chat-1");
+    }
+  });
+
+  it("maps a network throw to a generic error result", async () => {
+    adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await previewChat("hello");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/unable to reach the server/i);
+    }
+  });
+});
+
+describe("listCoverageGaps (Train the Agent: coverage check)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+  });
+
+  it("maps a 200 body to an ok result with camelCase fields", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          gaps: [
+            {
+              message_id: "m1",
+              question: "How much does an inspection cost?",
+              question_message_id: "q1",
+              decision: "escalate",
+              confidence: 0.1,
+              created_at: "2026-08-18T12:00:00Z",
+            },
+          ],
+        },
+        200
+      )
+    );
+
+    const result = await listCoverageGaps();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.gaps).toEqual([
+        {
+          messageId: "m1",
+          question: "How much does an inspection cost?",
+          questionMessageId: "q1",
+          decision: "escalate",
+          confidence: 0.1,
+          createdAt: "2026-08-18T12:00:00Z",
+        },
+      ]);
+    }
+  });
+
+  it("maps an empty gaps array to an ok result with an empty list", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ gaps: [] }, 200));
+
+    const result = await listCoverageGaps();
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.gaps).toEqual([]);
+    }
+  });
+
+  it("targets the tenant-scoped path when tenantId is provided", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ gaps: [] }, 200));
+
+    await listCoverageGaps("tenant-x");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/tenants/tenant-x/training/gaps",
+      expect.objectContaining({ method: "GET" })
+    );
+  });
+
+  it("maps a network throw to a generic error result", async () => {
+    adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await listCoverageGaps();
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/unable to reach the server/i);
+    }
+  });
+});
+
+describe("submitTrainedAnswer (Train the Agent: teach an answer)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+    revalidatePathMock.mockReset();
+  });
+
+  it("maps a 200 body to an ok result and revalidates /knowledge", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", run_id: "run-1", training_answer_id: "ta-1" }, 200)
+    );
+
+    const result = await submitTrainedAnswer("How much?", "Free.", "q1");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.docId).toBe("doc-1");
+      expect(result.runId).toBe("run-1");
+      expect(result.trainingAnswerId).toBe("ta-1");
+    }
+    expect(revalidatePathMock).toHaveBeenCalledWith("/knowledge");
+  });
+
+  it("posts question/answer/source_message_id as JSON to the implicit path", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", run_id: "run-1", training_answer_id: "ta-1" }, 200)
+    );
+
+    await submitTrainedAnswer("How much?", "Free.", "q1");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/training/answer",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ question: "How much?", answer: "Free.", source_message_id: "q1" }),
+      })
+    );
+  });
+
+  it("targets the tenant-scoped path and revalidates the tenant-scoped route when tenantId is provided", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", run_id: "run-1", training_answer_id: "ta-1" }, 200)
+    );
+
+    await submitTrainedAnswer("How much?", "Free.", undefined, "tenant-x");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/tenants/tenant-x/training/answer",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/tenant-x/knowledge");
+  });
+
+  it("maps an AdminApiError to an error result and does NOT revalidate", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(422, {
+        error_code: "VALIDATION_ERROR",
+        message: "must not be blank",
+        correlation_id: "corr-answer-1",
+      })
+    );
+
+    const result = await submitTrainedAnswer("How much?", "");
+
+    expect(result.status).toBe("error");
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a network throw to a generic error result", async () => {
+    adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await submitTrainedAnswer("How much?", "Free.");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/unable to reach the server/i);
+    }
+  });
+});
+
+describe("dismissGap (Train the Agent: not a real question)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+    revalidatePathMock.mockReset();
+  });
+
+  it("maps a 200 body to an ok result and revalidates /knowledge", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ training_answer_id: "ta-3" }, 200));
+
+    const result = await dismissGap("I won't.", "q1");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.trainingAnswerId).toBe("ta-3");
+    }
+    expect(revalidatePathMock).toHaveBeenCalledWith("/knowledge");
+  });
+
+  it("posts question/source_message_id as JSON to the implicit path", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ training_answer_id: "ta-3" }, 200));
+
+    await dismissGap("I won't.", "q1");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/training/dismiss",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ question: "I won't.", source_message_id: "q1" }),
+      })
+    );
+  });
+
+  it("targets the tenant-scoped path and revalidates the tenant-scoped route when tenantId is provided", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ training_answer_id: "ta-3" }, 200));
+
+    await dismissGap("I won't.", undefined, "tenant-x");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/tenants/tenant-x/training/dismiss",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients/tenant-x/knowledge");
+  });
+
+  it("maps an AdminApiError to an error result and does NOT revalidate", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(422, {
+        error_code: "VALIDATION_ERROR",
+        message: "must not be blank",
+        correlation_id: "corr-dismiss-1",
+      })
+    );
+
+    const result = await dismissGap("");
+
+    expect(result.status).toBe("error");
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a network throw to a generic error result", async () => {
+    adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await dismissGap("I won't.");
 
     expect(result.status).toBe("error");
     if (result.status === "error") {
