@@ -443,7 +443,11 @@ export function ChatWidget({
   // seeing the welcome screen. "type" keeps the existing text composer with
   // no mic control at all; "voice" replaces the composer with a single mic
   // button and no text input -- every recognized transcript auto-sends
-  // immediately (there is no field left to review/edit it in first).
+  // immediately (there is no field left to review/edit it in first). Picking
+  // "voice" also immediately starts listening (see the mode-picker option's
+  // onClick below) -- the click itself is the user gesture `getUserMedia`
+  // needs, so there is no reason to make the visitor tap the mic a second
+  // time just to begin.
   const [interactionMode, setInteractionMode] = useState<"type" | "voice" | null>(null);
 
   /**
@@ -1342,7 +1346,10 @@ export function ChatWidget({
                       <button
                         type="button"
                         className="cw-mode-picker-option"
-                        onClick={() => setInteractionMode("voice")}
+                        onClick={() => {
+                          setInteractionMode("voice");
+                          toggleVoiceInput();
+                        }}
                       >
                         <ChatGlyph name="mic" />
                         Use your voice

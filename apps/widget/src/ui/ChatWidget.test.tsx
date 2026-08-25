@@ -237,7 +237,13 @@ function openPanel(): void {
 
 /** Counterpart to `openPanel()` for voice-mode-specific tests: opens the
  * panel (if not already) and picks "Use your voice" on the mode gate,
- * rendering the mic-only composer instead of the text composer. */
+ * rendering the mic-only composer instead of the text composer. Picking
+ * "Use your voice" ALSO starts listening immediately (the click doubles as
+ * the mic's start tap) -- callers do not need a separate click on the mic
+ * button to begin capture, only to stop it or retry after an error. For the
+ * cloud ASR path (async `getUserMedia`), callers awaiting the recording
+ * actually starting still need to flush the pending promise themselves
+ * (see the cloud ASR describe block's tests for the pattern). */
 function openPanelVoiceMode(): void {
   const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder");
   if (!launcher) throw new Error("launcher not found");
@@ -480,17 +486,18 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanelVoiceMode();
-
+        // Picking "Use your voice" now starts recording immediately -- no
+        // first tap needed. Flush the pending getUserMedia() promise before
+        // asserting, then a single tap stops it.
         await act(async () => {
-          getVoiceButton().click();
+          openPanelVoiceMode();
           await Promise.resolve();
         });
         expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
         expect(getVoiceButton().getAttribute("aria-pressed")).toBe("true");
 
         await act(async () => {
-          getVoiceButton().click(); // second tap: stop recording
+          getVoiceButton().click(); // stop recording
           await Promise.resolve();
           await Promise.resolve();
         });
@@ -555,10 +562,9 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanelVoiceMode();
-
+        // Picking "Use your voice" now starts recording immediately.
         await act(async () => {
-          getVoiceButton().click();
+          openPanelVoiceMode();
           await Promise.resolve();
         });
         expect(getVoiceButton().getAttribute("aria-pressed")).toBe("true");
@@ -606,11 +612,8 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        // Picking "Use your voice" now starts recognition immediately.
         openPanelVoiceMode();
-
-        act(() => {
-          getVoiceButton().click();
-        });
 
         expect(FakeRecognition.latest).not.toBeNull();
         expect(transcribeAudioMock).not.toHaveBeenCalled();
@@ -628,10 +631,11 @@ describe("ChatWidget", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
-      openPanelVoiceMode();
 
+      // Picking "Use your voice" now starts (and here, fails) recording
+      // immediately -- no tap needed.
       await act(async () => {
-        getVoiceButton().click();
+        openPanelVoiceMode();
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -650,14 +654,14 @@ describe("ChatWidget", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
-      openPanelVoiceMode();
 
+      // Picking "Use your voice" now starts recording immediately.
       await act(async () => {
-        getVoiceButton().click();
+        openPanelVoiceMode();
         await Promise.resolve();
       });
       await act(async () => {
-        getVoiceButton().click();
+        getVoiceButton().click(); // stop recording
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -675,14 +679,14 @@ describe("ChatWidget", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
-      openPanelVoiceMode();
 
+      // Picking "Use your voice" now starts recording immediately.
       await act(async () => {
-        getVoiceButton().click();
+        openPanelVoiceMode();
         await Promise.resolve();
       });
       await act(async () => {
-        getVoiceButton().click();
+        getVoiceButton().click(); // stop recording
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -1343,13 +1347,12 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        // Picking "Use your voice" now starts listening immediately -- no
+        // second tap needed.
         openPanelVoiceMode();
 
-        const voiceButton = container.querySelector<HTMLButtonElement>('.cw-voice-button[aria-label="Start voice input"]');
+        const voiceButton = container.querySelector<HTMLButtonElement>(".cw-voice-button");
         expect(voiceButton).not.toBeNull();
-        act(() => {
-          voiceButton?.click();
-        });
         expect(FakeRecognition.latest).not.toBeNull();
         expect(voiceButton?.getAttribute("aria-pressed")).toBe("true");
 
@@ -1426,10 +1429,8 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        // Picking "Use your voice" now starts recognition immediately.
         openPanelVoiceMode();
-        act(() => {
-          getVoiceButton().click();
-        });
 
         act(() => {
           FakeRecognition.latest?.onerror?.({ error: "not-allowed" });
@@ -1444,9 +1445,6 @@ describe("ChatWidget", () => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
         openPanelVoiceMode();
-        act(() => {
-          getVoiceButton().click();
-        });
 
         act(() => {
           FakeRecognition.latest?.onerror?.({ error: "audio-capture" });
@@ -1460,9 +1458,6 @@ describe("ChatWidget", () => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
         openPanelVoiceMode();
-        act(() => {
-          getVoiceButton().click();
-        });
 
         act(() => {
           FakeRecognition.latest?.onerror?.({ error: "no-speech" });
@@ -1476,9 +1471,6 @@ describe("ChatWidget", () => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
         openPanelVoiceMode();
-        act(() => {
-          getVoiceButton().click();
-        });
 
         act(() => {
           FakeRecognition.latest?.onerror?.({ error: "aborted" });
@@ -1491,15 +1483,16 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        // Picking "Use your voice" now starts recognition immediately, so
+        // this error fires against that auto-started session.
         openPanelVoiceMode();
-        act(() => {
-          getVoiceButton().click();
-        });
         act(() => {
           FakeRecognition.latest?.onerror?.({ error: "not-allowed" });
         });
         expect(container.querySelector(".cw-voice-error")).not.toBeNull();
 
+        // "Tries voice input again" -- the recognition already stopped
+        // itself on error, so this tap is a genuine restart.
         act(() => {
           getVoiceButton().click();
         });
@@ -1524,9 +1517,6 @@ describe("ChatWidget", () => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
         openPanelVoiceMode();
-        act(() => {
-          getVoiceButton().click();
-        });
 
         act(() => {
           FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "Hello there" } }] });
@@ -1542,9 +1532,6 @@ describe("ChatWidget", () => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
         openPanelVoiceMode();
-        act(() => {
-          getVoiceButton().click();
-        });
 
         act(() => {
           FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "   " } }] });
@@ -1554,15 +1541,23 @@ describe("ChatWidget", () => {
         expect(sendTurnMock).not.toHaveBeenCalled();
       });
 
-      it("cancels any in-progress spoken reply when the visitor starts talking (barge-in, AC-4)", () => {
+      it("cancels any in-progress spoken reply as soon as the visitor picks voice mode -- listening starts immediately (barge-in, AC-4)", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanelVoiceMode();
+        const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
+        if (launcher.getAttribute("aria-expanded") !== "true") {
+          act(() => {
+            launcher.click();
+          });
+        }
         ttsCancelMock.mockClear();
 
+        const voiceOption = Array.from(
+          container.querySelectorAll<HTMLButtonElement>(".cw-mode-picker-option"),
+        ).find((button) => button.textContent?.includes("Use your voice"))!;
         act(() => {
-          getVoiceButton().click();
+          voiceOption.click();
         });
 
         expect(ttsCancelMock).toHaveBeenCalled();
@@ -1971,13 +1966,10 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        // Picking "Use your voice" now starts recognition immediately.
         openPanelVoiceMode();
         speakMock.mockClear();
 
-        const voiceButton = container.querySelector<HTMLButtonElement>(".cw-voice-button")!;
-        act(() => {
-          voiceButton.click();
-        });
         act(() => {
           FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "What are your hours?" } }] });
         });
@@ -2023,6 +2015,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        // Picking "Use your voice" now starts recognition immediately.
         openPanelVoiceMode();
         const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
         act(() => {
@@ -2030,10 +2023,6 @@ describe("ChatWidget", () => {
         });
         speakMock.mockClear();
 
-        const voiceButton = container.querySelector<HTMLButtonElement>(".cw-voice-button")!;
-        act(() => {
-          voiceButton.click();
-        });
         act(() => {
           FakeRecognition.latest?.onresult?.({ results: [{ 0: { transcript: "What are your hours?" } }] });
         });
