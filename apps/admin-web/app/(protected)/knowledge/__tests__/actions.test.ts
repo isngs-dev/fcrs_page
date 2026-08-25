@@ -20,6 +20,7 @@ const {
   getDocStatus,
   listKnowledgeDocs,
   previewChat,
+  suggestDraftAnswer,
   listCoverageGaps,
   submitTrainedAnswer,
   dismissGap,
@@ -583,6 +584,87 @@ describe("previewChat (Train the Agent: test the bot)", () => {
     if (result.status === "error") {
       expect(result.message).toMatch(/unable to reach the server/i);
     }
+  });
+});
+
+describe("suggestDraftAnswer (Train the Agent: suggest a reply)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+  });
+
+  it("maps a 200 body to an ok result with the draft suggestion", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ suggestion: "We serve the greater Atlanta area." }, 200)
+    );
+
+    const result = await suggestDraftAnswer("What areas do you serve?");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.suggestion).toBe("We serve the greater Atlanta area.");
+    }
+  });
+
+  it("posts the question as JSON to the implicit path when tenantId is omitted", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ suggestion: "A draft." }, 200));
+
+    await suggestDraftAnswer("What areas do you serve?");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/training/suggest-answer",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ question: "What areas do you serve?" }),
+      })
+    );
+  });
+
+  it("targets the tenant-scoped path when tenantId is provided", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ suggestion: "A draft." }, 200));
+
+    await suggestDraftAnswer("What areas do you serve?", "tenant-x");
+
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/tenants/tenant-x/training/suggest-answer",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("maps an AdminApiError to an error result", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(422, {
+        error_code: "LLM_NOT_CONFIGURED",
+        message: "LLM is not configured.",
+        correlation_id: "corr-suggest-1",
+      })
+    );
+
+    const result = await suggestDraftAnswer("What areas do you serve?");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.correlationId).toBe("corr-suggest-1");
+    }
+  });
+
+  it("maps a network throw to a generic error result", async () => {
+    adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await suggestDraftAnswer("What areas do you serve?");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/unable to reach the server/i);
+    }
+  });
+
+  it("does not call revalidatePath -- nothing is saved by this action", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ suggestion: "A draft." }, 200));
+
+    await suggestDraftAnswer("What areas do you serve?");
+
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 });
 

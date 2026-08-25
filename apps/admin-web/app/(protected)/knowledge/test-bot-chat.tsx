@@ -15,11 +15,22 @@
  * reply -- submitting it calls `submitTrainedAnswer`, which pushes the Q&A
  * through the real ingestion pipeline so a similar future question (here or
  * on the live widget) gets a real answer instead of an escalation.
+ *
+ * That form's "Suggest a reply" button calls `suggestDraftAnswer`
+ * (`suggest_draft_answer` -- same LLM/RAG stack as the chat above, but
+ * bypasses the confidence gate to always draft something) and fills the
+ * textarea with the result for the admin to review/edit -- it is never
+ * auto-saved; "Save answer" still requires an explicit click.
  */
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { previewChat, submitTrainedAnswer, type PreviewChatResult } from "@/app/(protected)/knowledge/actions";
+import {
+  previewChat,
+  submitTrainedAnswer,
+  suggestDraftAnswer,
+  type PreviewChatResult,
+} from "@/app/(protected)/knowledge/actions";
 import { cn } from "@/lib/utils";
 
 interface ChatTurn {
@@ -36,11 +47,32 @@ const DECISION_LABEL: Record<string, string> = {
   blocked: "Blocked by guardrail",
 };
 
-function TeachForm({ question, onTaught }: { question: string; onTaught: () => void }) {
+export function TeachForm({
+  question,
+  tenantId,
+  onTaught,
+}: {
+  question: string;
+  tenantId?: string;
+  onTaught: () => void;
+}) {
   const inputId = useId();
   const [answer, setAnswer] = useState("");
   const [saving, setSaving] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function handleSuggest() {
+    setSuggesting(true);
+    setError(null);
+    const result = await suggestDraftAnswer(question, tenantId);
+    setSuggesting(false);
+    if (result.status === "error") {
+      setError(result.message);
+      return;
+    }
+    setAnswer(result.suggestion);
+  }
 
   async function handleSave() {
     if (!answer.trim()) return;
@@ -57,9 +89,21 @@ function TeachForm({ question, onTaught }: { question: string; onTaught: () => v
 
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-[10px] border border-[var(--line)] bg-background p-3">
-      <label htmlFor={inputId} className="text-[11.5px] font-semibold text-foreground">
-        Teach the correct answer
-      </label>
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor={inputId} className="text-[11.5px] font-semibold text-foreground">
+          Teach the correct answer
+        </label>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => void handleSuggest()}
+          disabled={suggesting || saving}
+          className="h-auto px-2 py-1 text-[10.5px]"
+        >
+          {suggesting ? "Drafting…" : "Suggest a reply"}
+        </Button>
+      </div>
       <Textarea
         id={inputId}
         value={answer}
@@ -136,7 +180,11 @@ export function TestBotChat({ tenantId }: { tenantId?: string }) {
                         Saved — ask again in a few seconds to see it take effect.
                       </p>
                     ) : (
-                      <TeachForm question={turn.question} onTaught={() => markTaught(turn.id)} />
+                      <TeachForm
+                        question={turn.question}
+                        tenantId={tenantId}
+                        onTaught={() => markTaught(turn.id)}
+                      />
                     )
                   ) : null}
                 </div>

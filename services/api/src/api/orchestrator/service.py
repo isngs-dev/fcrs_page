@@ -1299,3 +1299,49 @@ async def preview_answer(db: Database, claims: AuthClaims, message: str) -> Prev
         )
     finally:
         await provider.aclose()
+
+
+async def suggest_draft_answer(db: Database, claims: AuthClaims, question: str) -> str:
+    """Best-effort DRAFT answer for the "Teach the correct answer" textarea
+    (Train the Agent) -- called only after ``preview_answer``/a real turn has
+    ALREADY failed to answer this exact question (``decision != "answer"``),
+    to give the admin a starting point instead of a blank box.
+
+    Unlike ``preview_answer``, this deliberately bypasses the confidence-band
+    decision entirely: it always asks the LLM to draft something, grounded on
+    whatever chunks retrieval turns up (even ones too low-scoring to have
+    cleared the answer/clarify threshold) or no context at all. It also never
+    runs `_finalize_generation`'s guardrail/no-answer-sentinel pass -- that
+    pass exists to protect a REAL visitor-facing reply, not an admin-reviewed
+    draft. The caller (training/routes.py) returns this as a raw suggestion
+    the admin must read, edit, and explicitly save -- it is never persisted
+    or shown to a visitor by this function itself (no silent fallback,
+    CLAUDE.md §3).
+
+    Raises ``ValidationError`` (``LLM_NOT_CONFIGURED``) like ``preview_answer``.
+    """
+    config = await get_llm_config(db, claims)
+    if config is None:
+        raise ValidationError(
+            "LLM is not configured for this tenant.",
+            code="LLM_NOT_CONFIGURED",
+        )
+    settings = get_api_settings()
+    provider = provider_for(config)
+    try:
+        chunks: list[HybridMatch] = []
+        if config.embedding_model:
+            result = await retrieve_hybrid(db, claims, question, k=settings.orchestrator_rag_k)
+            chunks = result.chunks
+
+        wm: dict[str, Any] = {
+            "summary": None,
+            "summary_message_count": 0,
+            "messages": [ChatMessage(role="user", content=question)],
+        }
+        completion = await provider.generate(
+            _build_prompt(wm, chunks), model=config.model, max_tokens=settings.llm_max_tokens,
+        )
+        return completion.text.strip()
+    finally:
+        await provider.aclose()

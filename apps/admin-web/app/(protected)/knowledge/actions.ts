@@ -469,6 +469,61 @@ export async function previewChat(message: string, tenantId?: string): Promise<P
   };
 }
 
+export interface SuggestDraftAnswerOk {
+  status: "ok";
+  suggestion: string;
+}
+
+export interface SuggestDraftAnswerError {
+  status: "error";
+  message: string;
+  correlationId: string | null;
+}
+
+export type SuggestDraftAnswerResult = SuggestDraftAnswerOk | SuggestDraftAnswerError;
+
+interface AdminSuggestAnswerResponseBody {
+  suggestion: string;
+}
+
+/**
+ * "Suggest a reply" (Teach the correct answer) -- a best-effort DRAFT answer
+ * for the admin to review/edit, offered only after the bot has already
+ * failed to answer this question (`POST /admin/training/suggest-answer`,
+ * `suggest_draft_answer`). Never auto-saved -- the admin still has to edit
+ * (if needed) and hit "Save answer" via `submitTrainedAnswer` themselves.
+ */
+export async function suggestDraftAnswer(
+  question: string,
+  tenantId?: string
+): Promise<SuggestDraftAnswerResult> {
+  const path = tenantId
+    ? `/admin/tenants/${encodeURIComponent(tenantId)}/training/suggest-answer`
+    : "/admin/training/suggest-answer";
+
+  let response: Response;
+  try {
+    response = await adminApiFetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      return {
+        status: "error",
+        message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
+        correlationId: err.correlationId || null,
+      };
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: null };
+  }
+
+  const body = (await response.json()) as AdminSuggestAnswerResponseBody;
+
+  return { status: "ok", suggestion: body.suggestion };
+}
+
 export interface CoverageGapItem {
   messageId: string;
   question: string;

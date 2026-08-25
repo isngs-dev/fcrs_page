@@ -12,6 +12,10 @@ Covers:
   would occur -- preview_answer itself is mocked here, so the real
   no-persistence guarantee is covered by test_orchestrator_preview.py;
   this file only proves the route wires the call through cleanly).
+- POST /admin/training/suggest-answer: 200 shape from suggest_draft_answer,
+  same "route wires the call through cleanly" scope as /chat above (the
+  bypass-the-confidence-gate behavior itself is covered by
+  test_orchestrator_preview.py).
 - GET /admin/training/gaps: excludes already-taught questions (mandatory).
 - POST /admin/training/answer: creates doc + run + training_answers row +
   audit event on a fresh question; idempotent re-teach (same Q&A text) skips
@@ -168,6 +172,61 @@ async def test_chat_no_cookie_401() -> None:
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         resp = await c.post("/admin/training/chat", json={"message": "hi"})
+    assert resp.status_code == 401
+
+
+# ==============================================================================
+# POST /admin/training/suggest-answer
+# ==============================================================================
+
+
+async def test_suggest_answer_returns_the_draft() -> None:
+    app = _build_app()
+    token = _mint_cookie()
+
+    with patch(
+        "api.training.routes.suggest_draft_answer",
+        AsyncMock(return_value="We serve the greater Atlanta area."),
+    ) as mock_suggest:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/admin/training/suggest-answer",
+                cookies={"access_token": token},
+                json={"question": "What areas do you serve?"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"suggestion": "We serve the greater Atlanta area."}
+    assert mock_suggest.await_args.args[2] == "What areas do you serve?"
+
+
+async def test_suggest_answer_blank_question_422() -> None:
+    app = _build_app()
+    token = _mint_cookie()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/admin/training/suggest-answer", cookies={"access_token": token}, json={"question": "   "},
+        )
+    assert resp.status_code == 422
+
+
+async def test_suggest_answer_client_agent_403() -> None:
+    app = _build_app()
+    token = _mint_cookie(role=Role.CLIENT_AGENT)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post(
+            "/admin/training/suggest-answer", cookies={"access_token": token}, json={"question": "hi"},
+        )
+    assert resp.status_code == 403
+
+
+async def test_suggest_answer_no_cookie_401() -> None:
+    app = _build_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post("/admin/training/suggest-answer", json={"question": "hi"})
     assert resp.status_code == 401
 
 

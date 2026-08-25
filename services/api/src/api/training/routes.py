@@ -17,6 +17,16 @@ GET /admin/training/gaps
     that triggered them, excluding anything already taught (exact-match on
     normalized question text). Returns ``{"gaps": [...]}``.
 
+POST /admin/training/suggest-answer
+    "Suggest a reply" (Teach the correct answer) -- a best-effort DRAFT
+    answer for the admin to review/edit before saving, offered only after the
+    bot has already failed to answer this exact question. Runs
+    ``orchestrator.service.suggest_draft_answer`` (same LLM/RAG stack as
+    ``preview_answer``, but bypasses the confidence gate and guardrail pass
+    entirely -- it always drafts something). Returns ``{suggestion}``. Not a
+    mutation (nothing is saved until the admin explicitly hits "Save
+    answer"), so no audit event.
+
 POST /admin/training/answer
     "Teach the correct answer" -- pushes ``Q: {question}\\n\\nA: {answer}``
     through the EXACT SAME ingestion path a real file upload uses (hash ->
@@ -51,7 +61,7 @@ from api.conversation_store.repository import list_low_confidence_messages
 from api.ingestion import repository as ingestion_repo
 from api.ingestion.storage import get_storage
 from api.ingestion.tasks import ingest_document
-from api.orchestrator.service import preview_answer
+from api.orchestrator.service import preview_answer, suggest_draft_answer
 from api.training.repository import (
     create_training_answer,
     list_taught_question_keys,
@@ -89,6 +99,23 @@ class ChatResponse(BaseModel):
     decision: Literal["answer", "clarify", "escalate", "blocked"]
     confidence: float | None
     sources: list[ChatSource]
+
+
+class SuggestAnswerRequest(BaseModel):
+    """Body for POST /admin/training/suggest-answer."""
+
+    question: str
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("question must not be blank")
+        return v
+
+
+class SuggestAnswerResponse(BaseModel):
+    suggestion: str
 
 
 class AnswerRequest(BaseModel):
@@ -151,6 +178,33 @@ async def post_chat_for_tenant(
 ) -> ChatResponse:
     """PLATFORM_ADMIN super-user variant of ``POST /admin/training/chat``."""
     return await _chat_preview(request, claims, body)
+
+
+async def _suggest_answer(
+    request: Request, claims: AuthClaims, body: SuggestAnswerRequest,
+) -> SuggestAnswerResponse:
+    db = request.app.state.db
+    suggestion = await suggest_draft_answer(db, claims, body.question)
+    return SuggestAnswerResponse(suggestion=suggestion)
+
+
+@router.post("/suggest-answer")
+async def post_suggest_answer(
+    body: SuggestAnswerRequest,
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> SuggestAnswerResponse:
+    return await _suggest_answer(request, claims, body)
+
+
+@tenant_scoped_router.post("/suggest-answer")
+async def post_suggest_answer_for_tenant(
+    body: SuggestAnswerRequest,
+    request: Request,
+    claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> SuggestAnswerResponse:
+    """PLATFORM_ADMIN super-user variant of ``POST /admin/training/suggest-answer``."""
+    return await _suggest_answer(request, claims, body)
 
 
 async def _list_gaps(request: Request, claims: AuthClaims, *, limit: int) -> dict[str, Any]:

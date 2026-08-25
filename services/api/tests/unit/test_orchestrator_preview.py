@@ -1,5 +1,6 @@
 """Unit tests for ``orchestrator.service.preview_answer`` (Train the Agent's
-stateless "test the bot").
+stateless "test the bot") and ``suggest_draft_answer`` ("Suggest a reply" in
+the Teach-the-correct-answer form).
 
 All dependencies are patched at the ``api.orchestrator.service`` module
 boundary -- no real DB/network. The core invariant this file exists to prove:
@@ -21,7 +22,7 @@ from common.errors import ValidationError
 from api.llm.config_repository import LLMConfig
 from api.llm.provider import Completion, LLMError
 from api.orchestrator.config_repository import OrchestratorConfig
-from api.orchestrator.service import preview_answer
+from api.orchestrator.service import preview_answer, suggest_draft_answer
 from api.rag.service import HybridMatch, HybridResult
 
 
@@ -251,6 +252,88 @@ async def test_preview_answer_generate_llm_error_propagates_and_closes_provider(
     with _Patched(generate_error=LLMError("upstream failed")) as p:
         with pytest.raises(LLMError):
             await preview_answer(object(), _claims(), "a real question")
+
+    p.provider.aclose.assert_awaited_once()
+    p.assert_never_persisted()
+
+
+# -- suggest_draft_answer ("Suggest a reply" in Teach the correct answer) -------
+
+
+async def test_suggest_draft_answer_returns_the_completion_even_at_escalate_confidence() -> None:
+    """The whole point: bypasses the confidence gate entirely -- a real turn
+    at this confidence would have escalated with a canned reply, never
+    calling ``generate`` at all."""
+    with _Patched(
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.1),
+        completion=Completion(text="You can book a call via the site.", model="claude-opus-4-8", input_tokens=10, output_tokens=5),
+    ) as p:
+        suggestion = await suggest_draft_answer(object(), _claims(), "What areas do you serve?")
+
+    assert suggestion == "You can book a call via the site."
+    p.provider.generate.assert_awaited_once()
+    p.assert_never_persisted()
+
+
+async def test_suggest_draft_answer_includes_the_question_in_the_prompt() -> None:
+    with _Patched() as p:
+        await suggest_draft_answer(object(), _claims(), "What areas do you serve?")
+
+    prompt = p.provider.generate.await_args.args[0]
+    assert any(m.role == "user" and m.content == "What areas do you serve?" for m in prompt)
+
+
+async def test_suggest_draft_answer_never_calls_classify() -> None:
+    """Unlike ``preview_answer``, there is no intent-routing step -- always
+    attempts a grounded draft."""
+    with _Patched() as p:
+        await suggest_draft_answer(object(), _claims(), "a real question")
+
+    p.provider.classify.assert_not_called()
+    p.assert_never_persisted()
+
+
+async def test_suggest_draft_answer_no_embedding_model_skips_rag() -> None:
+    with _Patched(config=_config(embedding_model=None)) as p:
+        suggestion = await suggest_draft_answer(object(), _claims(), "a real question")
+
+    assert suggestion == "The answer."
+    p.retrieve_hybrid.assert_not_called()
+    p.assert_never_persisted()
+
+
+async def test_suggest_draft_answer_strips_surrounding_whitespace() -> None:
+    with _Patched(
+        completion=Completion(text="  Here's a draft.  \n", model="claude-opus-4-8", input_tokens=10, output_tokens=5),
+    ):
+        suggestion = await suggest_draft_answer(object(), _claims(), "a real question")
+
+    assert suggestion == "Here's a draft."
+
+
+async def test_suggest_draft_answer_llm_not_configured() -> None:
+    with _Patched(config=None) as p:
+        with pytest.raises(ValidationError) as exc_info:
+            await suggest_draft_answer(object(), _claims(), "hi")
+
+    assert exc_info.value.code == "LLM_NOT_CONFIGURED"
+    p.assert_never_persisted()
+
+
+async def test_suggest_draft_answer_rag_error_propagates() -> None:
+    err = ValidationError("no embedding model", code="RAG_EMBEDDING_NOT_CONFIGURED")
+    with _Patched(hybrid_error=err) as p:
+        with pytest.raises(ValidationError) as exc_info:
+            await suggest_draft_answer(object(), _claims(), "a real question")
+
+    assert exc_info.value.code == "RAG_EMBEDDING_NOT_CONFIGURED"
+    p.assert_never_persisted()
+
+
+async def test_suggest_draft_answer_generate_error_propagates_and_closes_provider() -> None:
+    with _Patched(generate_error=LLMError("upstream failed")) as p:
+        with pytest.raises(LLMError):
+            await suggest_draft_answer(object(), _claims(), "a real question")
 
     p.provider.aclose.assert_awaited_once()
     p.assert_never_persisted()
