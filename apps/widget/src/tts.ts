@@ -38,7 +38,15 @@
  * this silently falls back to the browser/OS default voice). The CLOUD path
  * has no equivalent concept -- its voice is a fixed choice made server-side
  * (`ELEVENLABS_VOICE_ID`), not selected per-utterance here.
+ *
+ * `speakGreeting` is the one exception to all of the above: its text never
+ * changes, so it does not call `speak()`/`synthesizeSpeech`/`speechSynthesis`
+ * at all. It plays a pre-generated, bundled audio file (`greetingAudio.ts`)
+ * directly -- no network round-trip, no live OpenAI call, no per-visit
+ * delay. See that module's own comment for how to regenerate it if the
+ * greeting's text, voice, or speed ever changes.
  */
+import { GREETING_AUDIO_DATA_URI } from "./greetingAudio";
 import { synthesizeSpeech } from "./voice";
 import { isVoiceTtsEnabled } from "./session";
 import type { WidgetConfig } from "./config";
@@ -224,15 +232,38 @@ export async function speak(
   speakBrowserNative(text, onBlocked, speed);
 }
 
-/** A slightly slower-than-normal rate for the one-time greeting only —
- * warmer and easier to catch on first listen. Ordinary spoken replies are
- * unaffected (they never pass a `speed` to `speak`). */
-const GREETING_SPEED = 0.85;
-
-/** Speak the baked-in greeting exactly once — see `speak` above for the
- * shared mechanics and `onBlocked` semantics. */
-export async function speakGreeting(config: WidgetConfig, onBlocked?: () => void): Promise<void> {
-  await speak(config, TTS_GREETING_TEXT, onBlocked, GREETING_SPEED);
+/**
+ * Speak the baked-in greeting exactly once. Unlike `speak` above, this
+ * NEVER calls `synthesizeSpeech` or `speechSynthesis` — `TTS_GREETING_TEXT`
+ * is fixed, so its audio is pre-generated once (`greetingAudio.ts`, 0.85x
+ * speed, the same voice/model the live TTS endpoint uses) and played
+ * directly from the bundle. No network round-trip, no live OpenAI call, so
+ * no per-visit synthesis delay before the visitor hears anything.
+ *
+ * `_config` is unused now (kept only so every existing call site —
+ * `ChatWidget.tsx`, tests — doesn't need updating for an API shape that no
+ * longer needs it).
+ *
+ * Still subject to the same browser autoplay-activation policy as any other
+ * audio playback (a local `data:` URI is not exempt), so `onBlocked`'s
+ * "retry on the visitor's next real interaction" contract is unchanged —
+ * see `speak` above for the full semantics.
+ */
+export async function speakGreeting(_config: WidgetConfig, onBlocked?: () => void): Promise<void> {
+  try {
+    stopCloudAudio();
+    const audio = new Audio(GREETING_AUDIO_DATA_URI);
+    currentAudio = audio;
+    audio.onended = () => {
+      if (currentAudio === audio) stopCloudAudio();
+    };
+    await audio.play();
+  } catch {
+    // Blocked by autoplay policy, or any other playback failure — same
+    // silent-degradation contract as the rest of this module.
+    stopCloudAudio();
+    onBlocked?.();
+  }
 }
 
 /** Cancel any in-progress/queued speech, cloud or browser-native (e.g. on

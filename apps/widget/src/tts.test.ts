@@ -17,7 +17,7 @@ vi.mock("./voice", () => ({
 }));
 
 // Imported AFTER the mocks above so tts.ts picks them up.
-import { TTS_GREETING_TEXT, cancel, speak, speakGreeting } from "./tts";
+import { cancel, speak, speakGreeting } from "./tts";
 
 const baseConfig: WidgetConfig = {
   clientKey: "pk_test_123",
@@ -86,116 +86,69 @@ describe("tts", () => {
   });
 
   describe("speakGreeting", () => {
-    it("calls speechSynthesis.speak exactly once with the baked-in greeting text (simulating an open-gesture call site)", async () => {
-      const speak = vi.fn();
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      class FakeUtterance {
-        text: string;
-        constructor(text: string) {
-          this.text = text;
-        }
+    // The greeting is pre-baked audio played directly via `new Audio(...)`
+    // -- no speechSynthesis, no synthesizeSpeech/network call at all (see
+    // greetingAudio.ts). These tests mock window.Audio to verify that
+    // mechanism and its onBlocked semantics; the "cloud TTS" describe block
+    // below covers the SEPARATE mechanism ordinary spoken replies use.
+    class FakeGreetingAudio {
+      static instances: FakeGreetingAudio[] = [];
+      src: string;
+      onended: (() => void) | null = null;
+      play: () => Promise<void>;
+      pause = vi.fn();
+      constructor(src: string) {
+        this.src = src;
+        this.play = vi.fn(() => Promise.resolve());
+        FakeGreetingAudio.instances.push(this);
       }
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: FakeUtterance,
+    }
+
+    beforeEach(() => {
+      FakeGreetingAudio.instances = [];
+      Object.defineProperty(window, "Audio", {
+        value: FakeGreetingAudio,
         configurable: true,
         writable: true,
       });
+    });
 
-      // Caller-side gating: only invoked from the simulated open gesture,
-      // never on its own — this test just proves speakGreeting's own
-      // behavior once called.
+    it("plays the pre-baked greeting audio directly, with no network/synthesis call", async () => {
       await speakGreeting(baseConfig);
 
-      expect(speak).toHaveBeenCalledTimes(1);
-      const uttered = speak.mock.calls[0]?.[0] as FakeUtterance & { rate?: number };
-      expect(uttered.text).toBe(TTS_GREETING_TEXT);
-      // Slightly slower than the reply-speaking default (0.95) -- warmer,
-      // easier to catch on first listen.
-      expect(uttered.rate).toBe(0.85);
+      expect(FakeGreetingAudio.instances).toHaveLength(1);
+      expect(FakeGreetingAudio.instances[0]?.src).toContain("data:audio/mpeg;base64,");
+      expect(FakeGreetingAudio.instances[0]?.play).toHaveBeenCalledTimes(1);
+      expect(synthesizeSpeechMock).not.toHaveBeenCalled();
     });
 
-    it("does not call speak when the caller does not invoke speakGreeting (muted path is the caller's responsibility)", () => {
-      const speak = vi.fn();
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+    it("does not call onBlocked when playback succeeds", async () => {
+      const onBlocked = vi.fn();
+
+      await speakGreeting(baseConfig, onBlocked);
+
+      expect(onBlocked).not.toHaveBeenCalled();
+    });
+
+    it("calls onBlocked when play() is rejected (autoplay policy)", async () => {
+      Object.defineProperty(window, "Audio", {
         value: class {
-          constructor(public text: string) {}
+          play = vi.fn(() => Promise.reject(new Error("blocked by autoplay policy")));
+          pause = vi.fn();
+          onended: (() => void) | null = null;
         },
         configurable: true,
         writable: true,
       });
+      const onBlocked = vi.fn();
 
-      // Simulating a muted visitor: the widget's mute check short-circuits
-      // before ever calling speakGreeting — tts.ts has no muted concept of
-      // its own, so the contract under test is "not calling it means no
-      // speech", proven trivially but explicitly for the record.
-      expect(speak).not.toHaveBeenCalled();
+      await speakGreeting(baseConfig, onBlocked);
+
+      expect(onBlocked).toHaveBeenCalledTimes(1);
     });
 
-    it("no-ops without throwing when window.speechSynthesis is absent", async () => {
-      Object.defineProperty(window, "speechSynthesis", {
-        value: undefined,
-        configurable: true,
-        writable: true,
-      });
-
-      await expect(speakGreeting(baseConfig)).resolves.not.toThrow();
-    });
-
-    it("no-ops without throwing when SpeechSynthesisUtterance is absent", async () => {
-      const speak = vi.fn();
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: undefined,
-        configurable: true,
-        writable: true,
-      });
-
-      await expect(speakGreeting(baseConfig)).resolves.not.toThrow();
-      expect(speak).not.toHaveBeenCalled();
-    });
-
-    it("swallows a throwing speak() and never lets it escape (chat must be unaffected)", async () => {
-      const speak = vi.fn(() => {
-        throw new Error("blocked by browser policy");
-      });
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: class {
-          constructor(public text: string) {}
-        },
-        configurable: true,
-        writable: true,
-      });
-
-      await expect(speakGreeting(baseConfig)).resolves.not.toThrow();
-      expect(speak).toHaveBeenCalledTimes(1);
-    });
-
-    it("swallows a throwing Utterance constructor and never lets it escape", async () => {
-      const speak = vi.fn();
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+    it("swallows a throwing Audio constructor and never lets it escape (chat must be unaffected)", async () => {
+      Object.defineProperty(window, "Audio", {
         value: class {
           constructor() {
             throw new Error("construction failed");
@@ -204,270 +157,23 @@ describe("tts", () => {
         configurable: true,
         writable: true,
       });
-
-      await expect(speakGreeting(baseConfig)).resolves.not.toThrow();
-      expect(speak).not.toHaveBeenCalled();
-    });
-
-    it("calls onBlocked when the capability check fails (no speechSynthesis)", async () => {
-      Object.defineProperty(window, "speechSynthesis", {
-        value: undefined,
-        configurable: true,
-        writable: true,
-      });
       const onBlocked = vi.fn();
 
-      await speakGreeting(baseConfig, onBlocked);
-
+      await expect(speakGreeting(baseConfig, onBlocked)).resolves.not.toThrow();
       expect(onBlocked).toHaveBeenCalledTimes(1);
     });
 
-    it("calls onBlocked when SpeechSynthesisUtterance is absent", async () => {
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak: vi.fn(), cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: undefined,
-        configurable: true,
-        writable: true,
-      });
-      const onBlocked = vi.fn();
-
-      await speakGreeting(baseConfig, onBlocked);
-
-      expect(onBlocked).toHaveBeenCalledTimes(1);
-    });
-
-    it("calls onBlocked when speak() throws synchronously", async () => {
-      Object.defineProperty(window, "speechSynthesis", {
-        value: {
-          speak: vi.fn(() => {
-            throw new Error("blocked by browser policy");
-          }),
-          cancel: vi.fn(),
-        },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: class {
-          constructor(public text: string) {}
-        },
-        configurable: true,
-        writable: true,
-      });
-      const onBlocked = vi.fn();
-
-      await speakGreeting(baseConfig, onBlocked);
-
-      expect(onBlocked).toHaveBeenCalledTimes(1);
-    });
-
-    it("wires onBlocked to the utterance's error event for a genuine block reason (Chrome's not-allowed)", async () => {
-      const speak = vi.fn();
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      class FakeUtterance {
-        text: string;
-        onerror: ((event: { error: string }) => void) | null = null;
-        constructor(text: string) {
-          this.text = text;
-        }
-      }
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: FakeUtterance,
-        configurable: true,
-        writable: true,
-      });
-      const onBlocked = vi.fn();
-
-      await speakGreeting(baseConfig, onBlocked);
-
-      expect(onBlocked).not.toHaveBeenCalled();
-      const uttered = speak.mock.calls[0]?.[0] as FakeUtterance;
-      uttered.onerror?.({ error: "not-allowed" });
-      expect(onBlocked).toHaveBeenCalledTimes(1);
-    });
-
-    it.each(["canceled", "interrupted"])(
-      "does NOT call onBlocked when the error is '%s' -- that means our own cancel() (or a newer speak()) stopped an utterance that genuinely played/queued, not a browser-policy block",
-      async (errorCode) => {
-        const speak = vi.fn();
-        Object.defineProperty(window, "speechSynthesis", {
-          value: { speak, cancel: vi.fn() },
-          configurable: true,
-          writable: true,
-        });
-        class FakeUtterance {
-          text: string;
-          onerror: ((event: { error: string }) => void) | null = null;
-          constructor(text: string) {
-            this.text = text;
-          }
-        }
-        Object.defineProperty(window, "SpeechSynthesisUtterance", {
-          value: FakeUtterance,
-          configurable: true,
-          writable: true,
-        });
-        const onBlocked = vi.fn();
-
-        await speakGreeting(baseConfig, onBlocked);
-
-        const uttered = speak.mock.calls[0]?.[0] as FakeUtterance;
-        uttered.onerror?.({ error: errorCode });
-        expect(onBlocked).not.toHaveBeenCalled();
-      },
-    );
-
-    it("never calls onBlocked when speak() succeeds and no error event fires", async () => {
-      const speak = vi.fn();
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: class {
-          onerror: (() => void) | null = null;
-          constructor(public text: string) {}
-        },
-        configurable: true,
-        writable: true,
-      });
-      const onBlocked = vi.fn();
-
-      await speakGreeting(baseConfig, onBlocked);
-
-      expect(onBlocked).not.toHaveBeenCalled();
-    });
-
-    it("greets with 'Rebecca' by name, not the old generic 'your assistant' text", () => {
-      expect(TTS_GREETING_TEXT).toBe("Hi, I'm Rebecca, how can I help?");
-    });
-
-    function fakeVoice(name: string): SpeechSynthesisVoice {
-      return { name, lang: "en-US", default: false, localService: true, voiceURI: name };
-    }
-
-    class FakeUtteranceWithVoice {
-      text: string;
-      voice: SpeechSynthesisVoice | null = null;
-      rate = 1;
-      onerror: ((event: { error: string }) => void) | null = null;
-      constructor(text: string) {
-        this.text = text;
-      }
-    }
-
-    it("selects a known female-named voice when one is available", async () => {
-      const speak = vi.fn();
-      const getVoices = vi.fn(() => [
-        fakeVoice("Microsoft David - English (United States)"),
-        fakeVoice("Microsoft Zira - English (United States)"),
-      ]);
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn(), getVoices },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: FakeUtteranceWithVoice,
-        configurable: true,
-        writable: true,
-      });
-
+    it("cancel() pauses the greeting's audio -- it shares the same currentAudio tracking as spoken replies", async () => {
       await speakGreeting(baseConfig);
+      const instance = FakeGreetingAudio.instances[0];
+      expect(instance).toBeDefined();
 
-      const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
-      expect(uttered.voice?.name).toBe("Microsoft Zira - English (United States)");
-    });
+      cancel();
 
-    it("matches a voice whose name explicitly says 'Female' even if not on the known-name list", async () => {
-      const speak = vi.fn();
-      const getVoices = vi.fn(() => [
-        fakeVoice("Google UK English Male"),
-        fakeVoice("Google UK English Female"),
-      ]);
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn(), getVoices },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: FakeUtteranceWithVoice,
-        configurable: true,
-        writable: true,
-      });
-
-      await speakGreeting(baseConfig);
-
-      const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
-      expect(uttered.voice?.name).toBe("Google UK English Female");
-    });
-
-    it("leaves voice unset (browser default) when no female-sounding voice is available -- never throws", async () => {
-      const speak = vi.fn();
-      const getVoices = vi.fn(() => [fakeVoice("Microsoft David - English (United States)")]);
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn(), getVoices },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: FakeUtteranceWithVoice,
-        configurable: true,
-        writable: true,
-      });
-
-      await expect(speakGreeting(baseConfig)).resolves.not.toThrow();
-      const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
-      expect(uttered.voice).toBeNull();
-    });
-
-    it("never throws when speechSynthesis has no getVoices at all (older/partial implementations)", async () => {
-      const speak = vi.fn();
-      Object.defineProperty(window, "speechSynthesis", {
-        // Deliberately no getVoices — matches the plain-object mocks used
-        // throughout the rest of this file, and real older browsers.
-        value: { speak, cancel: vi.fn() },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: FakeUtteranceWithVoice,
-        configurable: true,
-        writable: true,
-      });
-
-      await expect(speakGreeting(baseConfig)).resolves.not.toThrow();
-      expect(speak).toHaveBeenCalledTimes(1);
-    });
-
-    it("sets a slightly slower rate for clarity, regardless of whether a voice match was found", async () => {
-      const speak = vi.fn();
-      Object.defineProperty(window, "speechSynthesis", {
-        value: { speak, cancel: vi.fn(), getVoices: vi.fn(() => []) },
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(window, "SpeechSynthesisUtterance", {
-        value: FakeUtteranceWithVoice,
-        configurable: true,
-        writable: true,
-      });
-
-      await speakGreeting(baseConfig);
-
-      const uttered = speak.mock.calls[0]?.[0] as FakeUtteranceWithVoice;
-      expect(uttered.rate).toBe(0.85);
+      expect(instance?.pause).toHaveBeenCalledTimes(1);
     });
   });
+
 
   describe("cloud TTS (OpenAI, via the backend)", () => {
     class FakeAudio {
@@ -532,15 +238,6 @@ describe("tts", () => {
       expect(FakeAudio.instances).toHaveLength(1);
       expect(FakeAudio.instances[0]?.play).toHaveBeenCalledTimes(1);
       expect(browserSpeak).not.toHaveBeenCalled();
-    });
-
-    it("passes the greeting's slightly-slower rate through to cloud TTS too", async () => {
-      isVoiceTtsEnabledMock.mockReturnValue(true);
-      synthesizeSpeechMock.mockResolvedValue({ ok: true, audio: new Blob(["fake-mp3"]) });
-
-      await speakGreeting(baseConfig);
-
-      expect(synthesizeSpeechMock).toHaveBeenCalledWith(baseConfig, TTS_GREETING_TEXT, 0.85);
     });
 
     it("falls back to the browser-native path when synthesizeSpeech itself fails (not configured / network / upstream)", async () => {
