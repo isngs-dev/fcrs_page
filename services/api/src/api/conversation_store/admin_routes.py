@@ -8,11 +8,18 @@ sibling of the existing ``/debug/conversations/**`` routes (``CLIENT_ADMIN``
 aggregate ``/admin/analytics/overview``. Every access is tenant-scoped via
 ``claims.tenant_id`` -- a cross-tenant ``conversation_id`` is indistinguishable
 from a missing one and returns 404. Responses never include ``tenant_id``.
+
+POST .../{conversation_id}/suggest-reply
+    "Suggest a reply" -- drafts a reply to the conversation's most recent
+    visitor message via ``orchestrator.service.preview_answer`` (the same
+    stateless RAG/LLM preview Train the Agent's "test the bot" uses). A
+    drafting aid only: nothing is persisted, and there is no live agent-
+    reply-into-conversation channel on this console for it to send through.
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from common.auth import AuthClaims, Role
 from common.errors import NotFoundError, ValidationError
@@ -28,6 +35,7 @@ from api.conversation_store.repository import (
     get_messages,
     list_conversations,
 )
+from api.orchestrator.service import preview_answer
 from api.rag.repository import resolve_chunks
 
 _log = get_logger(__name__)
@@ -420,3 +428,120 @@ async def get_message_sources_for_tenant(
     """PLATFORM_ADMIN super-user variant of the grounding spot-check
     endpoint (S12.7 pattern)."""
     return await _get_message_sources(conversation_id, message_id, request, claims)
+
+
+# ---------------------------------------------------------------------------
+# "Suggest a reply" -- POST .../{conversation_id}/suggest-reply. Reuses
+# orchestrator.service.preview_answer (built for Train the Agent's stateless
+# "test the bot") pointed at this conversation's most recent VISITOR message
+# instead of an admin-typed question -- same function, new call site, no new
+# RAG/LLM code. Read-only (no persistence): the returned draft is for an
+# agent to read/edit and use through whatever channel they actually follow up
+# with (there is no live agent-reply-into-conversation endpoint on this
+# console -- see the take-over composer note in transcript-pane.tsx). CLIENT_
+# AGENT is allowed here (unlike Train the Agent's teach/dismiss, which are
+# CLIENT_ADMIN-only): this never touches the knowledge base, and reviewing/
+# drafting replies to conversations is exactly agents' own job (mirrors this
+# file's own list/detail RBAC, not ingestion's admin-only convention).
+# ---------------------------------------------------------------------------
+
+
+class SuggestedReplySource(BaseModel):
+    """A cited chunk backing the suggested reply -- identifiers + score only,
+    mirrors ``api.training.routes.ChatSource`` exactly."""
+
+    doc_id: str
+    chunk_id: str
+    score: float | None
+    matched_by: list[str]
+
+
+class SuggestReplyResponse(BaseModel):
+    """Response for the suggest-reply endpoint -- leak-free (no ``tenant_id``)."""
+
+    conversation_id: str
+    source_message_id: str
+    """The visitor message this draft answers -- so the UI can show what
+    it's replying to alongside the draft."""
+    question: str
+    reply: str
+    decision: Literal["answer", "clarify", "escalate", "blocked"]
+    confidence: float | None
+    sources: list[SuggestedReplySource]
+
+
+async def _suggest_reply(
+    conversation_id: str,
+    request: Request,
+    claims: AuthClaims,
+) -> SuggestReplyResponse:
+    """Draft a reply to this conversation's most recent visitor message via
+    the real RAG/orchestrator pipeline (``preview_answer`` -- stateless, no
+    conversation_store writes). Raises ``CONVERSATION_NOT_FOUND`` (404, reused
+    from ``get_conversation``) if missing/cross-tenant, and ``NO_VISITOR_
+    MESSAGE`` (422) if the conversation has no ``role='user'`` message yet to
+    draft a reply to.
+    """
+    db = request.app.state.db
+
+    conv = await get_conversation(db, claims, conversation_id)
+    if conv is None:
+        raise NotFoundError(
+            "Conversation not found.", code="CONVERSATION_NOT_FOUND",
+        )
+
+    messages = await get_messages(db, claims, conversation_id)
+    last_visitor_message = next(
+        (m for m in reversed(messages) if m.role == "user"), None,
+    )
+    if last_visitor_message is None:
+        raise ValidationError(
+            "This conversation has no visitor message to draft a reply to.",
+            code="NO_VISITOR_MESSAGE",
+        )
+
+    result = await preview_answer(db, claims, last_visitor_message.content)
+
+    _log.info(
+        "reply suggested",
+        extra={
+            "event": "reply_suggested",
+            "tenant_id": claims.tenant_id,
+            "conversation_id": conversation_id,
+            "decision": result.decision,
+        },
+    )
+
+    return SuggestReplyResponse(
+        conversation_id=conversation_id,
+        source_message_id=last_visitor_message.message_id,
+        question=last_visitor_message.content,
+        reply=result.reply,
+        decision=result.decision,  # type: ignore[arg-type]
+        confidence=result.confidence,
+        sources=[
+            SuggestedReplySource(
+                doc_id=s.doc_id, chunk_id=s.chunk_id, score=s.score, matched_by=s.matched_by,
+            )
+            for s in result.sources
+        ],
+    )
+
+
+@router.post("/{conversation_id}/suggest-reply")
+async def suggest_reply(
+    conversation_id: str,
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
+) -> SuggestReplyResponse:
+    return await _suggest_reply(conversation_id, request, claims)
+
+
+@tenant_scoped_router.post("/{conversation_id}/suggest-reply")
+async def suggest_reply_for_tenant(
+    conversation_id: str,
+    request: Request,
+    claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
+) -> SuggestReplyResponse:
+    """PLATFORM_ADMIN super-user variant of the suggest-reply endpoint."""
+    return await _suggest_reply(conversation_id, request, claims)

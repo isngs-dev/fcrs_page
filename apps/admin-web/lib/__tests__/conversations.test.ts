@@ -13,6 +13,7 @@ const {
   listConversations,
   getConversationDetail,
   getMessageSources,
+  suggestReply,
   CONVERSATION_STATUSES,
 } = await import("@/lib/conversations");
 
@@ -608,5 +609,194 @@ describe("getMessageSources", () => {
 
     expect(consoleSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("suggestReply", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    getMock.mockReset();
+  });
+
+  it("maps a 200 envelope to an ok result with the draft mapped, no tenant_id", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          conversation_id: "conv-1",
+          source_message_id: "msg-3",
+          question: "Do you serve Georgia?",
+          reply: "Yes, we serve the greater Atlanta area.",
+          decision: "answer",
+          confidence: 0.81,
+          sources: [
+            { doc_id: "doc-1", chunk_id: "c1", score: 0.81, matched_by: ["vector"] },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await suggestReply("conv-1");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.suggestion.conversationId).toBe("conv-1");
+      expect(result.suggestion.sourceMessageId).toBe("msg-3");
+      expect(result.suggestion.reply).toBe("Yes, we serve the greater Atlanta area.");
+      expect(result.suggestion.decision).toBe("answer");
+      expect(result.suggestion.confidence).toBe(0.81);
+      expect(result.suggestion.sources).toEqual([
+        { docId: "doc-1", chunkId: "c1", score: 0.81, matchedBy: ["vector"] },
+      ]);
+      expect(result.suggestion).not.toHaveProperty("tenant_id");
+    }
+  });
+
+  it("maps a 404 CONVERSATION_NOT_FOUND to a not-found message", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ error_code: "CONVERSATION_NOT_FOUND", message: "x", correlation_id: "c" }),
+        { status: 404 }
+      )
+    );
+
+    const result = await suggestReply("conv-1");
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/not be found/i);
+    }
+  });
+
+  it("maps a 422 NO_VISITOR_MESSAGE to an honest 'nothing to draft from' message", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ error_code: "NO_VISITOR_MESSAGE", message: "x", correlation_id: "c" }),
+        { status: 422 }
+      )
+    );
+
+    const result = await suggestReply("conv-1");
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/no visitor message/i);
+    }
+  });
+
+  it("maps a 403 to a friendly permission message", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ error_code: "ROLE_NOT_PERMITTED", message: "x", correlation_id: "c" }),
+        { status: 403 }
+      )
+    );
+
+    const result = await suggestReply("conv-1");
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/permission/i);
+    }
+  });
+
+  it("maps a 401 to a session-expired message", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ error_code: "AUTHENTICATION_ERROR", message: "x", correlation_id: "c" }),
+        { status: 401 }
+      )
+    );
+
+    const result = await suggestReply("conv-1");
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/session/i);
+    }
+  });
+
+  it("issues a POST to the implicit path when tenantId is omitted", async () => {
+    getMock.mockReturnValue(undefined);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          conversation_id: "conv-1",
+          source_message_id: "msg-1",
+          question: "hi",
+          reply: "hi",
+          decision: "answer",
+          confidence: null,
+          sources: [],
+        }),
+        { status: 200 }
+      )
+    );
+
+    await suggestReply("conv-1");
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8000/admin/conversations/conv-1/suggest-reply");
+    expect(init?.method).toBe("POST");
+  });
+
+  it("targets the tenant-scoped path when tenantId is provided (PLATFORM_ADMIN)", async () => {
+    getMock.mockReturnValue(undefined);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          conversation_id: "conv-1",
+          source_message_id: "msg-1",
+          question: "hi",
+          reply: "hi",
+          decision: "answer",
+          confidence: null,
+          sources: [],
+        }),
+        { status: 200 }
+      )
+    );
+
+    await suggestReply("conv-1", "tenant-x");
+
+    const [url] = fetchSpy.mock.calls[0] as [string];
+    expect(url).toBe("http://localhost:8000/admin/tenants/tenant-x/conversations/conv-1/suggest-reply");
+  });
+
+  it("never logs the response body (question/reply text)", async () => {
+    getMock.mockReturnValue(undefined);
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          conversation_id: "conv-1",
+          source_message_id: "msg-1",
+          question: "secret question",
+          reply: "secret reply",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+        }),
+        { status: 200 }
+      )
+    );
+
+    await suggestReply("conv-1");
+
+    expect(consoleSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("maps a non-AdminApiError network throw to a generic network message", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("down"));
+
+    const result = await suggestReply("conv-1");
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/unable to reach/i);
+    }
   });
 });

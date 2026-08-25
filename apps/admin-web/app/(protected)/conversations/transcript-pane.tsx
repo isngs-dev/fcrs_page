@@ -19,6 +19,12 @@
  *     permanent hint, since there is no live-bot-activity signal to detect
  *     and no admin-send-message endpoint to wire it to.
  *
+ * "Suggest a reply" (above the composer) is a drafting aid layered on top of
+ * that same reality: it calls `preview_answer` (Train the Agent's stateless
+ * RAG preview) against the conversation's last visitor message and shows an
+ * agent a draft to copy -- it does not send anything, since there is still
+ * nowhere for this console to send it.
+ *
  * SR-27 slice 2: geometry fixed to `Console.dc.html:404-423` -- monospace
  * 15px/600 conversation id in the header, visitor bubbles at
  * `border-radius:16px 16px 4px 16px` on `#fbfaf7`/near-black text with a
@@ -29,7 +35,14 @@
 import { formatDateTime, statusBadgeStyle } from "@/app/(protected)/conversations/presentation";
 import { MessageSources } from "@/app/(protected)/conversations/message-sources";
 import { shouldShowSourcesAffordance } from "@/app/(protected)/conversations/message-sources-presentation";
-import { getMessageSources, type ConversationDetail, type MessageSourcesResult } from "@/lib/conversations";
+import { SuggestReply } from "@/app/(protected)/conversations/suggest-reply";
+import {
+  getMessageSources,
+  suggestReply,
+  type ConversationDetail,
+  type MessageSourcesResult,
+  type SuggestReplyResult,
+} from "@/lib/conversations";
 
 /**
  * Grounding spot-check (SR-2) -- a Server Function bound with this
@@ -45,6 +58,19 @@ function bindFetchMessageSources(conversationId: string, tenantId: string | unde
     return getMessageSources(conversationId, messageId, tenantId);
   }
   return fetchMessageSources;
+}
+
+/**
+ * "Suggest a reply" (above the composer) -- same server-function-binding
+ * pattern as `bindFetchMessageSources` above, for the same reason
+ * (`lib/conversations.ts` is `import "server-only"`).
+ */
+function bindSuggestReply(conversationId: string, tenantId: string | undefined) {
+  async function doSuggestReply(): Promise<SuggestReplyResult> {
+    "use server";
+    return suggestReply(conversationId, tenantId);
+  }
+  return doSuggestReply;
 }
 
 function MessageBubble({
@@ -131,6 +157,7 @@ export function TranscriptPane({
 }) {
   const badge = statusBadgeStyle(conversation.status);
   const fetchSourcesAction = bindFetchMessageSources(conversation.conversationId, tenantId);
+  const suggestReplyAction = bindSuggestReply(conversation.conversationId, tenantId);
 
   return (
     <div className="flex flex-1 flex-col bg-secondary">
@@ -185,6 +212,7 @@ export function TranscriptPane({
       </div>
 
       <div className="flex flex-col gap-1.5 border-t border-border bg-card px-[22px] py-4">
+        <SuggestReply suggestReplyAction={suggestReplyAction} />
         <span className="text-[11px] text-muted-foreground">
           Agent takeover isn&apos;t available yet -- there is no admin reply endpoint for this
           console. Replies below are disabled.
