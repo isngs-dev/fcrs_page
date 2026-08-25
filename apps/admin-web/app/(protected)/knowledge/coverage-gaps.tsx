@@ -16,6 +16,12 @@
  *
  * Honest empty state, no fabricated rows -- same no-invented-data
  * convention as `doc-list.tsx`.
+ *
+ * Each row's "Suggest a reply" button calls `suggestDraftAnswer`
+ * (`suggest_draft_answer` -- bypasses the confidence gate to always draft
+ * something) and fills the textarea with the result for the admin to
+ * review/edit -- never auto-saved, mirrors `test-bot-chat.tsx`'s identical
+ * teach-form affordance.
  */
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   dismissGap,
   submitTrainedAnswer,
+  suggestDraftAnswer,
   type ListGapsResult,
 } from "@/app/(protected)/knowledge/actions";
 
@@ -45,7 +52,20 @@ function GapRow({
   const [answer, setAnswer] = useState("");
   const [saving, setSaving] = useState(false);
   const [dismissing, setDismissing] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function handleSuggest() {
+    setSuggesting(true);
+    setError(null);
+    const result = await suggestDraftAnswer(question, tenantId);
+    setSuggesting(false);
+    if (result.status === "error") {
+      setError(result.message);
+      return;
+    }
+    setAnswer(result.suggestion);
+  }
 
   async function handleSave() {
     if (!answer.trim()) return;
@@ -72,7 +92,7 @@ function GapRow({
     onHandled();
   }
 
-  const busy = saving || dismissing;
+  const busy = saving || dismissing || suggesting;
 
   return (
     <li className="rounded-[10px] border border-[var(--line)] bg-background p-3.5">
@@ -84,6 +104,18 @@ function GapRow({
         </span>
       </div>
       <div className="mt-2 flex flex-col gap-2">
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void handleSuggest()}
+            disabled={busy}
+            className="h-auto px-2 py-1 text-[10.5px]"
+          >
+            {suggesting ? "Drafting…" : "Suggest a reply"}
+          </Button>
+        </div>
         <label htmlFor={inputId} className="sr-only">
           Correct answer
         </label>

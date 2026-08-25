@@ -94,4 +94,14 @@ describe("CoverageGaps", () => {
     expect(html).toContain("I will not answer that");
     expect(html).toMatch(/Not a real question/i);
   });
+
+  it("renders a 'Suggest a reply' button (not disabled) alongside the teach form for each gap", () => {
+    const result: ListGapsResult = { status: "ok", gaps: [gap()] };
+    const html = renderToStaticMarkup(<CoverageGaps result={result} />);
+
+    expect(html).toMatch(/Suggest a reply/i);
+    const suggestButton = html.slice(0, html.indexOf("Suggest a reply"));
+    const lastButtonStart = suggestButton.lastIndexOf("<button");
+    expect(suggestButton.slice(lastButtonStart)).not.toContain('data-disabled=""');
+  });
 });
