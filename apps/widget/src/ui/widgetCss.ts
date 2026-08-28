@@ -661,15 +661,77 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 @media (prefers-reduced-motion: reduce) {
   .cw-panel, .cw-placeholder, .cw-suggestion, .cw-send-button, .cw-bubble-row, .cw-voice-button { animation: none; transition: none; }
 }
+/* Phone breakpoint (portrait). The plain 100vh line is a deliberate
+   fallback BEFORE 100dvh -- browsers that don't understand dvh (older
+   Android WebView, iOS <15.4) drop that whole declaration as invalid and
+   keep the vh value that precedes it, rather than collapsing to an unset
+   height. Modern browsers apply dvh last and it wins, correctly shrinking
+   to the visible viewport as iOS Safari's address bar or the on-screen
+   keyboard appears -- without it the panel would be sized against the
+   LARGEST possible viewport and get cut off/pushed under browser chrome.
+
+   The env(safe-area-inset-*) calls clear the iPhone notch/Dynamic Island
+   (top) and home-indicator gesture bar (bottom) -- harmless no-ops
+   (evaluate to 0) on devices/hosts without inset support or
+   viewport-fit=cover, so this is pure improvement with no downside on
+   Android or older iOS. */
 @media (max-width: 480px) {
-  .cw-panel { inset: 0; width: 100vw; height: 100dvh; border-radius: 0; }
-  .cw-placeholder { right: 12px; bottom: 12px; width: 56px; min-width: 56px; padding: 0; justify-content: center; }
+  .cw-panel { inset: 0; width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; overscroll-behavior: contain; }
+  .cw-panel-header { padding-top: max(16px, env(safe-area-inset-top, 0px)); }
+  .cw-input-row { padding-bottom: max(15px, env(safe-area-inset-bottom, 0px)); }
+  .cw-message-list { overscroll-behavior: contain; }
+  .cw-placeholder { right: 12px; bottom: max(12px, env(safe-area-inset-bottom, 0px)); width: 56px; min-width: 56px; padding: 0; justify-content: center; }
   .cw-launcher-orb { width: 26px; height: 26px; }
   .cw-launcher-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
-  .cw-teaser { right: 80px; bottom: 20px; max-width: calc(100vw - 160px); overflow: hidden; text-overflow: ellipsis; }
+  .cw-teaser { right: 80px; bottom: max(20px, env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 160px); overflow: hidden; text-overflow: ellipsis; }
   /* .cw-panel is already inset:0 (full-viewport) on mobile regardless of
      position, so only the launcher/teaser need a left-side mobile offset. */
   :host([data-position="left"]) .cw-placeholder { right: auto; left: 12px; }
   :host([data-position="left"]) .cw-teaser { right: auto; left: 80px; }
+
+  /* iOS Safari auto-zooms the whole page on focusing any real form control
+     rendered below 16px -- jarring inside a full-screen takeover, since the
+     visitor is then stuck pinch-zoomed out of a layout that never needed
+     zooming. 16px sidesteps it entirely; desktop's smaller sizes (14/13px)
+     are untouched outside this breakpoint. Covers every actual
+     input/select the widget renders: the composer, the lead form (also
+     reused by the Calendly handoff), and the scheduler's timezone select +
+     email/name/phone capture (both the plain and .cw-sched-card variants,
+     matched explicitly since the card variant's own higher-specificity rule
+     would otherwise still win at 13/14px). */
+  .cw-input,
+  .cw-lead-input,
+  .cw-sched-tz-select,
+  .cw-sched-card .cw-sched-tz-select,
+  .cw-sched-card .cw-sched-email-input,
+  .cw-sched-card .cw-sched-name-input,
+  .cw-sched-card .cw-sched-phone-input {
+    font-size: 16px;
+  }
+}
+
+/* Phone breakpoint (landscape) -- a phone turned sideways has a viewport
+   WIDTH well over 480px (e.g. 844px for an iPhone 14 in landscape) but a
+   much shorter HEIGHT (that same phone: 390px), so the portrait rule above
+   never matches it and it would otherwise render as a small floating
+   desktop-style panel with barely any vertical room. Gated on height alone
+   (not width) so it targets short viewports specifically -- ordinary small
+   desktop windows are essentially never both viewed here AND this short. */
+@media (max-height: 480px) and (pointer: coarse) {
+  .cw-panel { inset: 0; width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; overscroll-behavior: contain; }
+  .cw-panel-header { padding-top: max(10px, env(safe-area-inset-top, 0px)); padding-left: max(18px, env(safe-area-inset-left, 0px)); }
+  .cw-input-row { padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)); }
+  .cw-message-list { overscroll-behavior: contain; }
+  .cw-placeholder { bottom: max(12px, env(safe-area-inset-bottom, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); }
+  :host([data-position="left"]) .cw-placeholder { right: auto; left: max(12px, env(safe-area-inset-left, 0px)); }
+  .cw-input,
+  .cw-lead-input,
+  .cw-sched-tz-select,
+  .cw-sched-card .cw-sched-tz-select,
+  .cw-sched-card .cw-sched-email-input,
+  .cw-sched-card .cw-sched-name-input,
+  .cw-sched-card .cw-sched-phone-input {
+    font-size: 16px;
+  }
 }
 `;
