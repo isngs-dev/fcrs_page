@@ -21,6 +21,7 @@
  */
 import { requireAnyRole } from "@/lib/auth";
 import { getBotSettings, type BotSettings } from "@/lib/settings";
+import { getCallConfig } from "@/lib/calls";
 import { SoftCard } from "@/components/admin/soft-card";
 import { SettingsForm } from "@/app/(protected)/settings/settings-form";
 
@@ -148,5 +149,13 @@ export default async function SettingsPage() {
     );
   }
 
-  return <SettingsForm currentSettings={result.settings} />;
+  const callConfigResult = await getCallConfig();
+
+  return (
+    <SettingsForm
+      currentSettings={result.settings}
+      callConfigResult={callConfigResult}
+      ownTenantId={claims.tenantId ?? ""}
+    />
+  );
 }

@@ -204,6 +204,9 @@ def create_app() -> FastAPI:
     from api.audit.routes import router as audit_router
     from api.audit.routes import tenant_scoped_router as audit_tenant_router
     from api.auth.routes import router as auth_router
+    from api.calls.admin_routes import router as calls_admin_router
+    from api.calls.admin_routes import tenant_scoped_router as calls_admin_tenant_router
+    from api.calls.webhook import router as calls_webhook_router
     from api.contacts.admin_routes import router as contacts_admin_router
     from api.contacts.admin_routes import tenant_scoped_router as contacts_admin_tenant_router
     from api.conversation_store.admin_routes import router as conversation_admin_router
@@ -243,6 +246,8 @@ def create_app() -> FastAPI:
     from api.voice.routes import router as voice_router
 
     app.include_router(accounts_admin_router)
+    app.include_router(calls_admin_router)
+    app.include_router(calls_webhook_router)
     app.include_router(admin_api_keys_router)
     app.include_router(admin_assignment_router)
     app.include_router(admin_router)
@@ -283,6 +288,7 @@ def create_app() -> FastAPI:
     # implicit routers above are byte-for-byte unchanged for CLIENT_ADMIN/
     # CLIENT_AGENT.
     app.include_router(accounts_admin_tenant_router)
+    app.include_router(calls_admin_tenant_router)
     app.include_router(admin_api_keys_tenant_router)
     app.include_router(admin_assignment_tenant_router)
     app.include_router(admin_settings_tenant_router)

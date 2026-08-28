@@ -18,6 +18,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { getBotSettings } from "@/lib/settings";
+import { getCallConfig } from "@/lib/calls";
 import { SettingsForm } from "@/app/(protected)/settings/settings-form";
 
 export default async function ClientSettingsPage({
@@ -27,6 +28,7 @@ export default async function ClientSettingsPage({
 }) {
   const { tenantId } = await params;
   const result = await getBotSettings(tenantId);
+  const callConfigResult = await getCallConfig(tenantId);
 
   return (
     <div className="flex flex-1 flex-col items-center gap-4 p-8">
@@ -49,7 +51,12 @@ export default async function ClientSettingsPage({
               ) : null}
             </p>
           ) : (
-            <SettingsForm currentSettings={result.settings} tenantId={tenantId} />
+            <SettingsForm
+              currentSettings={result.settings}
+              callConfigResult={callConfigResult}
+              ownTenantId={tenantId}
+              tenantId={tenantId}
+            />
           )}
         </CardContent>
       </Card>

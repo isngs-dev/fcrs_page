@@ -73,6 +73,8 @@ import {
 } from "@/lib/settings-schema";
 import type { BotSettings } from "@/lib/settings";
 import { InstallSnippet } from "@/app/(protected)/settings/install-snippet";
+import { MissedCallConfig } from "@/app/(protected)/settings/missed-call-config";
+import type { CallConfigResult } from "@/lib/calls";
 import { WidgetPreview } from "@/app/(protected)/settings/widget-preview";
 import { SetRow, SET_ROW_FIELD_CLASS } from "@/components/admin/set-row";
 import { SettingsRail, type SettingsRailRow } from "@/components/admin/settings-rail";
@@ -118,9 +120,13 @@ function PublishButton({ dirty }: { dirty: boolean }) {
 
 export function SettingsForm({
   currentSettings,
+  callConfigResult,
+  ownTenantId,
   tenantId,
 }: {
   currentSettings: BotSettings;
+  callConfigResult: CallConfigResult;
+  ownTenantId: string;
   tenantId?: string;
 }) {
   const [state, formAction] = useActionState(saveSettings.bind(null, tenantId), initialState);
@@ -498,8 +504,13 @@ export function SettingsForm({
             </SetRow>
           </div>
 
-          <div id="settings-install" className="scroll-mt-16">
+          <div id="settings-install" className="flex scroll-mt-16 flex-col gap-5">
             <InstallSnippet />
+            <MissedCallConfig
+              result={callConfigResult}
+              ownTenantId={ownTenantId}
+              tenantId={tenantId}
+            />
           </div>
 
           <div className="flex flex-col gap-1.5 rounded-md border border-dashed border-[var(--line-2)] bg-secondary p-3.5">

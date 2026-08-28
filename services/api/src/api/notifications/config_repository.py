@@ -103,6 +103,56 @@ async def get_notification_config(
     )
 
 
+async def get_notification_config_by_tenant_id(
+    db: Database, tenant_id: str, channel: str
+) -> NotificationConfig | None:
+    """Fetch a tenant's per-channel notification config by RAW tenant id --
+    NO ``AuthClaims``.
+
+    Used ONLY by ``api.calls.webhook`` (the Twilio call-status webhook),
+    which has no session/claims at all: it needs the tenant's already-stored
+    Twilio Auth Token (``channel="sms"``) purely to VERIFY the inbound
+    webhook's signature, before trusting anything else in the request.
+    Mirrors ``api.scheduling.calendar_config_repository
+    .get_calendar_config_by_tenant_id``'s own documented justification for
+    being the one legitimate claims-less caller. Every other caller in this
+    module MUST go through the ``AuthClaims``-scoped ``get_notification_config``
+    above.
+    """
+    row = await db.fetchrow(
+        "SELECT provider, from_address, from_name, smtp_host, smtp_port, smtp_use_tls, "
+        "smtp_username, twilio_account_sid, twilio_from, credentials_ciphertext, enabled "
+        "FROM tenant_notification_configs WHERE tenant_id = $1 AND channel = $2",
+        tenant_id,
+        channel,
+    )
+    if row is None:
+        return None
+
+    credentials = ""
+    ciphertext = row["credentials_ciphertext"]
+    if ciphertext:
+        box = SecretBox(get_api_settings().secret_encryption_key)
+        credentials = box.decrypt_str(str(ciphertext))
+
+    return NotificationConfig(
+        provider=str(row["provider"]),
+        channel=channel,
+        from_address=str(row["from_address"]) if row["from_address"] is not None else None,
+        from_name=str(row["from_name"]) if row["from_name"] is not None else None,
+        smtp_host=str(row["smtp_host"]) if row["smtp_host"] is not None else None,
+        smtp_port=int(row["smtp_port"]) if row["smtp_port"] is not None else None,
+        smtp_use_tls=bool(row["smtp_use_tls"]),
+        smtp_username=str(row["smtp_username"]) if row["smtp_username"] is not None else None,
+        twilio_account_sid=(
+            str(row["twilio_account_sid"]) if row["twilio_account_sid"] is not None else None
+        ),
+        twilio_from=str(row["twilio_from"]) if row["twilio_from"] is not None else None,
+        credentials=credentials,
+        enabled=bool(row["enabled"]),
+    )
+
+
 async def upsert_notification_config(
     db: Database,
     claims: AuthClaims,
