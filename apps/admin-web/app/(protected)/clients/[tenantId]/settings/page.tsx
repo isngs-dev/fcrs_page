@@ -19,7 +19,9 @@ import {
 } from "@/components/ui/card";
 import { getBotSettings } from "@/lib/settings";
 import { getCallConfig } from "@/lib/calls";
+import { listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
 import { SettingsForm } from "@/app/(protected)/settings/settings-form";
+import { OnboardingChecklist } from "@/app/(protected)/onboarding-checklist";
 
 export default async function ClientSettingsPage({
   params,
@@ -29,9 +31,19 @@ export default async function ClientSettingsPage({
   const { tenantId } = await params;
   const result = await getBotSettings(tenantId);
   const callConfigResult = await getCallConfig(tenantId);
+  const docsResult = await listKnowledgeDocs(tenantId);
 
   return (
     <div className="flex flex-1 flex-col items-center gap-4 p-8">
+      <div className="w-full max-w-2xl">
+        <OnboardingChecklist
+          settingsResult={result}
+          docsResult={docsResult}
+          callConfigResult={callConfigResult}
+          settingsHref={`/clients/${tenantId}/settings`}
+          knowledgeHref={`/clients/${tenantId}/knowledge`}
+        />
+      </div>
       <Card className="w-full max-w-2xl">
         <CardHeader>
           <CardTitle>Bot settings</CardTitle>
