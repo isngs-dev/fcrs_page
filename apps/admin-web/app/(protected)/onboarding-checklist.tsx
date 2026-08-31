@@ -106,12 +106,17 @@ export function OnboardingChecklist({
   const settingsDone = isSettingsCustomized(settingsResult);
   const knowledgeDone = hasKnowledgeUploaded(docsResult);
   const missedCallDone = isMissedCallConfigured(callConfigResult);
+  const requiredDone = settingsDone && knowledgeDone;
 
   return (
     <SoftCard className="flex flex-col gap-1 p-5">
-      <p className="text-[15px] font-semibold text-foreground">Get your bot ready</p>
+      <p className="text-[15px] font-semibold text-foreground">
+        {requiredDone ? "Your bot is set up" : "Get your bot ready"}
+      </p>
       <p className="text-[12.5px] text-muted-foreground">
-        A few quick steps before this bot is ready for real visitors.
+        {requiredDone
+          ? "The essentials are done. Missed-call text-back is optional, and you can always come back to test the bot."
+          : "A few quick steps before this bot is ready for real visitors."}
       </p>
       <ul className="mt-1 flex flex-col divide-y divide-border">
         <ChecklistItem

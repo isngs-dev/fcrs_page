@@ -21,7 +21,7 @@ import { listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
 import { DashboardHero } from "@/app/(protected)/dashboard-hero";
 import { ResponsesOverTimeCard } from "@/app/(protected)/dashboard-responses-card";
 import { DashboardMetricCards } from "@/app/(protected)/dashboard-metric-cards";
-import { OnboardingChecklist, isOnboardingComplete } from "@/app/(protected)/onboarding-checklist";
+import { OnboardingChecklist } from "@/app/(protected)/onboarding-checklist";
 
 function firstValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -59,15 +59,13 @@ export default async function ProtectedHomePage({ searchParams }: ProtectedHomeP
 
   return (
     <main className="flex flex-1 flex-col gap-6 px-4 py-8 sm:px-6 lg:px-7 lg:py-10">
-      {!isOnboardingComplete(settingsResult, docsResult) ? (
-        <OnboardingChecklist
-          settingsResult={settingsResult}
-          docsResult={docsResult}
-          callConfigResult={callConfigResult}
-          settingsHref="/settings"
-          knowledgeHref="/knowledge"
-        />
-      ) : null}
+      <OnboardingChecklist
+        settingsResult={settingsResult}
+        docsResult={docsResult}
+        callConfigResult={callConfigResult}
+        settingsHref="/settings"
+        knowledgeHref="/knowledge"
+      />
       {hubResult.status === "error" ? (
         <div role="alert" className="rounded-2xl border border-[var(--danger-border)] bg-[#fff3ee] p-4 text-sm text-[var(--danger-fg)]">
           <div className="flex gap-2">

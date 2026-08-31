@@ -151,6 +151,36 @@ describe("OnboardingChecklist", () => {
     expect(html).not.toContain("Upload documents");
   });
 
+  it("shows the 'Get your bot ready' heading while the two required items are still incomplete", () => {
+    const html = renderToStaticMarkup(
+      <OnboardingChecklist
+        settingsResult={settingsOk()}
+        docsResult={docsOk(0)}
+        callConfigResult={callConfigOk()}
+        settingsHref="/settings"
+        knowledgeHref="/knowledge"
+      />
+    );
+
+    expect(html).toContain("Get your bot ready");
+    expect(html).not.toContain("Your bot is set up");
+  });
+
+  it("switches to the 'Your bot is set up' heading once both required items are done, even with missed-call still unset", () => {
+    const html = renderToStaticMarkup(
+      <OnboardingChecklist
+        settingsResult={settingsOk({ greeting: "Hi there!" })}
+        docsResult={docsOk(1)}
+        callConfigResult={callConfigOk()}
+        settingsHref="/settings"
+        knowledgeHref="/knowledge"
+      />
+    );
+
+    expect(html).toContain("Your bot is set up");
+    expect(html).not.toContain("Get your bot ready");
+  });
+
   it("labels missed-call text-back as optional and never treats it as done from a fetch error", () => {
     const html = renderToStaticMarkup(
       <OnboardingChecklist
