@@ -156,6 +156,111 @@ describe("saveSettings", () => {
     expect(adminApiFetchMock).not.toHaveBeenCalled();
   });
 
+  it("submits bot_name/accent_color/launcher_position/suggested_questions and reflects the response's fresh values", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          greeting: "Hi there!",
+          bot_name: "Aria",
+          accent_color: "#16a34a",
+          launcher_position: "left",
+          suggested_questions: ["Do you serve my area?"],
+          business_hours: null,
+          escalation_policy: "Escalate on refunds.",
+          tone: "friendly",
+          answer_threshold: 0.7,
+          escalate_threshold: 0.4,
+          turn_cap: 7,
+          low_confidence_streak_cap: 7,
+          llm_provider: null,
+          llm_model: null,
+        },
+        200
+      )
+    );
+
+    const state = await saveSettings(
+      undefined,
+      { status: "idle" },
+      buildFormData({
+        botName: "Aria",
+        accentColor: "#16a34a",
+        launcherPosition: "left",
+        suggestedQuestionsText: "Do you serve my area?",
+      })
+    );
+
+    expect(state.status).toBe("saved");
+    if (state.status === "saved") {
+      expect(state.settings.botName).toBe("Aria");
+      expect(state.settings.accentColor).toBe("#16a34a");
+      expect(state.settings.launcherPosition).toBe("left");
+      expect(state.settings.suggestedQuestions).toEqual(["Do you serve my area?"]);
+    }
+    expect(JSON.parse(adminApiFetchMock.mock.calls[0][1].body)).toMatchObject({
+      bot_name: "Aria",
+      accent_color: "#16a34a",
+      launcher_position: "left",
+      suggested_questions: ["Do you serve my area?"],
+    });
+  });
+
+  it("rejects an over-length bot name client-side without calling adminApiFetch", async () => {
+    const state = await saveSettings(
+      undefined,
+      { status: "idle" },
+      buildFormData({ botName: "a".repeat(41) })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.fieldErrors.botName).toMatch(/40/);
+    }
+    expect(adminApiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-hex accent color client-side without calling adminApiFetch", async () => {
+    const state = await saveSettings(
+      undefined,
+      { status: "idle" },
+      buildFormData({ accentColor: "not-a-color" })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.fieldErrors.accentColor).toMatch(/hex color/i);
+    }
+    expect(adminApiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid launcher position client-side without calling adminApiFetch", async () => {
+    const state = await saveSettings(
+      undefined,
+      { status: "idle" },
+      buildFormData({ launcherPosition: "center" })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.fieldErrors.launcherPosition).toMatch(/left or right/i);
+    }
+    expect(adminApiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects more than 5 suggested questions without calling adminApiFetch", async () => {
+    const state = await saveSettings(
+      undefined,
+      { status: "idle" },
+      buildFormData({ suggestedQuestionsText: "one\ntwo\nthree\nfour\nfive\nsix" })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.fieldErrors.suggestedQuestionsText).toMatch(/at most 5/i);
+    }
+    expect(adminApiFetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects over-length workspace labels client-side without calling adminApiFetch", async () => {
     const state = await saveSettings(
       undefined,

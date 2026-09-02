@@ -91,6 +91,10 @@ class _StubDatabase:
                 launcher_label,
                 sidebar_workspace_label,
                 dashboard_title,
+                bot_name,
+                accent_color,
+                launcher_position,
+                suggested_questions,
             ) = args
             self._bot_settings[tenant_id] = {
                 "greeting": greeting,
@@ -100,6 +104,10 @@ class _StubDatabase:
                 "launcher_label": launcher_label,
                 "sidebar_workspace_label": sidebar_workspace_label,
                 "dashboard_title": dashboard_title,
+                "bot_name": bot_name,
+                "accent_color": accent_color,
+                "launcher_position": launcher_position,
+                "suggested_questions": suggested_questions,
             }
             self.updated_tables.append("tenant_bot_settings")
             return "INSERT 0 1"
@@ -301,6 +309,129 @@ async def test_put_settings_client_admin_200_round_trip(app: Any, db: _StubDatab
     assert get_body["launcher_label"] == "Chat with our team"
     assert get_body["sidebar_workspace_label"] == "Acme support"
     assert get_body["dashboard_title"] == "Support hub"
+
+
+async def test_put_settings_branding_fields_round_trip(app: Any, db: _StubDatabase) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        put_response = await client.put(
+            "/admin/settings",
+            json={
+                "bot_name": "Aria",
+                "accent_color": "#16a34a",
+                "launcher_position": "left",
+                "suggested_questions": ["Do you serve my area?", "How much does it cost?"],
+            },
+            cookies={"access_token": token},
+        )
+        get_response = await client.get("/admin/settings", cookies={"access_token": token})
+
+    assert put_response.status_code == 200
+    put_body = put_response.json()
+    assert put_body["bot_name"] == "Aria"
+    assert put_body["accent_color"] == "#16a34a"
+    assert put_body["launcher_position"] == "left"
+    assert put_body["suggested_questions"] == ["Do you serve my area?", "How much does it cost?"]
+
+    get_body = get_response.json()
+    assert get_body["bot_name"] == "Aria"
+    assert get_body["accent_color"] == "#16a34a"
+    assert get_body["launcher_position"] == "left"
+    assert get_body["suggested_questions"] == ["Do you serve my area?", "How much does it cost?"]
+
+
+async def test_branding_fields_are_tenant_isolated(app: Any, db: _StubDatabase) -> None:
+    """Tenant A's bot_name/accent_color/launcher_position/suggested_questions
+    write must never leak into tenant B's GET (mandatory multi-tenant
+    isolation coverage, CLAUDE.md Sec.3)."""
+    tenant_b = "tenant-b-456"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        tenant_a_token = _token(Role.CLIENT_ADMIN, _TENANT_ID)
+        tenant_b_token = _token(Role.CLIENT_ADMIN, tenant_b)
+        write_response = await client.put(
+            "/admin/settings",
+            json={
+                "bot_name": "Aria",
+                "accent_color": "#16a34a",
+                "launcher_position": "left",
+                "suggested_questions": ["Do you serve my area?"],
+            },
+            cookies={"access_token": tenant_a_token},
+        )
+        tenant_b_response = await client.get(
+            "/admin/settings", cookies={"access_token": tenant_b_token}
+        )
+
+    assert write_response.status_code == 200
+    assert tenant_b_response.status_code == 200
+    tenant_b_body = tenant_b_response.json()
+    assert tenant_b_body["bot_name"] is None
+    assert tenant_b_body["accent_color"] is None
+    assert tenant_b_body["launcher_position"] is None
+    assert tenant_b_body["suggested_questions"] is None
+    # Bound to tenant A's own key in the stub DB -- never tenant B's.
+    assert db._bot_settings[_TENANT_ID]["bot_name"] == "Aria"
+    assert tenant_b not in db._bot_settings or db._bot_settings[tenant_b].get("bot_name") is None
+
+
+async def test_put_settings_bad_accent_color_422(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={"accent_color": "not-a-color"},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
+
+
+async def test_put_settings_bad_launcher_position_422(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={"launcher_position": "center"},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
+
+
+async def test_put_settings_bot_name_too_long_422(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={"bot_name": "x" * 41},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
+
+
+async def test_put_settings_too_many_suggested_questions_422(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={"suggested_questions": ["one", "two", "three", "four", "five", "six"]},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
+
+
+async def test_put_settings_blank_suggested_question_422(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.put(
+            "/admin/settings",
+            json={"suggested_questions": ["  "]},
+            cookies={"access_token": token},
+        )
+
+    assert response.status_code == 422
 
 
 async def test_workspace_labels_are_tenant_isolated_and_empty_values_round_trip_as_null(

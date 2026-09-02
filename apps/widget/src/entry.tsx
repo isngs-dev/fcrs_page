@@ -112,6 +112,18 @@ async function boot(): Promise<void> {
       {...(admission.session.launcherLabel === undefined
         ? {}
         : { launcherLabel: admission.session.launcherLabel })}
+      {...(admission.session.botName === undefined
+        ? {}
+        : { botName: admission.session.botName })}
+      {...(admission.session.accentColor === undefined
+        ? {}
+        : { accentColor: admission.session.accentColor })}
+      {...(admission.session.launcherPosition === undefined
+        ? {}
+        : { launcherPosition: admission.session.launcherPosition })}
+      {...(admission.session.suggestedQuestions === undefined
+        ? {}
+        : { suggestedQuestions: admission.session.suggestedQuestions })}
       resumeConversationId={null}
     />,
   );

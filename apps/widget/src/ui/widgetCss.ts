@@ -27,7 +27,10 @@ export const widgetCss = `
   all: initial;
   --cw-ink: #0f172a;
   --cw-citron: #2563eb;
-  --cw-citron-soft: #dbeafe;
+  /* Widget branding/personalization decision 4: auto-derived from whatever
+     --cw-citron resolves to (default or a tenant's inline override on the
+     shadow host), so a custom accent color never needs a second field. */
+  --cw-citron-soft: color-mix(in srgb, var(--cw-citron) 18%, white);
   --cw-paper: #ffffff;
   --cw-cool-paper: #f8fafc;
   --cw-line: #e5e7eb;

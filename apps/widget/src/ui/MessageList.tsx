@@ -20,6 +20,13 @@ export interface MessageListProps {
   messages: ChatMessage[];
   pending: boolean;
   config: WidgetConfig;
+  botName: string;
+  /** Tenant-configured suggestion chips (widget branding/personalization
+   * decision 2/3). When absent/empty, falls back to the hardcoded FCRS-demo
+   * `SUGGESTIONS` below (unchanged default behavior, sentinel-routing
+   * included). Custom suggestions are always sent as plain messages -- see
+   * decision 3's rationale for not extending the booking sentinel to them. */
+  suggestions?: string[];
   onSuggestion: (message: string) => void;
   /** SR-14 D3: threaded through to `<Bubble>`/`<IdentityForm>` so a
    * successful identity capture can trigger the deferred-question re-send. */
@@ -93,10 +100,14 @@ function SuggestionGlyph({ name }: { name: (typeof SUGGESTIONS)[number]["icon"] 
   return <svg aria-hidden="true" {...common}><path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.7 9.7 0 0 1-4.1-.9L3 21l1.9-4.1A8.4 8.4 0 0 1 3 11.5a8.5 8.5 0 0 1 18 0Z" /></svg>;
 }
 
-export function MessageList({ messages, pending, config, onSuggestion, onIdentityCaptured, onHandoffTalk, onHandoffStay, onBooked }: MessageListProps) {
+export function MessageList({ messages, pending, config, botName, suggestions, onSuggestion, onIdentityCaptured, onHandoffTalk, onHandoffStay, onBooked }: MessageListProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
+  const effectiveSuggestions =
+    suggestions && suggestions.length > 0
+      ? suggestions.map((text) => ({ message: text, label: text, icon: "chat" as const }))
+      : SUGGESTIONS;
   const selectedSuggestion = [...messages].reverse().find(
-    (message) => message.role === "user" && SUGGESTIONS.some((suggestion) => suggestion.message === message.text),
+    (message) => message.role === "user" && effectiveSuggestions.some((suggestion) => suggestion.message === message.text),
   )?.text;
 
   useEffect(() => {
@@ -111,10 +122,10 @@ export function MessageList({ messages, pending, config, onSuggestion, onIdentit
     <div className="cw-message-list" role="log" aria-live="polite" aria-relevant="additions">
       <section className="cw-welcome" aria-labelledby="cw-welcome-heading">
           <span className="cw-welcome-orb" aria-hidden="true" />
-          <h2 id="cw-welcome-heading">Hi, I&rsquo;m Rebecca</h2>
+          <h2 id="cw-welcome-heading">Hi, I&rsquo;m {botName}</h2>
           <p>I can help with support, sales and product questions. What would you like to do?</p>
           <div className="cw-suggestions" aria-label="Suggested questions">
-            {SUGGESTIONS.map((suggestion) => (
+            {effectiveSuggestions.map((suggestion) => (
               <button
                 key={suggestion.message}
                 type="button"

@@ -39,20 +39,30 @@
  * has no equivalent concept -- its voice is a fixed choice made server-side
  * (`ELEVENLABS_VOICE_ID`), not selected per-utterance here.
  *
- * `speakGreeting` is the one exception to all of the above: its text never
- * changes, so it does not call `speak()`/`synthesizeSpeech`/`speechSynthesis`
- * at all. It plays a pre-generated, bundled audio file (`greetingAudio.ts`)
- * directly -- no network round-trip, no live OpenAI call, no per-visit
- * delay. See that module's own comment for how to regenerate it if the
- * greeting's text, voice, or speed ever changes.
+ * `speakGreeting` is the one exception to all of the above: for the DEFAULT
+ * bot name ("Rebecca", or no `botName` configured) its text never changes,
+ * so it does not call `speak()`/`synthesizeSpeech`/`speechSynthesis` at all
+ * -- it plays a pre-generated, bundled audio file (`greetingAudio.ts`)
+ * directly, no network round-trip, no live OpenAI call, no per-visit delay.
+ * See that module's own comment for how to regenerate it if the greeting's
+ * text, voice, or speed ever changes. Only when a tenant configures a
+ * CUSTOM `botName` does it fall through to the live `speak()` path with a
+ * `botName`-templated greeting -- accepting a live-synthesis delay, but only
+ * for tenants who've actually opted into a different name (widget
+ * branding/personalization decision 6).
  */
 import { GREETING_AUDIO_DATA_URI } from "./greetingAudio";
 import { synthesizeSpeech } from "./voice";
 import { isVoiceTtsEnabled } from "./session";
 import type { WidgetConfig } from "./config";
 
-/** Baked-in greeting text (decision 5) — no server-driven/per-tenant config yet (flagged). */
-export const TTS_GREETING_TEXT = "Hi, I'm Rebecca, how can I help?";
+/** The widget's default bot name, used everywhere a tenant hasn't configured
+ * a custom `botName` (widget branding/personalization decision 6). */
+export const DEFAULT_BOT_NAME = "Rebecca";
+
+/** Baked-in greeting text for the default bot name -- the pre-generated
+ * `greetingAudio.ts` file was recorded reading exactly this line. */
+export const TTS_GREETING_TEXT = `Hi, I'm ${DEFAULT_BOT_NAME}, how can I help?`;
 
 function getSpeechSynthesis(): SpeechSynthesis | null {
   if (typeof window === "undefined") return null;
@@ -249,7 +259,19 @@ export async function speak(
  * "retry on the visitor's next real interaction" contract is unchanged —
  * see `speak` above for the full semantics.
  */
-export async function speakGreeting(_config: WidgetConfig, onBlocked?: () => void): Promise<void> {
+export async function speakGreeting(
+  config: WidgetConfig,
+  onBlocked?: () => void,
+  botName?: string,
+): Promise<void> {
+  const trimmedName = botName?.trim();
+  if (trimmedName && trimmedName.toLowerCase() !== DEFAULT_BOT_NAME.toLowerCase()) {
+    // A tenant configured a custom name -- the pre-baked audio would say the
+    // wrong name, so fall through to live synthesis instead (decision 6).
+    await speak(config, `Hi, I'm ${trimmedName}, how can I help?`, onBlocked, 0.85);
+    return;
+  }
+
   try {
     stopCloudAudio();
     const audio = new Audio(GREETING_AUDIO_DATA_URI);

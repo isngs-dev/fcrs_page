@@ -79,6 +79,10 @@ async def test_get_bot_settings_merges_row_orchestrator_and_llm_config() -> None
             "launcher_label": "Chat with our team",
             "sidebar_workspace_label": "Acme support",
             "dashboard_title": "Support hub",
+            "bot_name": "Aria",
+            "accent_color": "#16a34a",
+            "launcher_position": "left",
+            "suggested_questions": ["Do you serve my area?"],
         },
         {"provider": "anthropic", "model": "claude-sonnet"},
     ]
@@ -92,6 +96,10 @@ async def test_get_bot_settings_merges_row_orchestrator_and_llm_config() -> None
     assert result.launcher_label == "Chat with our team"
     assert result.sidebar_workspace_label == "Acme support"
     assert result.dashboard_title == "Support hub"
+    assert result.bot_name == "Aria"
+    assert result.accent_color == "#16a34a"
+    assert result.launcher_position == "left"
+    assert result.suggested_questions == ["Do you serve my area?"]
     assert result.answer_threshold == 0.8
     assert result.escalate_threshold == 0.3
     assert result.turn_cap == 6
@@ -113,6 +121,10 @@ async def test_get_bot_settings_no_row_yet_qualitative_fields_none_thresholds_po
     assert result.launcher_label is None
     assert result.sidebar_workspace_label is None
     assert result.dashboard_title is None
+    assert result.bot_name is None
+    assert result.accent_color is None
+    assert result.launcher_position is None
+    assert result.suggested_questions is None
     assert result.answer_threshold == 0.8
     assert result.escalate_threshold == 0.3
     assert result.turn_cap == 6
@@ -158,6 +170,10 @@ async def test_upsert_bot_settings_binds_on_conflict_upsert_qualitative_only() -
         launcher_label="Chat with our team",
         sidebar_workspace_label="Acme support",
         dashboard_title="Support hub",
+        bot_name="Aria",
+        accent_color="#16a34a",
+        launcher_position="left",
+        suggested_questions=["Do you serve my area?"],
     )
 
     assert len(db.calls) == 1
@@ -173,6 +189,10 @@ async def test_upsert_bot_settings_binds_on_conflict_upsert_qualitative_only() -
     assert "Chat with our team" in params
     assert "Acme support" in params
     assert "Support hub" in params
+    assert "Aria" in params
+    assert "#16a34a" in params
+    assert "left" in params
+    assert ["Do you serve my area?"] in params
 
     # No threshold/provider param anywhere in the captured SQL/params.
     assert "answer_threshold" not in query
@@ -197,6 +217,10 @@ async def test_upsert_bot_settings_rejects_global_caller() -> None:
             launcher_label=None,
             sidebar_workspace_label=None,
             dashboard_title=None,
+            bot_name=None,
+            accent_color=None,
+            launcher_position=None,
+            suggested_questions=None,
         )
 
     assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"

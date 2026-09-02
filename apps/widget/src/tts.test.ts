@@ -172,6 +172,52 @@ describe("tts", () => {
 
       expect(instance?.pause).toHaveBeenCalledTimes(1);
     });
+
+    it("plays the pre-baked audio, never live synthesis, when botName is the default (\"Rebecca\")", async () => {
+      await speakGreeting(baseConfig, undefined, "Rebecca");
+
+      expect(FakeGreetingAudio.instances).toHaveLength(1);
+      expect(synthesizeSpeechMock).not.toHaveBeenCalled();
+    });
+
+    it("plays the pre-baked audio when botName is absent/blank (unconfigured tenant, zero regression)", async () => {
+      await speakGreeting(baseConfig, undefined, "  ");
+
+      expect(FakeGreetingAudio.instances).toHaveLength(1);
+    });
+
+    it("falls through to live synthesis with a botName-templated greeting when a custom bot name is configured", async () => {
+      isVoiceTtsEnabledMock.mockReturnValue(false);
+      const browserSpeak = vi.fn();
+      class FakeUtterance {
+        rate?: number;
+        constructor(public text: string) {}
+      }
+      Object.defineProperty(window, "speechSynthesis", {
+        value: { speak: browserSpeak, cancel: vi.fn() },
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(window, "SpeechSynthesisUtterance", {
+        value: FakeUtterance,
+        configurable: true,
+        writable: true,
+      });
+
+      await speakGreeting(baseConfig, undefined, "Aria");
+
+      expect(FakeGreetingAudio.instances).toHaveLength(0);
+      const uttered = browserSpeak.mock.calls[0]?.[0] as FakeUtterance;
+      expect(uttered.text).toBe("Hi, I'm Aria, how can I help?");
+      expect(uttered.rate).toBe(0.85);
+    });
+
+    it("a custom bot name that only differs by case still uses the pre-baked default audio", async () => {
+      await speakGreeting(baseConfig, undefined, "rebecca");
+
+      expect(FakeGreetingAudio.instances).toHaveLength(1);
+      expect(synthesizeSpeechMock).not.toHaveBeenCalled();
+    });
   });
 
 

@@ -20,6 +20,7 @@ import { revalidatePath } from "next/cache";
 import { AdminApiError, adminApiFetch } from "@/lib/api";
 import {
   parseBusinessHours,
+  parseSuggestedQuestions,
   settingsFormSchema,
 } from "@/lib/settings-schema";
 import type { BotSettings } from "@/lib/settings";
@@ -29,6 +30,10 @@ export interface SaveFieldErrors {
   launcherLabel?: string;
   sidebarWorkspaceLabel?: string;
   dashboardTitle?: string;
+  botName?: string;
+  accentColor?: string;
+  launcherPosition?: string;
+  suggestedQuestionsText?: string;
   escalationPolicy?: string;
   tone?: string;
   businessHoursText?: string;
@@ -60,6 +65,10 @@ interface AdminBotSettingsResponseBody {
   launcher_label: string | null;
   sidebar_workspace_label: string | null;
   dashboard_title: string | null;
+  bot_name: string | null;
+  accent_color: string | null;
+  launcher_position: "left" | "right" | null;
+  suggested_questions: string[] | null;
   business_hours: Record<string, unknown> | null;
   escalation_policy: string | null;
   tone: string | null;
@@ -77,6 +86,10 @@ function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
     launcherLabel: body.launcher_label,
     sidebarWorkspaceLabel: body.sidebar_workspace_label ?? null,
     dashboardTitle: body.dashboard_title ?? null,
+    botName: body.bot_name ?? null,
+    accentColor: body.accent_color ?? null,
+    launcherPosition: body.launcher_position ?? null,
+    suggestedQuestions: body.suggested_questions ?? null,
     businessHours: body.business_hours,
     escalationPolicy: body.escalation_policy,
     tone: body.tone,
@@ -116,6 +129,10 @@ export async function saveSettings(
     launcherLabel: nullToUndefined(formData.get("launcherLabel")),
     sidebarWorkspaceLabel: nullToUndefined(formData.get("sidebarWorkspaceLabel")),
     dashboardTitle: nullToUndefined(formData.get("dashboardTitle")),
+    botName: nullToUndefined(formData.get("botName")),
+    accentColor: nullToUndefined(formData.get("accentColor")),
+    launcherPosition: nullToUndefined(formData.get("launcherPosition")),
+    suggestedQuestionsText: String(formData.get("suggestedQuestionsText") ?? ""),
     escalationPolicy: nullToUndefined(formData.get("escalationPolicy")),
     tone: nullToUndefined(formData.get("tone")),
     businessHoursText: String(formData.get("businessHoursText") ?? ""),
@@ -131,6 +148,9 @@ export async function saveSettings(
       else if (key === "launcherLabel") fieldErrors.launcherLabel ??= issue.message;
       else if (key === "sidebarWorkspaceLabel") fieldErrors.sidebarWorkspaceLabel ??= issue.message;
       else if (key === "dashboardTitle") fieldErrors.dashboardTitle ??= issue.message;
+      else if (key === "botName") fieldErrors.botName ??= issue.message;
+      else if (key === "accentColor") fieldErrors.accentColor ??= issue.message;
+      else if (key === "launcherPosition") fieldErrors.launcherPosition ??= issue.message;
       else if (key === "escalationPolicy") fieldErrors.escalationPolicy ??= issue.message;
       else if (key === "tone") fieldErrors.tone ??= issue.message;
       else if (key === "turnCap") fieldErrors.turnCap ??= issue.message;
@@ -150,6 +170,10 @@ export async function saveSettings(
     launcherLabel,
     sidebarWorkspaceLabel,
     dashboardTitle,
+    botName,
+    accentColor,
+    launcherPosition,
+    suggestedQuestionsText,
     escalationPolicy,
     tone,
     businessHoursText,
@@ -168,11 +192,24 @@ export async function saveSettings(
     });
   }
 
+  const suggestedQuestionsResult = parseSuggestedQuestions(suggestedQuestionsText);
+  if (!suggestedQuestionsResult.ok) {
+    return errorState({
+      fieldErrors: { suggestedQuestionsText: suggestedQuestionsResult.error },
+      formError: null,
+      correlationId: null,
+    });
+  }
+
   const requestBody = {
     greeting: greeting ?? null,
     launcher_label: launcherLabel ?? null,
     sidebar_workspace_label: sidebarWorkspaceLabel ?? null,
     dashboard_title: dashboardTitle ?? null,
+    bot_name: botName ?? null,
+    accent_color: accentColor ?? null,
+    launcher_position: launcherPosition ?? null,
+    suggested_questions: suggestedQuestionsResult.value,
     escalation_policy: escalationPolicy ?? null,
     tone: tone ?? null,
     business_hours: businessHoursResult.value,

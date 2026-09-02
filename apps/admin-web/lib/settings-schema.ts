@@ -41,6 +41,33 @@ export const settingsFormSchema = z.object({
     .max(80, "Dashboard title must be 80 characters or fewer.")
     .optional()
     .transform((value) => (value && value.length > 0 ? value : undefined)),
+  botName: z
+    .string()
+    .trim()
+    .max(40, "Bot name must be 40 characters or fewer.")
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined)),
+  accentColor: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined))
+    .refine((value) => value === undefined || /^#[0-9a-fA-F]{6}$/.test(value), {
+      message: "Accent color must be a hex color like #2563eb.",
+    }),
+  launcherPosition: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined))
+    .refine((value) => value === undefined || value === "left" || value === "right", {
+      message: "Launcher position must be left or right.",
+    })
+    .transform((value) => value as "left" | "right" | undefined),
+  // Raw textarea contents (one question per line) -- parsed/validated
+  // separately by `parseSuggestedQuestions` (mirrors `businessHoursText`'s
+  // own split between raw form field and a pure parser).
+  suggestedQuestionsText: z.string(),
   escalationPolicy: z
     .string()
     .trim()
@@ -146,9 +173,54 @@ export function stringifyBusinessHours(
   return JSON.stringify(value, null, 2);
 }
 
+export type ParseSuggestedQuestionsResult =
+  | { ok: true; value: string[] | null }
+  | { ok: false; error: string };
+
+const MAX_SUGGESTED_QUESTIONS = 5;
+const MAX_SUGGESTED_QUESTION_LENGTH = 200;
+
 /**
- * The four text-field values the settings form's inputs are controlled by.
- * A plain string mirror of `BotSettings`' qualitative fields, keyed to the
+ * Pure, unit-testable guard for the `suggested_questions` textarea -- one
+ * question per line (decision: simplify away a `{message,label}` editor UI,
+ * see the widget branding/personalization plan). Blank/whitespace-only ->
+ * `{ok:true, value:null}` (the backend clears the field, tenant falls back
+ * to the widget's hardcoded demo chips). More than 5 non-blank lines, or any
+ * line over 200 characters, -> `{ok:false, error}`.
+ */
+export function parseSuggestedQuestions(raw: string): ParseSuggestedQuestionsResult {
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length === 0) {
+    return { ok: true, value: null };
+  }
+  if (lines.length > MAX_SUGGESTED_QUESTIONS) {
+    return { ok: false, error: `Enter at most ${MAX_SUGGESTED_QUESTIONS} suggested questions.` };
+  }
+  if (lines.some((line) => line.length > MAX_SUGGESTED_QUESTION_LENGTH)) {
+    return {
+      ok: false,
+      error: `Each suggested question must be ${MAX_SUGGESTED_QUESTION_LENGTH} characters or fewer.`,
+    };
+  }
+
+  return { ok: true, value: lines };
+}
+
+/** Pretty-prints a `suggested_questions` value for the textarea's default
+ * content -- one question per line, mirroring `stringifyBusinessHours`'s
+ * "null/undefined -> empty textarea" contract. */
+export function stringifySuggestedQuestions(value: string[] | null | undefined): string {
+  if (!value || value.length === 0) return "";
+  return value.join("\n");
+}
+
+/**
+ * The text-field values the settings form's inputs are controlled by. A
+ * plain string mirror of `BotSettings`' qualitative fields, keyed to the
  * form's `name` attributes.
  */
 export interface SettingsFieldValues {
@@ -156,6 +228,10 @@ export interface SettingsFieldValues {
   launcherLabel: string;
   sidebarWorkspaceLabel: string;
   dashboardTitle: string;
+  botName: string;
+  accentColor: string;
+  launcherPosition: string;
+  suggestedQuestionsText: string;
   businessHoursText: string;
   escalationPolicy: string;
   tone: string;
@@ -173,6 +249,10 @@ export function fieldValuesFromSettings(settings: BotSettings): SettingsFieldVal
     launcherLabel: settings.launcherLabel ?? "",
     sidebarWorkspaceLabel: settings.sidebarWorkspaceLabel ?? "",
     dashboardTitle: settings.dashboardTitle ?? "",
+    botName: settings.botName ?? "",
+    accentColor: settings.accentColor ?? "",
+    launcherPosition: settings.launcherPosition ?? "",
+    suggestedQuestionsText: stringifySuggestedQuestions(settings.suggestedQuestions),
     businessHoursText: stringifyBusinessHours(settings.businessHours),
     escalationPolicy: settings.escalationPolicy ?? "",
     tone: settings.tone ?? "",

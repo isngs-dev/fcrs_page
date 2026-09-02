@@ -81,6 +81,10 @@ class _StubDatabase:
                 {
                     "business_hours": row.get("business_hours"),
                     "launcher_label": row.get("launcher_label"),
+                    "bot_name": row.get("bot_name"),
+                    "accent_color": row.get("accent_color"),
+                    "launcher_position": row.get("launcher_position"),
+                    "suggested_questions": row.get("suggested_questions"),
                 }
                 if row is not None
                 else None
@@ -463,6 +467,101 @@ async def test_widget_session_omits_launcher_label_when_the_tenant_has_none() ->
 
     assert response.status_code == 200
     assert "launcher_label" not in response.json()
+
+
+async def test_widget_session_branding_fields_are_tenant_isolated() -> None:
+    """Tenant A's client key must never echo tenant B's branding (mandatory
+    multi-tenant isolation coverage, CLAUDE.md Sec.3)."""
+    app = _build_app(
+        bot_settings={
+            _TENANT_A_ID: {"bot_name": "Aria", "accent_color": "#16a34a"},
+            _TENANT_B_ID: {"bot_name": "Nova", "accent_color": "#dc2626"},
+        },
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        response = await c.post(
+            "/widget/session",
+            json={"client_key": _CLIENT_KEY_A},
+            headers={"Origin": "http://localhost:3000"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bot_name"] == "Aria"
+    assert body["accent_color"] == "#16a34a"
+    assert body["bot_name"] != "Nova"
+    assert body["accent_color"] != "#dc2626"
+
+
+async def test_widget_session_echoes_configured_branding_fields() -> None:
+    app = _build_app(
+        bot_settings={
+            _TENANT_A_ID: {
+                "bot_name": "Aria",
+                "accent_color": "#16a34a",
+                "launcher_position": "left",
+                "suggested_questions": ["Do you serve my area?", "How much does it cost?"],
+            },
+        },
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        response = await c.post(
+            "/widget/session",
+            json={"client_key": _CLIENT_KEY_A},
+            headers={"Origin": "http://localhost:3000"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bot_name"] == "Aria"
+    assert body["accent_color"] == "#16a34a"
+    assert body["launcher_position"] == "left"
+    assert body["suggested_questions"] == ["Do you serve my area?", "How much does it cost?"]
+
+
+async def test_widget_session_omits_branding_fields_when_tenant_has_none() -> None:
+    app = _build_app(bot_settings={_TENANT_A_ID: {"bot_name": None}})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        response = await c.post(
+            "/widget/session",
+            json={"client_key": _CLIENT_KEY_A},
+            headers={"Origin": "http://localhost:3000"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "bot_name" not in body
+    assert "accent_color" not in body
+    assert "launcher_position" not in body
+    assert "suggested_questions" not in body
+
+
+async def test_widget_branding_repository_query_is_tenant_scoped_and_parameterized() -> None:
+    """The admission echo may only read the resolved tenant's row."""
+    from api.gateway.repository import get_widget_branding
+
+    class _RecordingDatabase:
+        query: str = ""
+        args: tuple[object, ...] = ()
+
+        async def fetchrow(self, query: str, *args: object) -> dict[str, object]:
+            self.query = query
+            self.args = args
+            return {
+                "bot_name": "Aria",
+                "accent_color": "#16a34a",
+                "launcher_position": "left",
+                "suggested_questions": ["Q1"],
+            }
+
+    db = _RecordingDatabase()
+    branding = await get_widget_branding(db, _TENANT_A_ID)
+    assert branding.bot_name == "Aria"
+    assert branding.accent_color == "#16a34a"
+    assert branding.launcher_position == "left"
+    assert branding.suggested_questions == ["Q1"]
+    assert "WHERE tenant_id = $1" in db.query
+    assert db.args == (_TENANT_A_ID,)
 
 
 async def test_launcher_label_repository_query_is_tenant_scoped_and_parameterized() -> None:

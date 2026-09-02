@@ -15,7 +15,12 @@ from pydantic import BaseModel
 
 from api.config import get_api_settings
 from api.gateway.dependencies import get_visitor_claims
-from api.gateway.repository import get_launcher_label, get_resume_enabled, get_tenant_by_client_key
+from api.gateway.repository import (
+    get_launcher_label,
+    get_resume_enabled,
+    get_tenant_by_client_key,
+    get_widget_branding,
+)
 from api.gateway.sessions import mint_visitor_session, origin_allowed
 from api.ratelimit import client_ip, enforce_rate_limit
 from api.voice.factory import asr_configured, tts_configured
@@ -35,7 +40,7 @@ class WidgetSessionRequest(BaseModel):
 async def widget_session(
     body: WidgetSessionRequest,
     request: Request,
-) -> dict[str, str | bool]:
+) -> dict[str, str | bool | list[str]]:
     """Validate client key + Origin, mint a visitor session token."""
     settings = get_api_settings()
 
@@ -81,12 +86,13 @@ async def widget_session(
     # the JWT, or any authorization SQL.
     resume_enabled = await get_resume_enabled(db, tenant["id"])
     launcher_label = await get_launcher_label(db, tenant["id"])
+    branding = await get_widget_branding(db, tenant["id"])
 
     _log.info(
         "visitor session minted",
         extra={"event": "widget_session", "tenant_id": tenant["id"]},
     )
-    response: dict[str, str | bool] = {
+    response: dict[str, str | bool | list[str]] = {
         "visitor_token": token,
         "expires_at": expires_at,
         "resume_enabled": resume_enabled,
@@ -101,6 +107,14 @@ async def widget_session(
     }
     if launcher_label is not None:
         response["launcher_label"] = launcher_label
+    if branding.bot_name is not None:
+        response["bot_name"] = branding.bot_name
+    if branding.accent_color is not None:
+        response["accent_color"] = branding.accent_color
+    if branding.launcher_position is not None:
+        response["launcher_position"] = branding.launcher_position
+    if branding.suggested_questions is not None:
+        response["suggested_questions"] = branding.suggested_questions
     return response
 
 

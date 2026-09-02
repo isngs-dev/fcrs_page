@@ -29,7 +29,7 @@ const mintVisitorSessionMock = vi.fn<(config: WidgetConfig) => Promise<Admission
 // unchanged, exactly as before cloud voice existed.
 const isVoiceAsrEnabledMock = vi.fn<() => boolean>(() => false);
 const transcribeAudioMock = vi.fn<(config: WidgetConfig, audio: Blob) => Promise<TranscribeResult>>();
-const speakGreetingMock = vi.fn<(config: WidgetConfig, onBlocked?: () => void) => void>();
+const speakGreetingMock = vi.fn<(config: WidgetConfig, onBlocked?: () => void, botName?: string) => void>();
 const speakMock = vi.fn<(config: WidgetConfig, text: string, onBlocked?: () => void) => void>();
 const ttsCancelMock = vi.fn<() => void>();
 // SR-3: isResumeEnabled defaults false so every pre-existing test above
@@ -89,9 +89,11 @@ vi.mock("../voice", () => ({
 
 vi.mock("../tts", () => ({
   speak: (config: WidgetConfig, text: string, onBlocked?: () => void) => speakMock(config, text, onBlocked),
-  speakGreeting: (config: WidgetConfig, onBlocked?: () => void) => speakGreetingMock(config, onBlocked),
+  speakGreeting: (config: WidgetConfig, onBlocked?: () => void, botName?: string) =>
+    speakGreetingMock(config, onBlocked, botName),
   cancel: () => ttsCancelMock(),
   TTS_GREETING_TEXT: "Hi! How can we help?",
+  DEFAULT_BOT_NAME: "Rebecca",
 }));
 
 // ScheduleCta (rendered for action=schedule_cta, S14.4) calls fetchSlots on
@@ -726,6 +728,132 @@ describe("ChatWidget", () => {
     });
 
     expect(container.querySelector(".cw-launcher-label")?.textContent).toBe("Ask Rebecca");
+  });
+
+  describe("widget branding & personalization", () => {
+    it("templates a configured botName into the launcher default, panel header, composer placeholder, disclaimer, and welcome heading", () => {
+      act(() => {
+        root.render(
+          <ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" botName="Aria" />,
+        );
+      });
+      openPanel();
+
+      expect(container.querySelector(".cw-launcher-label")?.textContent).toBe("Ask Aria");
+      expect(container.querySelector("#cw-panel-header")?.textContent).toContain("Aria");
+      expect(getInput().placeholder).toBe("Message Aria…");
+      expect(container.querySelector(".cw-disclaimer")?.textContent).toContain("Aria is AI and can make mistakes");
+      expect(container.querySelector(".cw-welcome")?.textContent).toContain("Hi, I’m Aria");
+      expect(speakGreetingMock).toHaveBeenCalledWith(baseConfig, expect.any(Function), "Aria");
+    });
+
+    it("falls back to the default bot name (Rebecca) everywhere when botName is unset", () => {
+      act(() => {
+        root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      openPanel();
+
+      expect(container.querySelector("#cw-panel-header")?.textContent).toContain("Rebecca");
+      expect(getInput().placeholder).toBe("Message Rebecca…");
+      expect(speakGreetingMock).toHaveBeenCalledWith(baseConfig, expect.any(Function), "Rebecca");
+    });
+
+    it("renders tenant-configured suggested questions instead of the hardcoded demo chips, and sends a click as a plain message (no booking sentinel routing)", async () => {
+      sendTurnMock.mockResolvedValueOnce({
+        ok: true,
+        turn: {
+          conversationId: "conv-custom-suggestion",
+          messageId: "msg-custom-suggestion",
+          reply: "We serve the whole metro area.",
+          decision: "answer",
+          confidence: 0.9,
+          sources: [],
+          action: null,
+        },
+      });
+
+      act(() => {
+        root.render(
+          <ChatWidget
+            config={baseConfig}
+            expiresAt="2026-07-16T12:30:00Z"
+            suggestedQuestions={["Do you serve my area?", "How much does it cost?"]}
+          />,
+        );
+      });
+      openPanel();
+
+      const chips = Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-suggestion"));
+      expect(chips.map((chip) => chip.textContent)).toEqual([
+        "Do you serve my area?",
+        "How much does it cost?",
+      ]);
+
+      act(() => {
+        chips[0]?.click();
+      });
+      await flush();
+
+      expect(sendTurnMock).toHaveBeenCalledWith(
+        baseConfig,
+        expect.objectContaining({ message: "Do you serve my area?" }),
+      );
+    });
+
+    it("applies a configured accentColor and launcherPosition to the shadow host element", () => {
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const shadowRoot = host.attachShadow({ mode: "open" });
+      const shadowContainer = document.createElement("div");
+      shadowRoot.appendChild(shadowContainer);
+      const shadowReactRoot = createRoot(shadowContainer);
+
+      try {
+        act(() => {
+          shadowReactRoot.render(
+            <ChatWidget
+              config={baseConfig}
+              expiresAt="2026-07-16T12:30:00Z"
+              accentColor="#16a34a"
+              launcherPosition="left"
+            />,
+          );
+        });
+
+        expect(host.style.getPropertyValue("--cw-citron")).toBe("#16a34a");
+        expect(host.getAttribute("data-position")).toBe("left");
+      } finally {
+        act(() => {
+          shadowReactRoot.unmount();
+        });
+        host.remove();
+      }
+    });
+
+    it("does not touch the shadow host's accent color/position when unconfigured", () => {
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const shadowRoot = host.attachShadow({ mode: "open" });
+      const shadowContainer = document.createElement("div");
+      shadowRoot.appendChild(shadowContainer);
+      const shadowReactRoot = createRoot(shadowContainer);
+
+      try {
+        act(() => {
+          shadowReactRoot.render(
+            <ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />,
+          );
+        });
+
+        expect(host.style.getPropertyValue("--cw-citron")).toBe("");
+        expect(host.hasAttribute("data-position")).toBe(false);
+      } finally {
+        act(() => {
+          shadowReactRoot.unmount();
+        });
+        host.remove();
+      }
+    });
   });
 
   it("ships a self-contained floating Rebecca panel CSS contract", () => {

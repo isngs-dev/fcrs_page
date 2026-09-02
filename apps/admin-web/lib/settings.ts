@@ -18,6 +18,10 @@ export interface BotSettings {
   launcherLabel: string | null;
   sidebarWorkspaceLabel: string | null;
   dashboardTitle: string | null;
+  botName: string | null;
+  accentColor: string | null;
+  launcherPosition: "left" | "right" | null;
+  suggestedQuestions: string[] | null;
   businessHours: Record<string, unknown> | null;
   escalationPolicy: string | null;
   tone: string | null;
@@ -34,6 +38,10 @@ interface AdminBotSettingsResponseBody {
   launcher_label: string | null;
   sidebar_workspace_label: string | null;
   dashboard_title: string | null;
+  bot_name: string | null;
+  accent_color: string | null;
+  launcher_position: "left" | "right" | null;
+  suggested_questions: string[] | null;
   business_hours: Record<string, unknown> | null;
   escalation_policy: string | null;
   tone: string | null;
@@ -55,6 +63,10 @@ function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
     launcherLabel: body.launcher_label,
     sidebarWorkspaceLabel: body.sidebar_workspace_label ?? null,
     dashboardTitle: body.dashboard_title ?? null,
+    botName: body.bot_name ?? null,
+    accentColor: body.accent_color ?? null,
+    launcherPosition: body.launcher_position ?? null,
+    suggestedQuestions: body.suggested_questions ?? null,
     businessHours: body.business_hours,
     escalationPolicy: body.escalation_policy,
     tone: body.tone,

@@ -49,6 +49,10 @@ function mockSettingsFetch() {
           launcher_label: "Chat with us",
           sidebar_workspace_label: "Client workspace",
           dashboard_title: "Dashboard",
+          bot_name: null,
+          accent_color: null,
+          launcher_position: null,
+          suggested_questions: null,
           business_hours: null,
           escalation_policy: "Escalate after 2 questions.",
           tone: "friendly",
@@ -129,15 +133,17 @@ describe("SettingsPage -- Bot-settings shell only (split from the combined route
     );
   });
 
-  it("Appearance rail entry is disabled, no Appearance section is built (D4)", async () => {
+  it("Appearance rail entry is a real anchor to a real accent-color/launcher-position section (widget branding/personalization)", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
     mockSettingsFetch();
 
     const element = await SettingsPage();
     const html = renderToStaticMarkup(element);
 
-    expect(html).toMatch(/Appearance/);
-    expect(html).not.toMatch(/<a[^>]+href="#settings-appearance"/);
+    expect(html).toMatch(/<a[^>]+href="#settings-appearance"/);
+    expect(html).toMatch(/id="settings-appearance"/);
+    expect(html).toMatch(/name="accentColor"/);
+    expect(html).toMatch(/name="launcherPosition"/);
   });
 
   it("CLIENT_AGENT gets a read-only view, no Save/Publish/Discard buttons", async () => {

@@ -34,12 +34,23 @@ const SessionResponseSchema = z.object({
   // (browser-native SpeechRecognition/speechSynthesis only).
   voice_asr_enabled: z.boolean().optional(),
   voice_tts_enabled: z.boolean().optional(),
+  // Widget branding & personalization -- all optional, absent -> the
+  // widget's hardcoded defaults (same "older backend or unconfigured
+  // tenant" fallback contract as launcher_label above).
+  bot_name: z.string().max(40).optional(),
+  accent_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  launcher_position: z.enum(["left", "right"]).optional(),
+  suggested_questions: z.array(z.string().max(200)).max(5).optional(),
 });
 
 export interface VisitorSession {
   visitorToken: string;
   expiresAt: string;
   launcherLabel?: string;
+  botName?: string;
+  accentColor?: string;
+  launcherPosition?: "left" | "right";
+  suggestedQuestions?: string[];
 }
 
 /** The typed shape of the backend's central error envelope. */
@@ -250,6 +261,14 @@ export async function mintVisitorSession(config: WidgetConfig): Promise<Admissio
     ...(parsed.data.launcher_label === undefined
       ? {}
       : { launcherLabel: parsed.data.launcher_label }),
+    ...(parsed.data.bot_name === undefined ? {} : { botName: parsed.data.bot_name }),
+    ...(parsed.data.accent_color === undefined ? {} : { accentColor: parsed.data.accent_color }),
+    ...(parsed.data.launcher_position === undefined
+      ? {}
+      : { launcherPosition: parsed.data.launcher_position }),
+    ...(parsed.data.suggested_questions === undefined
+      ? {}
+      : { suggestedQuestions: parsed.data.suggested_questions }),
   };
 
   // SR-3 decision 8: a fresh mint (as opposed to a hydrated resume) resets

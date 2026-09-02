@@ -33,13 +33,16 @@
  * This is a RE-LAYOUT, not a re-spec (D9): the controlled-`fields` state,
  * the `saveSettings` wiring, `shouldResetFieldsToServerValues` gating, and
  * every field's validation are UNCHANGED -- only markup/layout moved, and
- * `actions.ts` is untouched. Only REAL backend fields are editable here
- * (greeting, launcherLabel, sidebarWorkspaceLabel, dashboardTitle,
- * businessHoursText, escalationPolicy, tone); the mock's "Bot name",
- * "Suggested questions", behavior toggles, fallback/qualification dropdowns,
- * and appearance swatches have no backend field to bind to (see
- * `lib/settings.ts` / `lib/settings-schema.ts`) and are rendered as an
- * explicit "not available yet" gap notice rather than fake, no-op controls.
+ * `actions.ts` is untouched. Editable fields here: greeting, launcherLabel,
+ * sidebarWorkspaceLabel, dashboardTitle, botName, suggestedQuestionsText,
+ * businessHoursText, escalationPolicy, tone, accentColor, launcherPosition
+ * (widget branding/personalization: the two "coming soon" gap-notice cards
+ * this comment used to document are now real fields backed by
+ * `tenant_bot_settings.bot_name/accent_color/launcher_position/
+ * suggested_questions`, delivered to the live widget via `POST
+ * /widget/session` -- see `lib/settings.ts` / `lib/settings-schema.ts`).
+ * The mock's remaining behavior toggles / fallback-qualification dropdowns
+ * still have no backend field and are simply not rendered.
  * `sidebarWorkspaceLabel`/`dashboardTitle` are folded into Persona (they are
  * real, already-shipped fields) rather than given their own "Workspace"
  * section-nav entry, since D9 reserves that label for SR-20's real
@@ -173,6 +176,10 @@ export function SettingsForm({
     fields.launcherLabel !== serverFields.launcherLabel ||
     fields.sidebarWorkspaceLabel !== serverFields.sidebarWorkspaceLabel ||
     fields.dashboardTitle !== serverFields.dashboardTitle ||
+    fields.botName !== serverFields.botName ||
+    fields.accentColor !== serverFields.accentColor ||
+    fields.launcherPosition !== serverFields.launcherPosition ||
+    fields.suggestedQuestionsText !== serverFields.suggestedQuestionsText ||
     fields.businessHoursText !== serverFields.businessHoursText ||
     fields.escalationPolicy !== serverFields.escalationPolicy ||
     fields.tone !== serverFields.tone ||
@@ -240,11 +247,9 @@ export function SettingsForm({
             over from before the `/settings` and `/workspace` route split;
             see workspace/page.tsx's doc comment for that split): icon rail
             via the shared SettingsRail primitive (Persona/Behavior/Install/
-            Appearance). Persona/Behavior/Install are in-page anchors (this
-            shell owns those sections); Appearance is disabled -- no
-            appearance/theme field exists anywhere on the bot-settings or
-            workspace payloads (matching the Billing treatment in the
-            Settings shell). */}
+            Appearance). All four are in-page anchors -- Appearance (accent
+            color + launcher position) is a real section since widget
+            branding/personalization gave it backing fields. */}
         <SettingsRail
           eyebrow="Sections"
           rows={
@@ -252,7 +257,7 @@ export function SettingsForm({
               { kind: "anchor", key: "persona", label: "Persona", href: "#settings-persona", icon: PERSONA_ICON, active: true },
               { kind: "anchor", key: "behavior", label: "Behavior", href: "#settings-behavior", icon: BEHAVIOR_ICON },
               { kind: "anchor", key: "install", label: "Install", href: "#settings-install", icon: INSTALL_ICON },
-              { kind: "disabled", key: "appearance", label: "Appearance", icon: APPEARANCE_ICON },
+              { kind: "anchor", key: "appearance", label: "Appearance", href: "#settings-appearance", icon: APPEARANCE_ICON },
             ] satisfies SettingsRailRow[]
           }
         />
@@ -365,14 +370,44 @@ export function SettingsForm({
               ) : null}
             </SetRow>
 
-            <div className="my-3 flex flex-col gap-1.5 rounded-md border border-dashed border-[var(--line-2)] bg-secondary p-3">
-              <p className="text-xs font-semibold text-[var(--ink-2)]">
-                Bot name &amp; suggested questions — coming soon
-              </p>
-              <p className="text-xs text-muted-foreground">
-                These aren&apos;t configurable yet; there&apos;s no backend field for them.
-              </p>
-            </div>
+            <SetRow label="Bot name" description={'Up to 40 characters. Leave blank for "Rebecca".'} htmlFor="botName">
+              <input
+                id="botName"
+                name="botName"
+                value={fields.botName}
+                onChange={(e) => setFields((f) => ({ ...f, botName: e.target.value }))}
+                maxLength={40}
+                placeholder="Rebecca"
+                className={SET_ROW_FIELD_CLASS}
+              />
+              {fieldErrors.botName ? (
+                <p role="alert" className="mt-1.5 text-sm text-destructive">
+                  {fieldErrors.botName}
+                </p>
+              ) : null}
+            </SetRow>
+
+            <SetRow
+              label="Suggested questions"
+              description="One question per line, up to 5. Leave blank to use the default suggestions."
+              htmlFor="suggestedQuestionsText"
+              isLast
+            >
+              <Textarea
+                id="suggestedQuestionsText"
+                name="suggestedQuestionsText"
+                value={fields.suggestedQuestionsText}
+                onChange={(e) => setFields((f) => ({ ...f, suggestedQuestionsText: e.target.value }))}
+                rows={4}
+                placeholder={"Do you serve my area?\nHow much does it cost?"}
+                className={`${SET_ROW_FIELD_CLASS} min-h-16`}
+              />
+              {fieldErrors.suggestedQuestionsText ? (
+                <p role="alert" className="mt-1.5 text-sm text-destructive">
+                  {fieldErrors.suggestedQuestionsText}
+                </p>
+              ) : null}
+            </SetRow>
           </div>
 
           <div className="scroll-mt-16 rounded-[14px] border border-[var(--line)] bg-card px-[22px] pb-2 pt-1" id="settings-behavior">
@@ -513,14 +548,58 @@ export function SettingsForm({
             />
           </div>
 
-          <div className="flex flex-col gap-1.5 rounded-md border border-dashed border-[var(--line-2)] bg-secondary p-3.5">
-            <p className="text-xs font-semibold text-[var(--ink-2)]">
-              Widget appearance — coming soon
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Accent color and launcher position swatches aren&apos;t wired to a backend field
-              yet, so they aren&apos;t shown as editable controls here.
-            </p>
+          <div className="scroll-mt-16 rounded-[14px] border border-[var(--line)] bg-card px-[22px] pb-2 pt-1" id="settings-appearance">
+            <h2 className="pt-4 pb-0.5 text-[16px] font-semibold text-foreground">Appearance</h2>
+
+            <SetRow label="Accent color" description="A hex color, e.g. #2563eb. Leave blank for the default blue." htmlFor="accentColor">
+              <div className="flex items-center gap-2.5">
+                <input
+                  type="color"
+                  aria-label="Accent color picker"
+                  value={/^#[0-9a-fA-F]{6}$/.test(fields.accentColor) ? fields.accentColor : "#2563eb"}
+                  onChange={(e) => setFields((f) => ({ ...f, accentColor: e.target.value }))}
+                  className="size-9 shrink-0 cursor-pointer rounded-md border border-border bg-transparent p-0.5"
+                />
+                <input
+                  id="accentColor"
+                  name="accentColor"
+                  value={fields.accentColor}
+                  onChange={(e) => setFields((f) => ({ ...f, accentColor: e.target.value }))}
+                  maxLength={7}
+                  placeholder="#2563eb"
+                  className={SET_ROW_FIELD_CLASS}
+                />
+              </div>
+              {fieldErrors.accentColor ? (
+                <p role="alert" className="mt-1.5 text-sm text-destructive">
+                  {fieldErrors.accentColor}
+                </p>
+              ) : null}
+            </SetRow>
+
+            <SetRow
+              label="Launcher position"
+              description="Which side of the visitor's screen the chat launcher appears on."
+              htmlFor="launcherPosition"
+              isLast
+            >
+              <select
+                id="launcherPosition"
+                name="launcherPosition"
+                value={fields.launcherPosition}
+                onChange={(e) => setFields((f) => ({ ...f, launcherPosition: e.target.value }))}
+                className={SET_ROW_FIELD_CLASS}
+              >
+                <option value="">Default (right)</option>
+                <option value="right">Right</option>
+                <option value="left">Left</option>
+              </select>
+              {fieldErrors.launcherPosition ? (
+                <p role="alert" className="mt-1.5 text-sm text-destructive">
+                  {fieldErrors.launcherPosition}
+                </p>
+              ) : null}
+            </SetRow>
           </div>
         </div>
 
@@ -530,6 +609,13 @@ export function SettingsForm({
             greeting={fields.greeting}
             tone={fields.tone}
             launcherLabel={fields.launcherLabel}
+            botName={fields.botName}
+            accentColor={fields.accentColor}
+            launcherPosition={fields.launcherPosition === "left" ? "left" : "right"}
+            suggestedQuestions={fields.suggestedQuestionsText
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line.length > 0)}
           />
         </aside>
       </div>

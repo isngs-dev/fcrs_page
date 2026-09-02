@@ -350,6 +350,79 @@ describe("mintVisitorSession", () => {
     expect(isVoiceTtsEnabled()).toBe(false);
   });
 
+  // =====================================================================
+  // Widget branding & personalization: bot name, accent color, launcher
+  // position, suggested questions -- all optional, absent -> widget defaults
+  // =====================================================================
+
+  it("parses all four branding fields when the tenant has configured them", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        bot_name: "Aria",
+        accent_color: "#16a34a",
+        launcher_position: "left",
+        suggested_questions: ["Do you serve my area?", "How much does it cost?"],
+      }),
+    );
+
+    const result = await mintVisitorSession(baseConfig);
+
+    expect(result).toMatchObject({
+      ok: true,
+      session: {
+        botName: "Aria",
+        accentColor: "#16a34a",
+        launcherPosition: "left",
+        suggestedQuestions: ["Do you serve my area?", "How much does it cost?"],
+      },
+    });
+  });
+
+  it("omits all four branding fields from the session when the tenant has none configured", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { visitor_token: "jwt.abc.def", expires_at: "2026-07-16T12:30:00Z" }),
+    );
+
+    const result = await mintVisitorSession(baseConfig);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok result");
+    expect(result.session.botName).toBeUndefined();
+    expect(result.session.accentColor).toBeUndefined();
+    expect(result.session.launcherPosition).toBeUndefined();
+    expect(result.session.suggestedQuestions).toBeUndefined();
+  });
+
+  it("returns a typed invalid-response error for a malformed accent_color (not a hex string)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        accent_color: "not-a-color",
+      }),
+    );
+
+    const result = await mintVisitorSession(baseConfig);
+
+    expect(result).toMatchObject({ ok: false, error: { errorCode: "INVALID_RESPONSE_SHAPE" } });
+  });
+
+  it("returns a typed invalid-response error for an unrecognized launcher_position", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        launcher_position: "center",
+      }),
+    );
+
+    const result = await mintVisitorSession(baseConfig);
+
+    expect(result).toMatchObject({ ok: false, error: { errorCode: "INVALID_RESPONSE_SHAPE" } });
+  });
+
   it("a failed mint writes no resume record even when a prior resume_enabled was true", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(422, { error_code: "INVALID_CLIENT_KEY", message: "x", correlation_id: "corr-1" }),

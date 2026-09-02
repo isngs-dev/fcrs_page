@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   fieldValuesFromSettings,
   parseBusinessHours,
+  parseSuggestedQuestions,
   settingsFormSchema,
   shouldResetFieldsToServerValues,
   stringifyBusinessHours,
+  stringifySuggestedQuestions,
 } from "@/lib/settings-schema";
 import type { BotSettings } from "@/lib/settings";
 import type { SaveState } from "@/app/(protected)/settings/actions";
@@ -19,6 +21,7 @@ describe("settingsFormSchema", () => {
       escalationPolicy: "Escalate on refund requests.",
       tone: "friendly",
       businessHoursText: "",
+      suggestedQuestionsText: "",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -37,6 +40,7 @@ describe("settingsFormSchema", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -51,6 +55,7 @@ describe("settingsFormSchema", () => {
       escalationPolicy: "a".repeat(2001),
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -65,6 +70,7 @@ describe("settingsFormSchema", () => {
       escalationPolicy: "",
       tone: "a".repeat(101),
       businessHoursText: "",
+      suggestedQuestionsText: "",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -80,6 +86,7 @@ describe("settingsFormSchema", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -98,8 +105,98 @@ describe("settingsFormSchema", () => {
         escalationPolicy: "",
         tone: "",
         businessHoursText: "",
+        suggestedQuestionsText: "",
       });
       expect(result.success).toBe(false);
+    }
+  });
+
+  it("fails when botName exceeds 40 characters", () => {
+    const result = settingsFormSchema.safeParse({
+      botName: "a".repeat(41),
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      suggestedQuestionsText: "",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.find((i) => i.path[0] === "botName")?.message;
+      expect(msg).toMatch(/40/);
+    }
+  });
+
+  it("accepts a blank accentColor (undefined) and a valid 6-digit hex", () => {
+    const blank = settingsFormSchema.safeParse({
+      accentColor: "",
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      suggestedQuestionsText: "",
+    });
+    expect(blank.success).toBe(true);
+    if (blank.success) expect(blank.data.accentColor).toBeUndefined();
+
+    const valid = settingsFormSchema.safeParse({
+      accentColor: "#16a34a",
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      suggestedQuestionsText: "",
+    });
+    expect(valid.success).toBe(true);
+    if (valid.success) expect(valid.data.accentColor).toBe("#16a34a");
+  });
+
+  it("rejects a malformed accentColor", () => {
+    const result = settingsFormSchema.safeParse({
+      accentColor: "blue",
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      suggestedQuestionsText: "",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.find((i) => i.path[0] === "accentColor")?.message;
+      expect(msg).toMatch(/hex color/i);
+    }
+  });
+
+  it("accepts a blank launcherPosition (undefined) and 'left'/'right'", () => {
+    const blank = settingsFormSchema.safeParse({
+      launcherPosition: "",
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      suggestedQuestionsText: "",
+    });
+    expect(blank.success).toBe(true);
+    if (blank.success) expect(blank.data.launcherPosition).toBeUndefined();
+
+    const left = settingsFormSchema.safeParse({
+      launcherPosition: "left",
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      suggestedQuestionsText: "",
+    });
+    expect(left.success).toBe(true);
+    if (left.success) expect(left.data.launcherPosition).toBe("left");
+  });
+
+  it("rejects an unrecognized launcherPosition", () => {
+    const result = settingsFormSchema.safeParse({
+      launcherPosition: "center",
+      escalationPolicy: "",
+      tone: "",
+      businessHoursText: "",
+      suggestedQuestionsText: "",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues.find((i) => i.path[0] === "launcherPosition")?.message;
+      expect(msg).toMatch(/left or right/i);
     }
   });
 
@@ -112,6 +209,7 @@ describe("settingsFormSchema", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -177,11 +275,60 @@ describe("stringifyBusinessHours", () => {
   });
 });
 
+describe("parseSuggestedQuestions", () => {
+  it("blank/whitespace -> {ok:true, value:null}", () => {
+    expect(parseSuggestedQuestions("")).toEqual({ ok: true, value: null });
+    expect(parseSuggestedQuestions("   \n  \n")).toEqual({ ok: true, value: null });
+  });
+
+  it("one question per non-blank line -> {ok:true, value}, blank lines dropped", () => {
+    const result = parseSuggestedQuestions("Do you serve my area?\n\n  How much does it cost?  \n");
+    expect(result).toEqual({
+      ok: true,
+      value: ["Do you serve my area?", "How much does it cost?"],
+    });
+  });
+
+  it("more than 5 questions -> {ok:false}", () => {
+    const result = parseSuggestedQuestions("a\nb\nc\nd\ne\nf");
+    expect(result.ok).toBe(false);
+  });
+
+  it("a question over 200 characters -> {ok:false}", () => {
+    const result = parseSuggestedQuestions("a".repeat(201));
+    expect(result.ok).toBe(false);
+  });
+
+  it("exactly 5 questions of exactly 200 characters each -> {ok:true}", () => {
+    const line = "a".repeat(200);
+    const result = parseSuggestedQuestions([line, line, line, line, line].join("\n"));
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("stringifySuggestedQuestions", () => {
+  it("null/undefined/empty array -> empty string", () => {
+    expect(stringifySuggestedQuestions(null)).toBe("");
+    expect(stringifySuggestedQuestions(undefined)).toBe("");
+    expect(stringifySuggestedQuestions([])).toBe("");
+  });
+
+  it("round-trips through parseSuggestedQuestions", () => {
+    const value = ["Do you serve my area?", "How much does it cost?"];
+    const str = stringifySuggestedQuestions(value);
+    expect(parseSuggestedQuestions(str)).toEqual({ ok: true, value });
+  });
+});
+
 const baseSettings: BotSettings = {
   greeting: "Hi!",
   launcherLabel: "Chat with our team",
   sidebarWorkspaceLabel: "Acme support",
   dashboardTitle: "Support hub",
+  botName: "Aria",
+  accentColor: "#16a34a",
+  launcherPosition: "left",
+  suggestedQuestions: ["Do you serve my area?"],
   businessHours: { mon: ["09:00", "17:00"] },
   escalationPolicy: "Escalate on refunds.",
   tone: "friendly",
@@ -200,6 +347,10 @@ describe("fieldValuesFromSettings", () => {
       launcherLabel: "Chat with our team",
       sidebarWorkspaceLabel: "Acme support",
       dashboardTitle: "Support hub",
+      botName: "Aria",
+      accentColor: "#16a34a",
+      launcherPosition: "left",
+      suggestedQuestionsText: "Do you serve my area?",
       businessHoursText: '{\n  "mon": [\n    "09:00",\n    "17:00"\n  ]\n}',
       escalationPolicy: "Escalate on refunds.",
       tone: "friendly",
@@ -225,6 +376,10 @@ describe("fieldValuesFromSettings", () => {
       launcherLabel: "",
       sidebarWorkspaceLabel: "",
       dashboardTitle: "",
+      botName: "Aria",
+      accentColor: "#16a34a",
+      launcherPosition: "left",
+      suggestedQuestionsText: "Do you serve my area?",
       businessHoursText: "",
       escalationPolicy: "",
       tone: "",
@@ -240,6 +395,7 @@ describe("settingsFormSchema -- turnCap", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
       turnCap: "",
     });
     expect(result.success).toBe(true);
@@ -253,6 +409,7 @@ describe("settingsFormSchema -- turnCap", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
       turnCap: "3",
     });
     expect(result.success).toBe(true);
@@ -266,6 +423,7 @@ describe("settingsFormSchema -- turnCap", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
       turnCap: "not-a-number",
     });
     expect(result.success).toBe(false);
@@ -280,6 +438,7 @@ describe("settingsFormSchema -- turnCap", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
       turnCap: "0",
     });
     expect(result.success).toBe(false);
@@ -296,6 +455,7 @@ describe("settingsFormSchema -- lowConfidenceStreakCap", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
       lowConfidenceStreakCap: "",
     });
     expect(result.success).toBe(true);
@@ -309,6 +469,7 @@ describe("settingsFormSchema -- lowConfidenceStreakCap", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
       lowConfidenceStreakCap: "2",
     });
     expect(result.success).toBe(true);
@@ -322,6 +483,7 @@ describe("settingsFormSchema -- lowConfidenceStreakCap", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
       lowConfidenceStreakCap: "not-a-number",
     });
     expect(result.success).toBe(false);
@@ -338,6 +500,7 @@ describe("settingsFormSchema -- lowConfidenceStreakCap", () => {
       escalationPolicy: "",
       tone: "",
       businessHoursText: "",
+      suggestedQuestionsText: "",
       lowConfidenceStreakCap: "0",
     });
     expect(result.success).toBe(false);

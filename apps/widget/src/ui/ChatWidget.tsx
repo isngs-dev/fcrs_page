@@ -139,6 +139,14 @@ export interface ChatWidgetProps {
   expiresAt: string;
   /** SR-7: optional tenant copy from the gateway admission response. */
   launcherLabel?: string;
+  /** Widget branding/personalization: optional tenant overrides from the
+   * gateway admission response. Absent -> the widget's hardcoded defaults
+   * (DEFAULT_BOT_NAME / the built-in citron accent / "right" / the
+   * hardcoded demo suggestions), exactly as before this existed. */
+  botName?: string;
+  accentColor?: string;
+  launcherPosition?: "left" | "right";
+  suggestedQuestions?: string[];
   /** SR-3 decision 4: seeds the conversation thread from a resumed
    * sessionStorage record's `conversationId`. `null` on a fresh boot (no
    * resume in play) -- unchanged S14.2 behavior. */
@@ -168,7 +176,6 @@ function getFocusableElements(panel: HTMLElement): HTMLElement[] {
   );
 }
 
-const DEFAULT_LAUNCHER_LABEL = "Ask Rebecca";
 
 interface VoiceRecognitionResultEvent {
   results: ArrayLike<{ 0: { transcript: string } }>;
@@ -334,8 +341,13 @@ export function ChatWidget({
   config,
   expiresAt,
   launcherLabel,
+  botName,
+  accentColor,
+  launcherPosition,
+  suggestedQuestions,
   resumeConversationId = null,
 }: ChatWidgetProps) {
+  const resolvedBotName = botName?.trim() ? botName.trim() : tts.DEFAULT_BOT_NAME;
   // Opens automatically on mount (no launcher click required).
   const [open, setOpen] = useState(true);
   // Exit-confirm: true while the "Are you sure you want to exit?" view is
@@ -531,19 +543,43 @@ export function ChatWidget({
   const attemptGreeting = useCallback(() => {
     if (hasGreetedRef.current || muted) return;
     hasGreetedRef.current = true;
-    void tts.speakGreeting(config, () => {
-      // Blocked (most commonly Chrome's "no speak() without prior user
-      // activation on this frame" policy) — allow the next trigger (the
-      // first-interaction listener below, or a manual open) to retry.
-      hasGreetedRef.current = false;
-    });
-  }, [muted, config]);
+    void tts.speakGreeting(
+      config,
+      () => {
+        // Blocked (most commonly Chrome's "no speak() without prior user
+        // activation on this frame" policy) — allow the next trigger (the
+        // first-interaction listener below, or a manual open) to retry.
+        hasGreetedRef.current = false;
+      },
+      resolvedBotName,
+    );
+  }, [muted, config, resolvedBotName]);
 
   useEffect(() => {
     if (open) {
       attemptGreeting();
     }
   }, [open, attemptGreeting]);
+
+  // Widget branding/personalization decision 4/7: apply the tenant's
+  // accent color / launcher position to the shadow HOST element (not the
+  // shadow-root-internal panel/launcher nodes), since `:host`/inline custom
+  // properties and `:host([data-position])` selectors both key off the
+  // host's own attributes/inline style. Resolved via `getRootNode()` off
+  // the always-mounted launcher button rather than threading the host
+  // through mount.tsx/entry.tsx. A no-op (never overwrites) when the field
+  // is unset, exactly like `resolvedLauncherLabel`'s own fallback.
+  useEffect(() => {
+    const root = launcherRef.current?.getRootNode();
+    const host = root instanceof ShadowRoot ? root.host : null;
+    if (!(host instanceof HTMLElement)) return;
+    if (accentColor) {
+      host.style.setProperty("--cw-citron", accentColor);
+    }
+    if (launcherPosition) {
+      host.setAttribute("data-position", launcherPosition);
+    }
+  }, [accentColor, launcherPosition]);
 
   // Fallback for browsers (Chrome) that block the "just picked voice mode"
   // attempt above for lack of prior user activation: the visitor's first
@@ -1196,10 +1232,10 @@ export function ChatWidget({
     if (pending || schedulePending) return;
     setMessages((prev) => [
       ...prev,
-      { id: nextLocalId(), role: "user", text: "Stay with Rebecca" },
+      { id: nextLocalId(), role: "user", text: `Stay with ${resolvedBotName}` },
       { id: nextLocalId(), role: "bot", text: SUPPORT_STAY_REPLY },
     ]);
-  }, [pending, schedulePending]);
+  }, [pending, schedulePending, resolvedBotName]);
 
   /** Manual Retry (decision 4/6): replay the last failed send without a new optimistic bubble. */
   const handleManualRetry = useCallback(async () => {
@@ -1260,7 +1296,7 @@ export function ChatWidget({
 
   const resolvedLauncherLabel = launcherLabel?.trim()
     ? launcherLabel
-    : DEFAULT_LAUNCHER_LABEL;
+    : `Ask ${resolvedBotName}`;
 
   return (
     <>
@@ -1297,7 +1333,7 @@ export function ChatWidget({
               <div className="cw-panel-header">
                 <span className="cw-assistant-mark" aria-hidden="true" />
                 <span className="cw-panel-title">
-                  <span id={PANEL_HEADER_ID}>Rebecca <span className="cw-panel-role">&middot; AI assistant</span></span>
+                  <span id={PANEL_HEADER_ID}>{resolvedBotName} <span className="cw-panel-role">&middot; AI assistant</span></span>
                   <span className={`cw-panel-presence cw-panel-presence-${connectionState.kind}`}>
                     <span className="cw-presence-dot" aria-hidden="true" />
                     {connectionPresence(connectionState)}
@@ -1363,6 +1399,8 @@ export function ChatWidget({
                     messages={messages}
                     pending={pending}
                     config={config}
+                    botName={resolvedBotName}
+                    {...(suggestedQuestions ? { suggestions: suggestedQuestions } : {})}
                     onSuggestion={(message) => void handleSuggestion(message)}
                     onIdentityCaptured={handleIdentityCaptured}
                     onHandoffTalk={() => void startScheduling("Talk to a rep")}
@@ -1396,7 +1434,7 @@ export function ChatWidget({
                         ref={inputRef}
                         type="text"
                         className="cw-input"
-                          placeholder="Message Rebecca…"
+                          placeholder={`Message ${resolvedBotName}…`}
                         value={inputValue}
                         disabled={pending}
                         onChange={(e) => {
@@ -1433,7 +1471,7 @@ export function ChatWidget({
                       </div>
                     )}
                     <p className="cw-disclaimer">
-                      Rebecca is AI and can make mistakes <span aria-hidden="true">&middot;</span>{" "}
+                      {resolvedBotName} is AI and can make mistakes <span aria-hidden="true">&middot;</span>{" "}
                       <a className="cw-privacy-link" href="/privacy">Privacy policy</a>
                     </p>
                   </div>

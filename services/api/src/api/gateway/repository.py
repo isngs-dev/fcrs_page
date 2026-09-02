@@ -23,6 +23,7 @@ whose ``business_hours`` JSON lacks the key, or whose value is not literally
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from common.db import Database
@@ -30,6 +31,16 @@ from common.db import Database
 from api.admin.repository import _hash_client_key
 
 Row = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class WidgetBranding:
+    """Optional per-tenant widget branding, read pre-auth at session mint."""
+
+    bot_name: str | None
+    accent_color: str | None
+    launcher_position: str | None
+    suggested_questions: list[str] | None
 
 
 async def get_tenant_by_client_key(db: Database, client_key: str) -> Row | None:
@@ -87,3 +98,32 @@ async def get_launcher_label(db: Database, tenant_id: str) -> str | None:
         return None
     value = row.get("launcher_label") if hasattr(row, "get") else row["launcher_label"]
     return value if isinstance(value, str) else None
+
+
+async def get_widget_branding(db: Database, tenant_id: str) -> WidgetBranding:
+    """Read a resolved tenant's optional widget branding during admission.
+
+    Same pre-auth, unscoped-by-``AuthClaims`` reasoning as ``get_launcher_label``
+    -- bundled into one query since all four fields are needed on every
+    session mint.
+    """
+    row = await db.fetchrow(
+        "SELECT bot_name, accent_color, launcher_position, suggested_questions "
+        "FROM tenant_bot_settings WHERE tenant_id = $1",
+        tenant_id,
+    )
+    if row is None:
+        return WidgetBranding(
+            bot_name=None, accent_color=None, launcher_position=None, suggested_questions=None
+        )
+    suggested_questions = row["suggested_questions"]
+    return WidgetBranding(
+        bot_name=row["bot_name"] if isinstance(row["bot_name"], str) else None,
+        accent_color=row["accent_color"] if isinstance(row["accent_color"], str) else None,
+        launcher_position=(
+            row["launcher_position"] if isinstance(row["launcher_position"], str) else None
+        ),
+        suggested_questions=(
+            suggested_questions if isinstance(suggested_questions, list) else None
+        ),
+    )
