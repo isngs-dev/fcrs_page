@@ -80,7 +80,7 @@ function ChecklistItem({
       {!done ? (
         <Link
           href={href}
-          className="flex shrink-0 items-center gap-1 text-[12.5px] font-semibold text-[var(--accent,#1d4ed8)] hover:underline"
+          className="flex shrink-0 items-center gap-1 text-[12.5px] font-semibold text-foreground underline underline-offset-2 hover:no-underline"
         >
           {linkLabel}
           <ArrowRight aria-hidden className="size-3.5" />
@@ -138,7 +138,7 @@ export function OnboardingChecklist({
           </span>
           <Link
             href={knowledgeHref}
-            className="flex shrink-0 items-center gap-1 text-[12.5px] font-semibold text-[var(--accent,#1d4ed8)] hover:underline"
+            className="flex shrink-0 items-center gap-1 text-[12.5px] font-semibold text-foreground underline underline-offset-2 hover:no-underline"
           >
             Try it now
             <ArrowRight aria-hidden className="size-3.5" />
