@@ -4,14 +4,27 @@
  * which forwards the caller's session cookie to admin-api server-side and
  * streams the bytes back. See that route handler's header comment for why
  * a raw `<a href>` to admin-api directly cannot work.
+ *
+ * `tenantId` (platform-admin per-client reports): threaded straight through
+ * to `reportCsvPath`, which already sets it as a `tenant_id` query param the
+ * CSV proxy route already reads -- omitted entirely for the client-facing
+ * pages (own-tenant export, unchanged).
  */
 import type { ReportName } from "@/lib/reports";
 import { reportCsvPath } from "@/lib/reports";
 
-export function DownloadCsvLink({ report, query }: { report: ReportName; query: string }) {
+export function DownloadCsvLink({
+  report,
+  query,
+  tenantId,
+}: {
+  report: ReportName;
+  query: string;
+  tenantId?: string;
+}) {
   return (
     <a
-      href={reportCsvPath(report, query)}
+      href={reportCsvPath(report, query, tenantId)}
       className="inline-flex h-8 items-center rounded-[9px] border border-[var(--border)] px-3.5 text-sm font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--secondary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
     >
       ↧ Download CSV

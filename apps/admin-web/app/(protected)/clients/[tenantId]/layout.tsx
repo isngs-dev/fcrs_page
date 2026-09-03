@@ -14,12 +14,21 @@
  * An unknown/inactive `{tenantId}` is an honest not-found here; the S12.7
  * tenant-scoped data routes independently 404/403 regardless of what this
  * layout renders (defense-in-depth only, per the Constraints section).
+ *
+ * Product decision: platform admins no longer see or edit a client's bot
+ * settings at all (that's exclusively a CLIENT_ADMIN capability now) --
+ * `clients/[tenantId]/settings/**` was deleted rather than kept reachable.
+ * The `<ClientConsoleTabs>` bar below (Analytics | Reports | Knowledge |
+ * Leads) is this layout's first real navigation between sibling per-client
+ * pages -- there was none before, tolerable at 4 direct-URL-only routes,
+ * not once Reports grew to 9.
  */
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth";
 import { getClient } from "@/lib/clients";
 import { RotateKeyControl } from "@/app/(protected)/clients/[tenantId]/rotate-key-control";
+import { ClientConsoleTabs } from "@/app/(protected)/clients/[tenantId]/client-console-tabs";
 
 export default async function ClientLayout({
   children,
@@ -56,6 +65,9 @@ export default async function ClientLayout({
         </nav>
         <RotateKeyControl tenantId={tenantId} />
       </header>
+      <div className="border-b border-input">
+        <ClientConsoleTabs tenantId={tenantId} />
+      </div>
       <div className="flex flex-1 flex-col">{children}</div>
     </div>
   );

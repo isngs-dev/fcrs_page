@@ -69,7 +69,7 @@ function ClientCard({ client }: { client: ClientSummary }) {
 
       <div className="flex gap-2 border-t border-[var(--secondary)] pt-3">
         <Link
-          href={`/clients/${client.tenantId}/settings`}
+          href={`/clients/${client.tenantId}/analytics`}
           className="flex min-h-11 flex-1 items-center justify-center rounded-lg border border-[var(--border)] px-3 text-[11.5px] font-semibold text-[var(--ink-2)] transition-colors hover:bg-[var(--secondary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
         >
           Open console →

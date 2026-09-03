@@ -139,7 +139,7 @@ function ResultView({ state }: { state: Extract<OnboardState, { status: "created
       <Button
         type="button"
         disabled={!acknowledged}
-        onClick={() => window.location.assign(`/clients/${state.tenant.tenantId}/settings`)}
+        onClick={() => window.location.assign(`/clients/${state.tenant.tenantId}/analytics`)}
       >
         Done — go to {state.tenant.name}
       </Button>
