@@ -4,10 +4,11 @@
  * Chatbot System Designs.dc.html#6b` + `HANDOFF-SPEC.md` §2/§3). This is the
  * top-level area a platform admin lands on (D4) -- a tenant card per
  * onboarded client, each linking into that client's management area
- * (`/clients/{tenantId}/settings`), plus the "Add client" platform-level
- * action (D7). Gated by `requireRole` (D6) -- a CLIENT_ADMIN/CLIENT_AGENT who
- * forces this URL is redirected to their own dashboard (mirrors
- * `tenants/new/page.tsx`'s existing pattern).
+ * (`/clients/{tenantId}/settings`), plus links to the dedicated "Add a
+ * chatbot" screen (`/clients/new`, also reachable from the sidebar's Clients
+ * nav entry) for the platform-level onboarding action. Gated by `requireRole`
+ * (D6) -- a CLIENT_ADMIN/CLIENT_AGENT who forces this URL is redirected to
+ * their own dashboard.
  *
  * Design-vs-real-data note (read before "fixing" the status/usage fields):
  * screen 6b's mockup shows ACTIVE/ONBOARDING/PAST DUE badges, a usage row
@@ -28,7 +29,6 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { listClients, type ClientSummary } from "@/lib/clients";
-import { OnboardClientForm } from "@/app/(protected)/clients/onboard-client-form";
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -79,17 +79,17 @@ function ClientCard({ client }: { client: ClientSummary }) {
   );
 }
 
-function AddClientTile() {
+function AddChatbotTile() {
   return (
     <li>
       <Link
-        href="#add-client"
+        href="/clients/new"
         className="flex min-h-[150px] w-full flex-col items-center justify-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-[#d5d5cb] text-[var(--muted-foreground)] transition-colors hover:border-[#a8a99f] hover:text-[var(--muted-foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
       >
         <span className="grid size-[34px] place-items-center rounded-full bg-[var(--secondary)] text-base">
           +
         </span>
-        <span className="text-xs font-semibold">Add a client</span>
+        <span className="text-xs font-semibold">Add a chatbot</span>
       </Link>
     </li>
   );
@@ -122,12 +122,12 @@ export default async function ClientsPage() {
             </p>
           ) : null}
         </div>
-        <a
-          href="#add-client"
+        <Link
+          href="/clients/new"
           className="ml-auto flex min-h-11 items-center whitespace-nowrap rounded-lg bg-[var(--foreground)] px-4 text-[12.5px] font-bold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
         >
-          + New client
-        </a>
+          + Add a chatbot
+        </Link>
       </div>
 
       {result.status === "error" ? (
@@ -142,27 +142,20 @@ export default async function ClientsPage() {
         </p>
       ) : result.items.length === 0 ? (
         <p role="status" className="rounded-[14px] border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm text-[var(--ink-2)]">
-          No clients yet — use &quot;Add a client&quot; below to onboard the first one.
+          No chatbots yet —{" "}
+          <Link href="/clients/new" className="font-semibold underline underline-offset-2">
+            add a chatbot
+          </Link>{" "}
+          to onboard the first one.
         </p>
       ) : (
         <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {result.items.map((client) => (
             <ClientCard key={client.tenantId} client={client} />
           ))}
-          <AddClientTile />
+          <AddChatbotTile />
         </ul>
       )}
-
-      <div id="add-client" className="scroll-mt-6 rounded-[14px] border border-[var(--border)] bg-white p-5">
-        <h2 className="text-sm font-bold text-[var(--foreground)]">Add client</h2>
-        <p className="mt-1 text-[12.5px] text-[var(--muted-foreground)]">
-          Creates a new tenant and its first CLIENT_ADMIN user. The client key (and generated admin
-          password, if any) are shown exactly once — they cannot be recovered later.
-        </p>
-        <div className="mt-4 max-w-md">
-          <OnboardClientForm />
-        </div>
-      </div>
     </div>
   );
 }

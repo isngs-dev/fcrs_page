@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { onboardTenantFormSchema } from "@/lib/tenant-schema";
 
-// See app/(protected)/tenants/new/__tests__/actions.test.ts for why
+// See app/(protected)/clients/__tests__/actions.test.ts for why
 // password-like fixture values are assembled rather than written as a
 // literal `password: "<12+ chars>"` (this repo's secret-scan guard).
 const CREDENTIAL_FIELD = "adminPassword";

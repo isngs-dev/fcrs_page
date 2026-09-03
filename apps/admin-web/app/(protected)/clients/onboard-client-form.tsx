@@ -1,16 +1,16 @@
 "use client";
 
 /**
- * "Add client" form for the client-list screen (D7). Byte-for-byte the same
- * UI/behavior as `tenants/new/onboard-form.tsx`'s `OnboardForm` (same field
- * set, same secrets-hygiene ResultView/CopyButton/acknowledge pattern) --
- * duplicated rather than imported because it binds to
- * `clients/actions.ts`'s `onboardNewClient` (which revalidates `/clients`
- * and lands the admin back on the client list) instead of
- * `tenants/new/actions.ts`'s `onboardTenant` (which lands on `/`). The
- * platform-level "onboard" capability is now reachable from both entry
- * points (this screen's D7 requirement; the original `/tenants/new` screen
- * is unchanged for anyone still using it directly).
+ * "Add a chatbot" form -- used by the dedicated `/clients/new` screen.
+ * Binds to `clients/actions.ts`'s `onboardNewClient`, which revalidates
+ * `/clients` and lands the admin on the new tenant's own settings page
+ * (where its embed script already lives, via `InstallSnippet`).
+ *
+ * Was previously also duplicated inline on the Clients page and at the
+ * now-deleted `/tenants/new` route (a near-identical form bound to a
+ * divergent action that landed on `/`) -- both were consolidated into this
+ * one form + its one dedicated page rather than left as multiple ways to do
+ * the same thing.
  */
 import { useActionState, useId, useState } from "react";
 import { useFormStatus } from "react-dom";
@@ -27,7 +27,7 @@ function SubmitButton() {
   const { pending } = useFormStatus();
   return (
     <Button type="submit" className="w-full" disabled={pending}>
-      {pending ? "Creating client..." : "Create client"}
+      {pending ? "Creating chatbot..." : "Create chatbot"}
     </Button>
   );
 }
@@ -95,7 +95,7 @@ function ResultView({ state }: { state: Extract<OnboardState, { status: "created
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <p className="text-sm">
-          Client <span className="font-medium">{state.tenant.name}</span> (
+          Chatbot for <span className="font-medium">{state.tenant.name}</span> (
           <span className="font-mono">{state.tenant.slug}</span>) created. Admin user{" "}
           <span className="font-medium">{state.tenant.adminEmail}</span>.
         </p>

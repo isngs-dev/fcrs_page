@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const adminApiFetchMock = vi.fn();
+const revalidatePathMock = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -10,7 +11,11 @@ vi.mock("@/lib/api", async () => {
   };
 });
 
-const { onboardTenant } = await import("@/app/(protected)/tenants/new/actions");
+vi.mock("next/cache", () => ({
+  revalidatePath: (...args: unknown[]) => revalidatePathMock(...args),
+}));
+
+const { onboardNewClient } = await import("@/app/(protected)/clients/actions");
 const { AdminApiError } = await import("@/lib/api");
 
 // Field-name constants used as computed object keys below -- this repo's
@@ -50,10 +55,11 @@ function jsonResponse(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-describe("onboardTenant", () => {
+describe("onboardNewClient (the 'Add a chatbot' action)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     adminApiFetchMock.mockReset();
+    revalidatePathMock.mockReset();
   });
 
   it("returns a created state with clientKey + generatedPassword on 201 (auto-generate)", async () => {
@@ -72,7 +78,7 @@ describe("onboardTenant", () => {
       )
     );
 
-    const state = await onboardTenant({ status: "idle" }, buildFormData());
+    const state = await onboardNewClient({ status: "idle" }, buildFormData());
 
     expect(state.status).toBe("created");
     if (state.status === "created") {
@@ -98,7 +104,7 @@ describe("onboardTenant", () => {
       )
     );
 
-    const state = await onboardTenant(
+    const state = await onboardNewClient(
       { status: "idle" },
       buildFormData({ autoGeneratePassword: undefined, [ADMIN_PASSWORD_CAMEL]: FIXTURE_SUPPLIED_SECRET })
     );
@@ -118,7 +124,7 @@ describe("onboardTenant", () => {
       })
     );
 
-    const state = await onboardTenant({ status: "idle" }, buildFormData());
+    const state = await onboardNewClient({ status: "idle" }, buildFormData());
 
     expect(state.status).toBe("error");
     if (state.status === "error") {
@@ -136,7 +142,7 @@ describe("onboardTenant", () => {
       })
     );
 
-    const state = await onboardTenant(
+    const state = await onboardNewClient(
       { status: "idle" },
       buildFormData({ name: "Acme Corp", slug: "acme-corp" })
     );
@@ -160,7 +166,7 @@ describe("onboardTenant", () => {
       })
     );
 
-    const state = await onboardTenant({ status: "idle" }, buildFormData());
+    const state = await onboardNewClient({ status: "idle" }, buildFormData());
 
     expect(state.status).toBe("error");
     if (state.status === "error") {
@@ -178,7 +184,7 @@ describe("onboardTenant", () => {
       })
     );
 
-    const state = await onboardTenant({ status: "idle" }, buildFormData());
+    const state = await onboardNewClient({ status: "idle" }, buildFormData());
 
     expect(state.status).toBe("error");
     if (state.status === "error") {
@@ -189,7 +195,7 @@ describe("onboardTenant", () => {
   it("returns a network-failure message when adminApiFetch throws a non-AdminApiError", async () => {
     adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
 
-    const state = await onboardTenant({ status: "idle" }, buildFormData());
+    const state = await onboardNewClient({ status: "idle" }, buildFormData());
 
     expect(state.status).toBe("error");
     if (state.status === "error") {
@@ -198,7 +204,7 @@ describe("onboardTenant", () => {
   });
 
   it("rejects an invalid slug client-side without calling adminApiFetch", async () => {
-    const state = await onboardTenant(
+    const state = await onboardNewClient(
       { status: "idle" },
       buildFormData({ slug: "Not A Valid Slug" })
     );
@@ -230,7 +236,7 @@ describe("onboardTenant", () => {
       )
     );
 
-    await onboardTenant({ status: "idle" }, buildFormData());
+    await onboardNewClient({ status: "idle" }, buildFormData());
 
     for (const spy of [logSpy, errorSpy, warnSpy]) {
       for (const call of spy.mock.calls) {
@@ -238,5 +244,32 @@ describe("onboardTenant", () => {
         expect(call.join(" ")).not.toContain(FIXTURE_LOGGED_ADMIN_SECRET);
       }
     }
+  });
+
+  it("revalidates /clients on a successful creation (so the new tile appears without a hard refresh)", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          tenant_id: "tenant-4",
+          name: "Acme Corp",
+          slug: "acme-corp",
+          client_key: "raw-client-key-ghi",
+          admin_user_id: "user-4",
+          admin_email: "admin@acme.example",
+          [ADMIN_PASSWORD_SNAKE]: FIXTURE_GENERATED_SECRET,
+        },
+        201
+      )
+    );
+
+    await onboardNewClient({ status: "idle" }, buildFormData());
+
+    expect(revalidatePathMock).toHaveBeenCalledWith("/clients");
+  });
+
+  it("does not call revalidatePath on a client-side validation failure", async () => {
+    await onboardNewClient({ status: "idle" }, buildFormData({ slug: "Not A Valid Slug" }));
+
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 });

@@ -41,7 +41,7 @@ describe("SR-30 D30-1: nested Overview nav (supersedes SR-15 D6's flat-nav claus
     expect(hrefs).not.toContain("/deals");
   });
 
-  it("PLATFORM_ADMIN sees NONE of the CRM entries at any nesting level, and still sees /clients", () => {
+  it("PLATFORM_ADMIN sees NONE of the CRM entries at any nesting level, and still sees /clients + /clients/new", () => {
     const hrefs = visibleLeafHrefsForRole("PLATFORM_ADMIN");
     expect(hrefs).not.toContain("/contacts");
     expect(hrefs).not.toContain("/accounts");
@@ -49,6 +49,16 @@ describe("SR-30 D30-1: nested Overview nav (supersedes SR-15 D6's flat-nav claus
     expect(hrefs).not.toContain("/analytics");
     expect(hrefs).not.toContain("/reports");
     expect(hrefs).toContain("/clients");
+    expect(hrefs).toContain("/clients/new");
+  });
+
+  it("'Add a chatbot' is nested under the Clients parent as a real, PLATFORM_ADMIN-only destination", () => {
+    const platformGroup = navGroups.find((group) => group.label === "Platform")!;
+    const clients = platformGroup.items.find((item) => item.href === "/clients")!;
+    expect(isNavParent(clients)).toBe(true);
+    const child = (clients as NavParent).children.find((c) => c.href === "/clients/new");
+    expect(child?.label).toBe("Add a chatbot");
+    expect(child?.roles).toEqual(["PLATFORM_ADMIN"]);
   });
 
   it("labels the third entity 'Accounts', never 'Companies' (D-naming; D30-2 re-affirms this despite the screenshot)", () => {

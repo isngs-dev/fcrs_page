@@ -17,6 +17,7 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  PlusCircle,
   Settings,
   Settings2,
   Users2,
@@ -158,12 +159,15 @@ const teamItems: NavItem[] = [
   },
 ];
 
-const platformItems: NavItem[] = [
+const platformItems: NavEntry[] = [
   {
     href: "/clients",
     label: "Clients",
     icon: Building2,
     roles: ["PLATFORM_ADMIN"],
+    children: [
+      { href: "/clients/new", label: "Add a chatbot", icon: PlusCircle, roles: ["PLATFORM_ADMIN"] },
+    ],
   },
 ];
 
