@@ -549,6 +549,48 @@ export async function getRecentConversionsReport(
 }
 
 // ---------------------------------------------------------------------------
+// Leads over time (Outcome/ROI Dashboard v1) -- mirrors Bookings above
+// exactly: same bucketed series shape, same `resolveBookingsQuery` (bucket +
+// window) resolver.
+// ---------------------------------------------------------------------------
+
+export interface LeadsOverTimeBucketPoint {
+  bucketStart: string;
+  count: number;
+}
+
+export interface LeadsOverTimeReport {
+  window: { from: string; to: string; bucket: string };
+  series: LeadsOverTimeBucketPoint[];
+  totals: number;
+}
+
+interface LeadsOverTimeResponseBody {
+  window: { from: string; to: string; bucket: string };
+  series: { bucket_start: string; count: number }[];
+  totals: number;
+}
+
+function toLeadsOverTimeReport(body: LeadsOverTimeResponseBody): LeadsOverTimeReport {
+  return {
+    window: body.window,
+    series: body.series.map((b) => ({ bucketStart: b.bucket_start, count: b.count })),
+    totals: body.totals,
+  };
+}
+
+export async function getLeadsOverTimeReport(
+  params: ReportQueryParams,
+  tenantId?: string
+): Promise<ReportResult<LeadsOverTimeReport>> {
+  const query = resolveBookingsQuery(params);
+  return fetchReport<LeadsOverTimeResponseBody, LeadsOverTimeReport>(
+    `${reportBasePath("leads-over-time", tenantId)}?${query}`,
+    toLeadsOverTimeReport
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CSV export links -- point at this app's own `/reports/csv/[report]` route
 // handler (NOT admin-api directly), which forwards the caller's session
 // cookie server-side and streams the bytes back. A raw `<a href>` to
@@ -567,7 +609,8 @@ export type ReportName =
   | "lead-sources"
   | "score-distribution"
   | "agent-performance"
-  | "recent-conversions";
+  | "recent-conversions"
+  | "leads-over-time";
 
 export function reportCsvPath(report: ReportName, query: string, tenantId?: string): string {
   const params = new URLSearchParams(query);

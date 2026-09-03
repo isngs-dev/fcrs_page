@@ -115,6 +115,8 @@ class _StubDatabase:
                 return self._query_lead_sources(args)
             if "GROUP BY ASSIGNED_AGENT_ID" in q:
                 return self._query_agent_performance(args)
+            if "DATE_TRUNC" in q:
+                return self._query_leads_series(query, args)
             return self._query_leads(query, args)
         if "FROM SCHEDULE_EVENTS" in q:
             return self._query_bookings(query, args)
@@ -140,6 +142,37 @@ class _StubDatabase:
         for r in rows:
             grouped[r["stage"]] = grouped.get(r["stage"], 0) + 1
         return [{"stage": k, "cnt": v} for k, v in grouped.items()]
+
+    def _query_leads_series(self, query: str, args: tuple[Any, ...]) -> list[dict[str, Any]]:
+        import datetime as _dt
+
+        tenant_id, window_from, window_to = args[0], args[1], args[2]
+        idx = 3
+        rows = [
+            r for r in self.leads
+            if r["tenant_id"] == tenant_id and window_from <= r["created_at"] < window_to
+        ]
+        q = query.upper()
+        if " AND SOURCE = $" in q:
+            rows = [r for r in rows if r["source"] == args[idx]]
+            idx += 1
+        bucket = args[idx]
+
+        def _trunc(dt: datetime) -> datetime:
+            if bucket == "day":
+                return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            if bucket == "week":
+                start = dt - _dt.timedelta(days=dt.weekday())
+                return start.replace(hour=0, minute=0, second=0, microsecond=0)
+            if bucket == "month":
+                return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            raise AssertionError(f"Unexpected bucket: {bucket}")
+
+        buckets: dict[datetime, int] = {}
+        for r in rows:
+            b = _trunc(r["created_at"])
+            buckets[b] = buckets.get(b, 0) + 1
+        return [{"bucket": b, "cnt": v} for b, v in sorted(buckets.items())]
 
     def _windowed_leads(self, args: tuple[Any, ...]) -> list[dict[str, Any]]:
         tenant_id, window_from, window_to = args[0], args[1], args[2]
@@ -1279,3 +1312,144 @@ async def test_sr19_agent_performance_log_never_contains_assigned_agent_id(caplo
             )
     for record in caplog.records:
         assert "agent-should-not-be-logged" not in record.getMessage()
+
+
+# ==============================================================================
+# Outcome/ROI Dashboard v1: leads-over-time (mirrors the bookings-series
+# route coverage above -- same bucket validation, RBAC, tenant isolation,
+# CSV shape contract).
+# ==============================================================================
+
+_ROI_PATH = "/admin/analytics/reports/leads-over-time"
+_ROI_CSV_PATH = f"{_ROI_PATH}.csv"
+
+
+async def test_roi_client_admin_and_agent_succeed_on_json_and_csv() -> None:
+    app = _build_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        for role in (Role.CLIENT_ADMIN, Role.CLIENT_AGENT):
+            token = _mint_cookie(role=role)
+            for path in (_ROI_PATH, _ROI_CSV_PATH):
+                resp = await c.get(f"{path}{_QUERY}", cookies={"access_token": token})
+                assert resp.status_code == 200, f"{role} {path} -> {resp.status_code}: {resp.text}"
+
+
+async def test_roi_visitor_rejected() -> None:
+    app = _build_app()
+    token = _mint_cookie(role=Role.VISITOR)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        for path in (_ROI_PATH, _ROI_CSV_PATH):
+            resp = await c.get(f"{path}{_QUERY}", cookies={"access_token": token})
+            assert resp.status_code == 403, f"{path} -> {resp.status_code}"
+
+
+async def test_roi_platform_admin_rejected_on_implicit_route_succeeds_on_tenant_explicit() -> None:
+    db = _StubDatabase()
+    db.seed_tenant(tenant_id=_TENANT_A, slug="acme")
+    app = _build_app(db)
+    token = _mint_cookie(role=Role.PLATFORM_ADMIN, tenant_id=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        implicit = await c.get(f"{_ROI_PATH}{_QUERY}", cookies={"access_token": token})
+        assert implicit.status_code == 403
+
+        explicit = await c.get(
+            f"/admin/tenants/{_TENANT_A}/analytics/reports/leads-over-time{_QUERY}",
+            cookies={"access_token": token},
+        )
+        assert explicit.status_code == 200
+
+        missing = await c.get(
+            f"/admin/tenants/does-not-exist/analytics/reports/leads-over-time{_QUERY}",
+            cookies={"access_token": token},
+        )
+        assert missing.status_code == 404
+        assert missing.json()["error_code"] == "TENANT_NOT_FOUND"
+
+
+async def test_roi_no_write_verb_exists_405() -> None:
+    app = _build_app()
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        for method in ("post", "patch", "put", "delete"):
+            resp = await c.request(method, f"{_ROI_PATH}{_QUERY}", cookies={"access_token": token})
+            assert resp.status_code == 405, f"{method} -> {resp.status_code}"
+
+
+async def test_roi_bucket_month_succeeds_bucket_hour_rejected() -> None:
+    app = _build_app()
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        month_resp = await c.get(
+            f"{_ROI_PATH}{_QUERY}&bucket=month", cookies={"access_token": token},
+        )
+        assert month_resp.status_code == 200
+        assert month_resp.json()["window"]["bucket"] == "month"
+
+        hour_resp = await c.get(
+            f"{_ROI_PATH}{_QUERY}&bucket=hour", cookies={"access_token": token},
+        )
+        assert hour_resp.status_code == 422
+        assert hour_resp.json()["error_code"] == "INVALID_BUCKET"
+
+
+async def test_roi_empty_tenant_gets_200_honest_zero() -> None:
+    app = _build_app()
+    token = _mint_cookie(role=Role.CLIENT_ADMIN)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.get(f"{_ROI_PATH}{_QUERY}", cookies={"access_token": token})
+    body = resp.json()
+    assert body["series"] == []
+    assert body["totals"] == 0
+
+
+async def test_roi_tenant_isolation_exact_values() -> None:
+    db = _StubDatabase()
+    db.seed_lead(tenant_id=_TENANT_A, stage="captured", created_at=datetime(2026, 7, 5, tzinfo=UTC))
+    db.seed_lead(tenant_id=_TENANT_B, stage="captured", created_at=datetime(2026, 7, 5, tzinfo=UTC))
+    db.seed_lead(tenant_id=_TENANT_B, stage="captured", created_at=datetime(2026, 7, 6, tzinfo=UTC))
+    app = _build_app(db)
+    token_a = _mint_cookie(role=Role.CLIENT_ADMIN, tenant_id=_TENANT_A)
+    token_b = _mint_cookie(role=Role.CLIENT_ADMIN, tenant_id=_TENANT_B)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp_a = await c.get(f"{_ROI_PATH}{_QUERY}", cookies={"access_token": token_a})
+        resp_b = await c.get(f"{_ROI_PATH}{_QUERY}", cookies={"access_token": token_b})
+    assert resp_a.json()["totals"] == 1
+    assert resp_b.json()["totals"] == 2
+
+
+async def test_roi_csv_headers_and_row_counts_match_json_twin_and_isolates_tenants() -> None:
+    db = _StubDatabase()
+    db.seed_lead(tenant_id=_TENANT_A, stage="captured", created_at=datetime(2026, 7, 5, tzinfo=UTC))
+    db.seed_lead(tenant_id=_TENANT_A, stage="captured", created_at=datetime(2026, 7, 20, tzinfo=UTC))
+    db.seed_lead(tenant_id=_TENANT_B, stage="captured", created_at=datetime(2026, 7, 5, tzinfo=UTC))
+    app = _build_app(db)
+    token = _mint_cookie(role=Role.CLIENT_ADMIN, tenant_id=_TENANT_A)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        json_resp = await c.get(f"{_ROI_PATH}{_QUERY}&bucket=week", cookies={"access_token": token})
+        csv_resp = await c.get(f"{_ROI_CSV_PATH}{_QUERY}&bucket=week", cookies={"access_token": token})
+
+    assert csv_resp.headers["content-type"].startswith("text/csv")
+    json_body = json_resp.json()
+    csv_lines = [line.rstrip("\r") for line in csv_resp.text.strip().split("\n") if line.strip()]
+    assert csv_lines[0] == "bucket_start,count"
+    assert len(csv_lines) - 1 == len(json_body["series"])
+    assert sum(int(line.split(",")[1]) for line in csv_lines[1:]) == json_body["totals"] == 2
+
+
+async def test_roi_export_writes_audit_row() -> None:
+    db = _StubDatabase()
+    db.seed_tenant(tenant_id=_TENANT_A, slug="acme")
+    app = _build_app(db)
+    token = _mint_cookie(role=Role.PLATFORM_ADMIN, tenant_id=None, subject="platform-user-1")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.get(
+            f"/admin/tenants/{_TENANT_A}/analytics/reports/leads-over-time.csv{_QUERY}",
+            cookies={"access_token": token},
+        )
+    assert resp.status_code == 200
+    assert len(db.audit_rows) == 1
+    row = db.audit_rows[0]
+    assert row["action"] == "report_exported"
+    assert row["target_id"] == "leads-over-time"
+    assert row["actor"] == "platform-user-1"
+    assert row["metadata"]["platform_admin"] is True

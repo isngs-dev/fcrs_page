@@ -1,9 +1,15 @@
-"""Fixed CRM reports admin routes (SR-9.5) -- four read-only, tenant-scoped
-aggregate reports (leads-by-stage, bookings, conversion funnel, win/loss),
-each with a JSON GET and a CSV-export GET twin, registered on both the
-implicit router and the PLATFORM_ADMIN tenant-explicit router (D1/D7),
-mirroring ``analytics/routes.py``'s ``overview`` pattern exactly (M1/M10):
-16 total registered handlers over 4 shared private ``_impl`` functions.
+"""Fixed CRM reports admin routes (SR-9.5, extended for the Outcome/ROI
+Dashboard v1) -- read-only, tenant-scoped aggregate reports (leads-by-stage,
+bookings, conversion funnel, win/loss, lead sources, score distribution,
+agent performance, recent conversions, leads-over-time), each with a JSON
+GET and a CSV-export GET twin, registered on both the implicit router and
+the PLATFORM_ADMIN tenant-explicit router (D1/D7), mirroring
+``analytics/routes.py``'s ``overview`` pattern exactly (M1/M10).
+
+``leads-over-time`` (Report 9) mirrors ``bookings`` (Report 2) byte-for-byte
+in structure -- same ``date_trunc`` bucketing, same ``_VALID_REPORT_BUCKETS``
+validation -- since bookings was already the one report proving this exact
+pattern end-to-end for a single-table, single-metric time series.
 
 RBAC (D7): ``CLIENT_ADMIN`` + ``CLIENT_AGENT`` read every report, including
 revenue/win-loss -- full symmetric read access. Zero write endpoints of any
@@ -50,6 +56,7 @@ from api.analytics.reports_repository import (
     ConversionFunnel,
     LeadsByStage,
     LeadSourcesReport,
+    LeadsOverTimeSeries,
     RecentConversionsReport,
     ScoreDistributionReport,
     WinLossOutcome,
@@ -59,6 +66,7 @@ from api.analytics.reports_repository import (
     get_conversion_funnel,
     get_lead_sources,
     get_leads_by_stage,
+    get_leads_series,
     get_recent_conversions,
     get_score_distribution,
     get_win_loss,
@@ -1484,4 +1492,172 @@ async def export_recent_conversions_csv_for_tenant(
 ) -> StreamingResponse:
     return await _recent_conversions_csv_impl(
         request, claims, date_from=date_from, date_to=date_to, limit=limit,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Report 9: leads over time (Outcome/ROI Dashboard v1)
+# ---------------------------------------------------------------------------
+
+
+class LeadsOverTimeBucketResponse(BaseModel):
+    bucket_start: datetime
+    count: int
+
+
+class LeadsOverTimeReportResponse(BaseModel):
+    window: dict[str, datetime | str]
+    series: list[LeadsOverTimeBucketResponse]
+    totals: int
+
+
+async def _leads_over_time_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+    bucket: str,
+    source: str | None,
+) -> tuple[LeadsOverTimeReportResponse, LeadsOverTimeSeries, datetime, datetime]:
+    db = request.app.state.db
+    _validate_bucket(bucket)
+    window_from, window_to = _resolve_window(date_from, date_to)
+
+    result = await get_leads_series(
+        db, claims,
+        window_from=window_from, window_to=window_to, bucket=bucket, source=source,
+    )
+
+    _log.info(
+        "leads over time report",
+        extra={
+            "event": "report_leads_over_time",
+            "tenant_id": claims.tenant_id,
+            "window_from": window_from.isoformat(),
+            "window_to": window_to.isoformat(),
+            "bucket": bucket,
+            "report": "leads-over-time",
+            "result_count": result.totals,
+        },
+    )
+
+    window_payload: dict[str, datetime | str] = {
+        "from": window_from, "to": window_to, "bucket": bucket,
+    }
+    response = LeadsOverTimeReportResponse(
+        window=window_payload,
+        series=[
+            LeadsOverTimeBucketResponse(bucket_start=b.bucket_start, count=b.count)
+            for b in result.series
+        ],
+        totals=result.totals,
+    )
+    return response, result, window_from, window_to
+
+
+@router.get("/leads-over-time")
+async def get_leads_over_time_route(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    bucket: str = Query(default="day"),  # noqa: B008
+    source: str | None = Query(default=None),
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> LeadsOverTimeReportResponse:
+    response, _, _, _ = await _leads_over_time_impl(
+        request, claims, date_from=date_from, date_to=date_to, bucket=bucket, source=source,
+    )
+    return response
+
+
+@tenant_scoped_router.get("/leads-over-time")
+async def get_leads_over_time_route_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    bucket: str = Query(default="day"),  # noqa: B008
+    source: str | None = Query(default=None),
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> LeadsOverTimeReportResponse:
+    response, _, _, _ = await _leads_over_time_impl(
+        request, claims, date_from=date_from, date_to=date_to, bucket=bucket, source=source,
+    )
+    return response
+
+
+_LEADS_OVER_TIME_CSV_HEADERS = ("bucket_start", "count")
+
+
+async def _leads_over_time_csv_impl(
+    request: Request,
+    claims: AuthClaims,
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+    bucket: str,
+    source: str | None,
+) -> StreamingResponse:
+    _, result, _, _ = await _leads_over_time_impl(
+        request, claims, date_from=date_from, date_to=date_to, bucket=bucket, source=source,
+    )
+
+    def _generate() -> Iterator[str]:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([escape_csv_cell(h) for h in _LEADS_OVER_TIME_CSV_HEADERS])
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        for b in result.series:
+            writer.writerow([
+                escape_csv_cell(b.bucket_start.isoformat()),
+                escape_csv_cell(b.count),
+            ])
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    await record_audit(
+        request.app.state.db,
+        claims,
+        action="report_exported",
+        target_type="report",
+        target_id="leads-over-time",
+        metadata={"report": "leads-over-time", "row_count": len(result.series)},
+        actor_context=get_platform_admin_actor(request),
+    )
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=leads-over-time.csv"},
+    )
+
+
+@router.get("/leads-over-time.csv")
+async def export_leads_over_time_csv(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    bucket: str = Query(default="day"),  # noqa: B008
+    source: str | None = Query(default=None),
+    claims: AuthClaims = Depends(require_roles(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _leads_over_time_csv_impl(
+        request, claims, date_from=date_from, date_to=date_to, bucket=bucket, source=source,
+    )
+
+
+@tenant_scoped_router.get("/leads-over-time.csv")
+async def export_leads_over_time_csv_for_tenant(
+    request: Request,
+    date_from: datetime | None = Query(default=None, alias="from"),  # noqa: B008
+    date_to: datetime | None = Query(default=None, alias="to"),  # noqa: B008
+    bucket: str = Query(default="day"),  # noqa: B008
+    source: str | None = Query(default=None),
+    claims: AuthClaims = Depends(resolve_tenant_scope(*_READ_ROLES)),  # noqa: B008
+) -> StreamingResponse:
+    return await _leads_over_time_csv_impl(
+        request, claims, date_from=date_from, date_to=date_to, bucket=bucket, source=source,
     )

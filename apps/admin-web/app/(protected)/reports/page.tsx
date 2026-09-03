@@ -85,6 +85,7 @@ const DEEP_LINKS = [
   { href: "/reports/score-distribution", title: "Lead score distribution" },
   { href: "/reports/agent-performance", title: "Agent performance" },
   { href: "/reports/recent-conversions", title: "Recent conversions" },
+  { href: "/reports/roi", title: "ROI dashboard" },
 ] as const;
 
 function KpiTile({ label, value }: { label: string; value: string }) {

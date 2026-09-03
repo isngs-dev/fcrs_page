@@ -128,6 +128,76 @@ async def get_leads_by_stage(
 
 
 # ---------------------------------------------------------------------------
+# Leads-over-time series (Outcome/ROI Dashboard v1)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LeadsOverTimeBucket:
+    """One time-bucketed slice of the leads-generated series."""
+
+    bucket_start: datetime
+    count: int
+
+
+@dataclass(frozen=True)
+class LeadsOverTimeSeries:
+    """Bucketed count of leads generated -- series + the window total."""
+
+    series: list[LeadsOverTimeBucket]
+    totals: int
+
+
+async def get_leads_series(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    window_from: datetime,
+    window_to: datetime,
+    bucket: str,
+    source: str | None = None,
+) -> LeadsOverTimeSeries:
+    """Per-bucket count of leads GENERATED (``created_at``), by ``date_trunc``
+    bucket -- mirrors ``get_bookings_series``'s exact shape/pattern.
+
+    Same D6/M7 rule as ``get_leads_by_stage``: does NOT filter out converted
+    (tombstoned) leads -- a lead that later converted was still generated in
+    its own bucket, so excluding it would silently undercount every tenant
+    that actually converts leads.
+    """
+    _reject_global(claims)
+
+    where = "WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3"
+    params: list[Any] = [claims.tenant_id, window_from, window_to]
+
+    if source is not None:
+        params.append(source)
+        where += f" AND source = ${len(params)}"
+
+    params.append(bucket)
+    bucket_idx = len(params)
+
+    # Parameterized SQL; `where` is a safe constant clause built above.
+    # `bucket` reaches date_trunc as a bound parameter, never concatenated.
+    # ruff: noqa: S608
+    rows = await db.fetch(
+        f"SELECT date_trunc(${bucket_idx}::text, created_at) AS bucket, "
+        "count(*) AS cnt "
+        "FROM leads " + where + " GROUP BY 1 ORDER BY 1",
+        *params,
+    )
+
+    series: list[LeadsOverTimeBucket] = []
+    total = 0
+    for row in rows:
+        count = int(row["cnt"])
+        series.append(LeadsOverTimeBucket(bucket_start=row["bucket"], count=count))
+        total += count
+
+    return LeadsOverTimeSeries(series=series, totals=total)
+
+
+# ---------------------------------------------------------------------------
 # Bookings series
 # ---------------------------------------------------------------------------
 

@@ -19,7 +19,7 @@ rates (never 0.0), Decimal exactness (19.99 + 0.01).
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -31,6 +31,7 @@ from api.analytics.reports_repository import (
     get_bookings_series,
     get_conversion_funnel,
     get_leads_by_stage,
+    get_leads_series,
     get_win_loss,
 )
 
@@ -40,6 +41,20 @@ _WINDOW_TO = datetime(2026, 8, 1, tzinfo=UTC)
 
 def _claims(tenant_id: str | None, role: Role = Role.CLIENT_ADMIN, subject: str = "user-1") -> AuthClaims:
     return AuthClaims(subject=subject, role=role, tenant_id=tenant_id)
+
+
+def _truncate_bucket(dt: datetime, bucket: str) -> datetime:
+    """Python-side stand-in for Postgres ``date_trunc`` -- shared by the
+    bookings and leads-over-time stub query paths (both bucket by
+    ``created_at`` with the same day/week/month semantics)."""
+    if bucket == "day":
+        return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    if bucket == "week":
+        start = dt - timedelta(days=dt.weekday())
+        return start.replace(hour=0, minute=0, second=0, microsecond=0)
+    if bucket == "month":
+        return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    raise AssertionError(f"Unexpected bucket: {bucket}")
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +133,15 @@ class _StubDatabase:
             rows = [r for r in rows if r["assigned_agent_id"] == agent_val]
             idx += 1
 
+        if "DATE_TRUNC" in q:
+            # get_leads_series -- bucketed count, not GROUP BY stage.
+            bucket = args[idx]
+            buckets: dict[datetime, int] = {}
+            for r in rows:
+                b = _truncate_bucket(r["created_at"], bucket)
+                buckets[b] = buckets.get(b, 0) + 1
+            return [{"bucket": b, "cnt": v} for b, v in sorted(buckets.items())]
+
         grouped: dict[str, int] = {}
         for r in rows:
             grouped[r["stage"]] = grouped.get(r["stage"], 0) + 1
@@ -144,19 +168,8 @@ class _StubDatabase:
         bucket = args[idx]
 
         buckets: dict[datetime, dict[str, int]] = {}
-
-        def _trunc(dt: datetime) -> datetime:
-            if bucket == "day":
-                return dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            if bucket == "week":
-                start = dt - __import__("datetime").timedelta(days=dt.weekday())
-                return start.replace(hour=0, minute=0, second=0, microsecond=0)
-            if bucket == "month":
-                return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            raise AssertionError(f"Unexpected bucket: {bucket}")
-
         for r in rows:
-            b = _trunc(r["created_at"])
+            b = _truncate_bucket(r["created_at"], bucket)
             slot = buckets.setdefault(b, {"booked": 0, "completed": 0, "no_show": 0, "cancelled": 0})
             slot[r["status"]] = slot.get(r["status"], 0) + 1
 
@@ -483,6 +496,100 @@ async def test_bookings_series_tenant_isolation_exact_values() -> None:
     assert result_a.totals.booked == 1
     assert result_b.totals.booked == 2
     assert result_b.totals.cancelled == 1
+
+
+# ---------------------------------------------------------------------------
+# leads_series (Outcome/ROI Dashboard v1 -- mirrors bookings_series above)
+# ---------------------------------------------------------------------------
+
+
+async def test_leads_series_buckets_tile_without_gap_or_overlap() -> None:
+    db = _StubDatabase(leads=[
+        _lead("tenant-a", "captured", datetime(2026, 7, 3, tzinfo=UTC)),
+        _lead("tenant-a", "captured", datetime(2026, 7, 10, tzinfo=UTC)),
+        _lead("tenant-a", "captured", datetime(2026, 7, 17, tzinfo=UTC)),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_leads_series(
+        db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="week",
+    )
+
+    bucket_sum = sum(b.count for b in result.series)
+    assert bucket_sum == result.totals == 3
+
+
+async def test_leads_series_includes_converted_tombstoned_leads() -> None:
+    """Same D6/M7 rule as leads_by_stage -- converted leads still count as
+    generated, they don't disappear from the series."""
+    db = _StubDatabase(leads=[
+        _lead("tenant-a", "captured", datetime(2026, 7, 5, tzinfo=UTC)),
+        _lead("tenant-a", "converted", datetime(2026, 7, 10, tzinfo=UTC)),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_leads_series(
+        db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="week",
+    )
+
+    assert result.totals == 2
+
+
+async def test_leads_series_source_filter() -> None:
+    db = _StubDatabase(leads=[
+        _lead("tenant-a", "captured", datetime(2026, 7, 6, tzinfo=UTC), source="widget"),
+        _lead("tenant-a", "captured", datetime(2026, 7, 6, tzinfo=UTC), source="booking"),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_leads_series(
+        db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="week", source="booking",
+    )
+
+    assert result.totals == 1
+
+
+async def test_leads_series_month_bucket_succeeds() -> None:
+    """D3 -- month bucket must work on the new report too."""
+    db = _StubDatabase(leads=[
+        _lead("tenant-a", "captured", datetime(2026, 7, 6, tzinfo=UTC)),
+    ])
+    claims = _claims("tenant-a")
+
+    result = await get_leads_series(
+        db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="month",
+    )
+
+    assert result.totals == 1
+
+
+async def test_leads_series_rejects_global_caller() -> None:
+    db = _StubDatabase()
+    claims = _claims(None, role=Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await get_leads_series(
+            db, claims, window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="week",
+        )
+    assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
+
+
+async def test_leads_series_tenant_isolation_exact_values() -> None:
+    db = _StubDatabase(leads=[
+        _lead("tenant-a", "captured", datetime(2026, 7, 6, tzinfo=UTC)),
+        _lead("tenant-b", "captured", datetime(2026, 7, 6, tzinfo=UTC)),
+        _lead("tenant-b", "captured", datetime(2026, 7, 7, tzinfo=UTC)),
+    ])
+
+    result_a = await get_leads_series(
+        db, _claims("tenant-a"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="week",
+    )
+    result_b = await get_leads_series(
+        db, _claims("tenant-b"), window_from=_WINDOW_FROM, window_to=_WINDOW_TO, bucket="week",
+    )
+
+    assert result_a.totals == 1
+    assert result_b.totals == 2
 
 
 # ---------------------------------------------------------------------------

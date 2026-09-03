@@ -71,6 +71,7 @@ describe("ClientReportsIndexPage (/clients/[tenantId]/reports)", () => {
       "score-distribution",
       "agent-performance",
       "recent-conversions",
+      "roi",
     ]) {
       expect(html).toContain(`href="/clients/tenant-42/reports/${report}"`);
     }

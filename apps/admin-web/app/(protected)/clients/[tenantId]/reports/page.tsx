@@ -59,6 +59,7 @@ function deepLinks(tenantId: string) {
     { href: `/clients/${tenantId}/reports/score-distribution`, title: "Lead score distribution" },
     { href: `/clients/${tenantId}/reports/agent-performance`, title: "Agent performance" },
     { href: `/clients/${tenantId}/reports/recent-conversions`, title: "Recent conversions" },
+    { href: `/clients/${tenantId}/reports/roi`, title: "ROI dashboard" },
   ] as const;
 }
 

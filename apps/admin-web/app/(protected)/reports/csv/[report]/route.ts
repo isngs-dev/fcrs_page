@@ -41,6 +41,8 @@ const _VALID_REPORTS = new Set([
   "score-distribution",
   "agent-performance",
   "recent-conversions",
+  // Outcome/ROI Dashboard v1
+  "leads-over-time",
 ]);
 
 export async function GET(
