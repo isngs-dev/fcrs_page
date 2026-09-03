@@ -16,6 +16,16 @@ Covers:
   - 200 shape: contains doc_id, filename, content_type, status, content_hash,
     latest_run, parsed_preview; does NOT contain tenant_id or storage_key.
   - Missing doc → 404 DOC_NOT_FOUND.
+- GET /admin/ingestion/docs/{doc_id}/download:
+  - 200 with the exact stored bytes, the doc's content_type, and a
+    Content-Disposition naming the (sanitized) filename.
+  - A malicious filename (CR/LF, quotes) can never inject header lines.
+  - Missing doc → 404 DOC_NOT_FOUND; no cookie → 401; CLIENT_AGENT → 403.
+  - A missing/orphaned stored file → 500 DOCUMENT_STORAGE_MISSING (never a
+    silently empty download).
+  - PLATFORM_ADMIN tenant-scoped variant: succeeds for the right tenant_id,
+    404s (never leaks bytes) for the wrong one (mandatory multi-tenant
+    isolation).
 """
 from __future__ import annotations
 
@@ -732,6 +742,247 @@ async def test_get_doc_client_agent_returns_403() -> None:
             )
 
     assert resp.status_code == 403
+
+
+# ==============================================================================
+# GET /admin/ingestion/docs/{doc_id}/download
+# ==============================================================================
+
+
+def _seed_doc_row(
+    stub_db: _StubDatabase,
+    *,
+    tenant_id: str,
+    doc_id: str,
+    filename: str,
+    content_type: str = "text/plain",
+    storage_key: str | None = None,
+) -> None:
+    stub_db._docs[(tenant_id, doc_id)] = {
+        "doc_id": doc_id,
+        "source": "upload",
+        "filename": filename,
+        "content_type": content_type,
+        "status": "parsed",
+        "content_hash": f"hash-{doc_id}",
+        "storage_key": storage_key or f"{tenant_id}/{doc_id}/{filename}",
+        "created_at": _NOW,
+        "updated_at": _NOW,
+        "tenant_id": tenant_id,
+        "title": None,
+        "description": None,
+        "uploaded_by": None,
+    }
+
+
+async def test_download_doc_returns_raw_bytes_with_content_type_and_disposition() -> None:
+    """GET /docs/{doc_id}/download -> 200 with the exact stored bytes, the
+    doc's own content_type, and a Content-Disposition naming the filename."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    stub_storage = _InMemoryStorage()
+    doc_id = "doc-download-test"
+    storage_key = f"{_TENANT_ID}/{doc_id}/sample.txt"
+    _seed_doc_row(stub_db, tenant_id=_TENANT_ID, doc_id=doc_id, filename="sample.txt", storage_key=storage_key)
+    stub_storage.put(storage_key, b"the original uploaded bytes")
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with patch("api.ingestion.routes.get_storage", return_value=stub_storage):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get(
+                    f"/admin/ingestion/docs/{doc_id}/download",
+                    cookies={"access_token": token},
+                )
+
+    assert resp.status_code == 200
+    assert resp.content == b"the original uploaded bytes"
+    assert resp.headers["content-type"].startswith("text/plain")
+    assert resp.headers["content-disposition"] == 'attachment; filename="sample.txt"'
+
+
+async def test_download_doc_sanitizes_cr_lf_and_quotes_in_filename() -> None:
+    """A malicious upload filename can never inject extra header fields/lines."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    stub_storage = _InMemoryStorage()
+    doc_id = "doc-header-injection-test"
+    storage_key = f"{_TENANT_ID}/{doc_id}/evil"
+    malicious_name = 'evil"\r\nX-Injected: yes\r\n.txt'
+    _seed_doc_row(stub_db, tenant_id=_TENANT_ID, doc_id=doc_id, filename=malicious_name, storage_key=storage_key)
+    stub_storage.put(storage_key, b"bytes")
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with patch("api.ingestion.routes.get_storage", return_value=stub_storage):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get(
+                    f"/admin/ingestion/docs/{doc_id}/download",
+                    cookies={"access_token": token},
+                )
+
+    assert resp.status_code == 200
+    disposition = resp.headers["content-disposition"]
+    assert "\r" not in disposition
+    assert "\n" not in disposition
+    # Exactly the two wrapping quotes from `filename="..."` -- no smuggled
+    # quote from the malicious filename itself.
+    assert disposition.count('"') == 2
+    assert disposition == 'attachment; filename="evilX-Injected: yes.txt"'
+    assert "X-Injected" not in resp.headers
+
+
+async def test_download_doc_missing_returns_404() -> None:
+    """GET /docs/{doc_id}/download for a nonexistent doc -> 404 DOC_NOT_FOUND."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/admin/ingestion/docs/does-not-exist/download",
+                cookies={"access_token": token},
+            )
+
+    assert resp.status_code == 404
+    assert resp.json()["error_code"] == "DOC_NOT_FOUND"
+
+
+async def test_download_doc_no_cookie_returns_401() -> None:
+    """GET /docs/{doc_id}/download without a cookie -> 401."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/admin/ingestion/docs/any-id/download")
+
+    assert resp.status_code == 401
+
+
+async def test_download_doc_client_agent_returns_403() -> None:
+    """GET /docs/{doc_id}/download with CLIENT_AGENT -> 403."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.CLIENT_AGENT)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/admin/ingestion/docs/any-id/download",
+                cookies={"access_token": token},
+            )
+
+    assert resp.status_code == 403
+
+
+async def test_download_doc_missing_stored_file_returns_500_never_a_fake_empty_file() -> None:
+    """A storage read failure on download is a real error, unlike the GET
+    detail endpoint's best-effort (null-preview) degradation -- the file IS
+    the point of this endpoint."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    stub_storage = _InMemoryStorage()
+    doc_id = "doc-orphaned-storage"
+    # Seed the DB row but never `put` the bytes -- simulates an orphaned
+    # storage_key (e.g. a prior storage-delete failure left the DB pointing
+    # at nothing).
+    _seed_doc_row(stub_db, tenant_id=_TENANT_ID, doc_id=doc_id, filename="gone.txt")
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with patch("api.ingestion.routes.get_storage", return_value=stub_storage):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get(
+                    f"/admin/ingestion/docs/{doc_id}/download",
+                    cookies={"access_token": token},
+                )
+
+    assert resp.status_code == 500
+    assert resp.json()["error_code"] == "DOCUMENT_STORAGE_MISSING"
+
+
+async def test_download_doc_platform_admin_tenant_scoped_success() -> None:
+    """PLATFORM_ADMIN can download a specific client's doc via the
+    tenant-scoped route, with the SAME bytes/headers as the implicit path."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    stub_storage = _InMemoryStorage()
+    doc_id = "doc-platform-admin-test"
+    storage_key = f"{_TENANT_ID}/{doc_id}/report.txt"
+    _seed_doc_row(stub_db, tenant_id=_TENANT_ID, doc_id=doc_id, filename="report.txt", storage_key=storage_key)
+    stub_storage.put(storage_key, b"client's real file bytes")
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with patch("api.ingestion.routes.get_storage", return_value=stub_storage):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get(
+                    f"/admin/tenants/{_TENANT_ID}/ingestion/docs/{doc_id}/download",
+                    cookies={"access_token": token},
+                )
+
+    assert resp.status_code == 200
+    assert resp.content == b"client's real file bytes"
+    assert resp.headers["content-disposition"] == 'attachment; filename="report.txt"'
+
+
+async def test_download_doc_cross_tenant_via_wrong_tenant_scope_returns_404_never_a_leak() -> None:
+    """Mandatory multi-tenant isolation: a PLATFORM_ADMIN hitting the
+    tenant-scoped route with the WRONG tenant_id in the path (not the tenant
+    that actually owns this doc_id) gets 404 DOC_NOT_FOUND -- never tenant
+    A's bytes leaking to a request scoped at tenant B."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+    stub_storage = _InMemoryStorage()
+    other_tenant = "tenant-other-download"
+    doc_id = "doc-belongs-to-tenant-a"
+    storage_key = f"{_TENANT_ID}/{doc_id}/confidential.txt"
+    _seed_doc_row(stub_db, tenant_id=_TENANT_ID, doc_id=doc_id, filename="confidential.txt", storage_key=storage_key)
+    stub_storage.put(storage_key, b"tenant A's confidential bytes")
+    # `other_tenant` must itself be a real/enabled tenant for
+    # resolve_tenant_scope to get past ITS OWN check -- seed an unrelated doc
+    # under it so the stub DB's tenant-existence check passes, then prove
+    # the doc lookup (scoped to other_tenant) still finds nothing.
+    _seed_doc_row(stub_db, tenant_id=other_tenant, doc_id="doc-unrelated", filename="unrelated.txt")
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        with patch("api.ingestion.routes.get_storage", return_value=stub_storage):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get(
+                    f"/admin/tenants/{other_tenant}/ingestion/docs/{doc_id}/download",
+                    cookies={"access_token": token},
+                )
+
+    assert resp.status_code == 404
+    assert resp.json()["error_code"] == "DOC_NOT_FOUND"
+    assert b"confidential" not in resp.content
 
 
 # ==============================================================================

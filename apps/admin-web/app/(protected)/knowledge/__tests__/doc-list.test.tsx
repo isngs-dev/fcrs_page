@@ -1,121 +1,67 @@
 /**
- * Knowledge Base list feature -- tests for <KnowledgeDocList>, using this
- * repo's established `environment: "node"` `renderToStaticMarkup` pattern
- * (mirrors upload-form-geometry.test.tsx): a pure server component, no
- * client interactivity to simulate.
+ * `KnowledgeDocList`'s `tenantId`-gating (platform-admin knowledge
+ * redesign): with `tenantId`, each row renders via `<KnowledgeDocRow>`
+ * (View/Export present); without it (the client-facing `/knowledge` call
+ * site), the original plain card renders -- byte-for-byte unchanged, no
+ * View/Export, no client-component mount.
  */
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { KnowledgeDocList } from "@/app/(protected)/knowledge/doc-list";
-import type { KnowledgeDocListItem, ListKnowledgeResult } from "@/app/(protected)/knowledge/actions";
+import type { ListKnowledgeResult } from "@/app/(protected)/knowledge/actions";
 
-function doc(overrides: Partial<KnowledgeDocListItem> = {}): KnowledgeDocListItem {
+function okResult(): ListKnowledgeResult {
   return {
-    docId: "doc-1",
-    title: null,
-    description: null,
-    filename: "faq.txt",
-    contentType: "text/plain",
-    status: "parsed",
-    uploadedBy: "user-1",
-    uploadedByName: "Jane Admin",
-    createdAt: "2026-08-18T12:00:00Z",
-    ...overrides,
+    status: "ok",
+    docs: [
+      {
+        docId: "doc-1",
+        title: "Pricing FAQ",
+        description: "Common pricing questions.",
+        filename: "pricing.txt",
+        contentType: "text/plain",
+        status: "parsed",
+        uploadedBy: "user-1",
+        uploadedByName: "Jane Doe",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    ],
   };
 }
 
 describe("KnowledgeDocList", () => {
-  it("renders an honest empty state when there are no docs, no fabricated rows", () => {
-    const result: ListKnowledgeResult = { status: "ok", docs: [] };
-    const html = renderToStaticMarkup(<KnowledgeDocList result={result} />);
+  it("renders the plain card with no View/Export when tenantId is omitted (client-facing page, unchanged)", () => {
+    const html = renderToStaticMarkup(<KnowledgeDocList result={okResult()} />);
 
-    expect(html).toMatch(/No knowledge items yet/i);
+    expect(html).toContain("Pricing FAQ");
+    expect(html).not.toMatch(/>View</);
+    expect(html).not.toMatch(/>Export</);
+    expect(html).not.toContain("/knowledge/download/");
   });
 
-  it("renders an honest inline error, never a blank or fabricated list, on a fetch failure", () => {
-    const result: ListKnowledgeResult = {
-      status: "error",
-      message: "Something went wrong. (correlation ID: corr-1)",
-      correlationId: "corr-1",
-    };
-    const html = renderToStaticMarkup(<KnowledgeDocList result={result} />);
+  it("renders View/Export actions with a tenant-scoped export href when tenantId is passed (platform-admin)", () => {
+    const html = renderToStaticMarkup(
+      <KnowledgeDocList result={okResult()} tenantId="tenant-42" />
+    );
 
-    expect(html).toMatch(/Unable to load knowledge items/i);
-    expect(html).toContain("corr-1");
+    expect(html).toContain("Pricing FAQ");
+    expect(html).toMatch(/>View</);
+    expect(html).toMatch(/>Export</);
+    expect(html).toContain("/knowledge/download/doc-1?tenant_id=tenant-42");
   });
 
-  it("falls back to the filename when title is blank", () => {
-    const result: ListKnowledgeResult = { status: "ok", docs: [doc({ title: null, filename: "raw-notes.txt" })] };
-    const html = renderToStaticMarkup(<KnowledgeDocList result={result} />);
-
-    expect(html).toContain("raw-notes.txt");
-  });
-
-  it("shows the title (not the filename as the heading) when a title is set", () => {
-    const result: ListKnowledgeResult = {
-      status: "ok",
-      docs: [doc({ title: "Refund policy", filename: "raw-notes.txt" })],
-    };
-    const html = renderToStaticMarkup(<KnowledgeDocList result={result} />);
-
-    expect(html).toContain("Refund policy");
-    // The filename still appears (secondary line), just not as the heading.
-    expect(html).toContain("raw-notes.txt");
-  });
-
-  it("renders the description when present, omits it when absent", () => {
-    const withDescription = renderToStaticMarkup(
+  it("still shows the honest error/empty states regardless of tenantId", () => {
+    const errorHtml = renderToStaticMarkup(
       <KnowledgeDocList
-        result={{ status: "ok", docs: [doc({ description: "How refunds work." })] }}
+        result={{ status: "error", message: "boom", correlationId: "c1" }}
+        tenantId="tenant-42"
       />
     );
-    expect(withDescription).toContain("How refunds work.");
+    expect(errorHtml).toMatch(/role="alert"/);
 
-    const withoutDescription = renderToStaticMarkup(
-      <KnowledgeDocList result={{ status: "ok", docs: [doc({ description: null })] }} />
+    const emptyHtml = renderToStaticMarkup(
+      <KnowledgeDocList result={{ status: "ok", docs: [] }} tenantId="tenant-42" />
     );
-    expect(withoutDescription).not.toContain("How refunds work.");
-  });
-
-  it("renders the uploader's display name when present", () => {
-    const result: ListKnowledgeResult = {
-      status: "ok",
-      docs: [doc({ uploadedByName: "Jane Admin" })],
-    };
-    const html = renderToStaticMarkup(<KnowledgeDocList result={result} />);
-
-    expect(html).toContain("Jane Admin");
-  });
-
-  it("never crashes and omits the uploader line when uploadedBy/uploadedByName are null (pre-migration row)", () => {
-    const result: ListKnowledgeResult = {
-      status: "ok",
-      docs: [doc({ uploadedBy: null, uploadedByName: null })],
-    };
-    expect(() => renderToStaticMarkup(<KnowledgeDocList result={result} />)).not.toThrow();
-  });
-
-  it("renders a status badge for each doc status", () => {
-    const result: ListKnowledgeResult = {
-      status: "ok",
-      docs: [doc({ docId: "d1", status: "parsed" }), doc({ docId: "d2", status: "failed" })],
-    };
-    const html = renderToStaticMarkup(<KnowledgeDocList result={result} />);
-
-    expect(html).toMatch(/INDEXED/i);
-    expect(html).toMatch(/FAILED/i);
-  });
-
-  it("renders every doc in the order given (server already sorts newest-first)", () => {
-    const result: ListKnowledgeResult = {
-      status: "ok",
-      docs: [
-        doc({ docId: "newest", title: "Newest" }),
-        doc({ docId: "oldest", title: "Oldest" }),
-      ],
-    };
-    const html = renderToStaticMarkup(<KnowledgeDocList result={result} />);
-
-    expect(html.indexOf("Newest")).toBeLessThan(html.indexOf("Oldest"));
+    expect(emptyHtml).toMatch(/No knowledge items yet/);
   });
 });

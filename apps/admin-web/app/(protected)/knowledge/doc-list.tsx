@@ -9,13 +9,22 @@
  * see upload-form.tsx's CoverageCheckCard/TestBotCard): an empty tenant
  * shows a real "no items yet" message, never placeholder rows; a fetch
  * failure shows the real error, never a silently blank list.
+ *
+ * `tenantId` (platform-admin knowledge redesign): when provided, each row
+ * renders via `<KnowledgeDocRow>` (a small `"use client"` component) instead
+ * of the plain server-rendered card below, adding View/Export actions. Left
+ * `undefined` (the client-facing `/knowledge` call site), this component
+ * stays byte-for-byte its original pure-server-render self -- no extra
+ * client JS ships to a client viewing their own knowledge base, which
+ * doesn't need these actions.
  */
 import { SoftCard } from "@/components/admin/soft-card";
 import { badgeToneClassName, statusBadge } from "@/lib/knowledge-constants";
 import { cn } from "@/lib/utils";
+import { KnowledgeDocRow } from "@/app/(protected)/knowledge/knowledge-doc-row";
 import type { ListKnowledgeResult } from "@/app/(protected)/knowledge/actions";
 
-function formatUploadedAt(iso: string): string {
+export function formatUploadedAt(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleDateString(undefined, {
@@ -27,7 +36,13 @@ function formatUploadedAt(iso: string): string {
   });
 }
 
-export function KnowledgeDocList({ result }: { result: ListKnowledgeResult }) {
+export function KnowledgeDocList({
+  result,
+  tenantId,
+}: {
+  result: ListKnowledgeResult;
+  tenantId?: string;
+}) {
   if (result.status === "error") {
     return (
       <div
@@ -53,6 +68,14 @@ export function KnowledgeDocList({ result }: { result: ListKnowledgeResult }) {
   return (
     <ul className="flex flex-col gap-3">
       {result.docs.map((doc) => {
+        if (tenantId) {
+          return (
+            <li key={doc.docId}>
+              <KnowledgeDocRow doc={doc} tenantId={tenantId} />
+            </li>
+          );
+        }
+
         const badge = statusBadge(doc.status, null);
         return (
           <li key={doc.docId}>

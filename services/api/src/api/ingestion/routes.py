@@ -24,6 +24,19 @@ GET /admin/ingestion/docs/{doc_id}
     available). Response NEVER includes ``tenant_id`` or ``storage_key``.
     Returns 404 ``DOC_NOT_FOUND`` if absent / not visible to the caller.
 
+GET /admin/ingestion/docs/{doc_id}/download
+    Streams the ORIGINAL uploaded file back (raw bytes from
+    ``StorageProvider.get(doc.storage_key)``), with ``Content-Type`` set to
+    the doc's own ``content_type`` and a sanitized
+    ``Content-Disposition: attachment; filename="..."`` header (CR/LF and
+    ``"`` stripped from the user-supplied filename first — the one place
+    this endpoint puts client-controlled input into a raw HTTP header).
+    Same tenant-isolated ``get_doc`` lookup as the GET above — 404
+    ``DOC_NOT_FOUND`` if absent/not visible, never a leak. Unlike the GET
+    above's best-effort preview, a missing stored file here is a real
+    error (500 ``DOCUMENT_STORAGE_MISSING``), not a silent empty download —
+    the file IS the point of this endpoint.
+
 DELETE /admin/ingestion/docs/{doc_id}
     (SR-4) Hard-deletes a knowledge document: authorizes via the existing
     tenant-scoped ``get_doc`` (404 before any delete for absent/cross-tenant
@@ -43,9 +56,9 @@ from typing import Any
 from uuid import uuid4
 
 from common.auth import AuthClaims, Role
-from common.errors import NotFoundError, ValidationError
+from common.errors import InternalServerError, NotFoundError, ValidationError
 from common.logging import get_logger
-from fastapi import APIRouter, Depends, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 
 from api.audit.repository import record_audit
@@ -355,6 +368,65 @@ async def get_document_for_tenant(
 ) -> dict[str, Any]:
     """PLATFORM_ADMIN super-user variant of ``GET /admin/ingestion/docs/{doc_id}`` (S12.7)."""
     return await _get_document(doc_id, request, claims)
+
+
+def _sanitize_content_disposition_filename(filename: str) -> str:
+    """Strip CR/LF and ``"`` from a client-supplied filename before it goes
+    into a raw ``Content-Disposition`` header value — closes off header
+    injection via a malicious upload filename (the one place this endpoint
+    puts user input into a header)."""
+    return filename.replace("\r", "").replace("\n", "").replace('"', "")
+
+
+async def _download_document(doc_id: str, request: Request, claims: AuthClaims) -> Response:
+    """Stream the original uploaded file back. See module docstring."""
+    db = request.app.state.db
+
+    doc = await repo.get_doc(db, claims, doc_id)
+    if doc is None:
+        raise NotFoundError(
+            "Knowledge document not found.",
+            code="DOC_NOT_FOUND",
+        )
+
+    storage = get_storage()
+    try:
+        raw = storage.get(doc.storage_key)
+    except Exception as exc:
+        # Unlike _get_document's best-effort preview, the file IS the point
+        # of a download request — a storage miss is a real error, never a
+        # silently empty/fabricated download.
+        raise InternalServerError(
+            "The stored file for this document is missing.",
+            code="DOCUMENT_STORAGE_MISSING",
+        ) from exc
+
+    filename = _sanitize_content_disposition_filename(doc.filename)
+    return Response(
+        content=raw,
+        media_type=doc.content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/docs/{doc_id}/download")
+async def download_document(
+    doc_id: str,
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> Response:
+    return await _download_document(doc_id, request, claims)
+
+
+@tenant_scoped_router.get("/docs/{doc_id}/download")
+async def download_document_for_tenant(
+    doc_id: str,
+    request: Request,
+    claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> Response:
+    """PLATFORM_ADMIN super-user variant of
+    ``GET /admin/ingestion/docs/{doc_id}/download`` (S12.7)."""
+    return await _download_document(doc_id, request, claims)
 
 
 async def _delete_document(doc_id: str, request: Request, claims: AuthClaims) -> dict[str, Any]:
