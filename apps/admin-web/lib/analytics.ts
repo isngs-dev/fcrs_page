@@ -22,34 +22,20 @@ import "server-only";
 
 import { adminApiFetch, AdminApiError } from "@/lib/api";
 
-/** The canonical bucket granularities (repository.py `_VALID_BUCKETS`).
- * `month` added SR-9.5 D3 -- `hour` remains unsupported (explicitly
- * rejected as unsafe at the 366-day maximum window). */
-export const ANALYTICS_BUCKETS = ["day", "week", "month"] as const;
-
-export type AnalyticsBucket = (typeof ANALYTICS_BUCKETS)[number];
-
-/** Range presets (S13.5.md decision 5, Q1) -- day-spans mapped to absolute
- * `from`/`to` by `resolveAnalyticsQuery`, all well within the backend's
- * 366-day cap. */
-export const ANALYTICS_RANGES = [
-  { key: "7d", label: "Last 7 days", days: 7 },
-  { key: "30d", label: "Last 30 days", days: 30 },
-  { key: "90d", label: "Last 90 days", days: 90 },
-] as const;
-
-/** The 5b "Custom" range-toggle option (HANDOFF-SPEC.md §3): an explicit
- * `from`/`to` date pair the caller supplies via `?range=custom&from=...&to=...`,
- * validated against the same backend rules as the preset ranges (`from <
- * to`, span <= `analytics_max_window_days`) rather than a client-side day
- * count. Kept as a distinct key (not part of `ANALYTICS_RANGES`) since it
- * has no fixed `days` -- `resolveAnalyticsQuery` branches on it explicitly. */
-export const CUSTOM_RANGE_KEY = "custom" as const;
-
-export type AnalyticsRangeKey = (typeof ANALYTICS_RANGES)[number]["key"] | typeof CUSTOM_RANGE_KEY;
-
-export const DEFAULT_RANGE_KEY: AnalyticsRangeKey = "30d";
-export const DEFAULT_BUCKET: AnalyticsBucket = "day";
+/** Pure constants/types re-exported from `lib/analytics-constants.ts` (kept
+ * free of `server-only` so `analytics-range.tsx`, a Client Component, can
+ * import them too) -- see that file's header comment for why. */
+import {
+  ANALYTICS_BUCKETS,
+  ANALYTICS_RANGES,
+  CUSTOM_RANGE_KEY,
+  DEFAULT_RANGE_KEY,
+  DEFAULT_BUCKET,
+  type AnalyticsBucket,
+  type AnalyticsRangeKey,
+} from "@/lib/analytics-constants";
+export { ANALYTICS_BUCKETS, ANALYTICS_RANGES, CUSTOM_RANGE_KEY, DEFAULT_RANGE_KEY, DEFAULT_BUCKET };
+export type { AnalyticsBucket, AnalyticsRangeKey };
 
 /** Camel-cased mirror of `AnalyticsOverviewResponse`
  * (routes.py:78-89). `null` rates are preserved as `null` -- never

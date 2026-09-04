@@ -32,7 +32,7 @@ import {
   CUSTOM_RANGE_KEY,
   type AnalyticsBucket,
   type AnalyticsRangeKey,
-} from "@/lib/analytics";
+} from "@/lib/analytics-constants";
 
 const BUCKET_LABELS: Record<AnalyticsBucket, string> = {
   day: "Day",
