@@ -9,23 +9,22 @@
  * indicator -> sendTurn -> bot bubble (or error line, decision 7) -> store
  * the returned conversation_id.
  *
- * Opens automatically on mount (user request, post-S14.6): the panel is
- * visible immediately, no launcher click required. The TTS greeting is
- * ALSO attempted on that same mount (user request, superseding the
- * original "gate behind a real click" stance -- see the S14.5 note below
- * and the mount effect above `handleLauncherClick`) so it is audible on page load in
- * browsers that allow it. Chrome does not: it requires prior user
- * activation on the frame before `speechSynthesis.speak()` will actually
- * produce audio, and mount time genuinely has none yet -- no application
- * code can force it to be heard at that point. `tts.speakGreeting()`
- * reports this back via its `onBlocked` callback (see tts.ts), which resets
- * `hasGreetedRef` so a second, document-level effect below can retry on the
- * visitor's first interaction ANYWHERE on the page (click/keydown/
- * touchstart, not necessarily on the widget itself) -- that interaction
- * grants the frame activation Chrome requires, making this the earliest
- * point real audio is achievable there. This is still best-effort, not a
- * guarantee: a visitor who never interacts with the page at all will never
- * hear it, by design of the browser policy, not a bug here.
+ * Closed on mount (reverted, user request, 2026-09): the panel only opens
+ * when the visitor clicks the launcher. This SUPERSEDES the S14.6-era
+ * "opens automatically on mount, no launcher click required" decision --
+ * kept here for history, since it explains why the TTS greeting effect
+ * below is keyed on `[open]` rather than firing directly in a mount effect:
+ * that wiring is unchanged and now simply means the greeting is attempted
+ * as soon as the panel opens (via the launcher click) instead of at mount.
+ * A real click is itself a user-activation gesture, so `speechSynthesis
+ * .speak()` generally succeeds immediately even in Chrome (which blocks
+ * `speak()` without prior activation on the frame) -- the mount-time
+ * version of this problem this paragraph used to describe no longer
+ * applies now that opening always follows a real click. The "first
+ * interaction anywhere on the page" retry effect further below (via
+ * `tts.speakGreeting()`'s `onBlocked` callback resetting `hasGreetedRef`)
+ * still exists as a defensive fallback for any browser/edge case that still
+ * blocks the open-time attempt.
  *
  * S14.5 adds: panel focus management (focus-in on open, a hand-rolled focus
  * trap while open, Escape-to-close, focus-restore to the launcher on close
@@ -348,8 +347,10 @@ export function ChatWidget({
   resumeConversationId = null,
 }: ChatWidgetProps) {
   const resolvedBotName = botName?.trim() ? botName.trim() : tts.DEFAULT_BOT_NAME;
-  // Opens automatically on mount (no launcher click required).
-  const [open, setOpen] = useState(true);
+  // Closed on mount -- opens only when the visitor clicks the launcher
+  // (reverted, user request: supersedes the S14.6-era auto-open-on-mount
+  // decision documented in this component's header comment above).
+  const [open, setOpen] = useState(false);
   // Exit-confirm: true while the "Are you sure you want to exit?" view is
   // showing in place of the normal panel body (see requestClose/
   // confirmCloseYes/confirmCloseNo below). Separate from `open` -- the
@@ -500,13 +501,14 @@ export function ChatWidget({
     };
   }, [stopVoiceCapture]);
 
-  // SR-27: one-time existingBooking check on mount (the panel opens
-  // automatically, see `open`'s own comment above -- there is no separate
-  // "first real open" moment to gate this on). Read-only, best-effort: a
-  // failure here just leaves the CTA visible (the safe default) rather than
-  // surfacing an error for a non-essential background check. Guarded by a
-  // ref, not state, so it fires exactly once even if `config` identity
-  // happens to change.
+  // SR-27: one-time existingBooking check on mount, deliberately NOT gated
+  // on `open` -- runs in the background whether or not the visitor has
+  // clicked the launcher yet, so the CTA's visibility is already resolved
+  // by the time they do open the panel (avoids a flash of the CTA before
+  // this check lands). Read-only, best-effort: a failure here just leaves
+  // the CTA visible (the safe default) rather than surfacing an error for a
+  // non-essential background check. Guarded by a ref, not state, so it
+  // fires exactly once even if `config` identity happens to change.
   useEffect(() => {
     if (bookingCheckedRef.current) return;
     bookingCheckedRef.current = true;

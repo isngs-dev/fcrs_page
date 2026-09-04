@@ -209,9 +209,10 @@ function getSendButton(): HTMLButtonElement {
   return button;
 }
 
-/** Idempotent: the panel now opens automatically on mount, so most callers
- * just need "the panel to be open" and this is a no-op in that case. Tests
- * about the open/close TOGGLE itself use `closePanel()` + a direct
+/** Idempotent: opens the panel via the launcher if it isn't already open, so
+ * most callers can just call this and get on with "the panel is open" --
+ * it's a no-op if some earlier step in the same test already opened it.
+ * Tests about the open/close TOGGLE itself use `closePanel()` + a direct
  * `launcher.click()` to exercise a real gesture.
  *
  * Also picks "Type a message" on the type/voice mode gate if it's showing --
@@ -337,6 +338,9 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        act(() => {
+          container.querySelector<HTMLButtonElement>(".cw-placeholder")!.click();
+        });
 
         const options = Array.from(
           container.querySelectorAll<HTMLButtonElement>(".cw-mode-picker-option"),
@@ -354,6 +358,9 @@ describe("ChatWidget", () => {
     it("offers only 'Type a message' when speech recognition is unsupported -- no dead voice option", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+      });
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-placeholder")!.click();
       });
 
       const options = Array.from(
@@ -490,9 +497,12 @@ describe("ChatWidget", () => {
         });
         // Picking "Use your voice" now starts recording immediately -- no
         // first tap needed. Flush the pending getUserMedia() promise before
-        // asserting, then a single tap stops it.
+        // asserting, then a single tap stops it. `openPanelVoiceMode()`
+        // manages its own `act()` calls internally (opening the panel is now
+        // a real click, unlike the old always-open-at-mount default) -- do
+        // not nest it inside another `act()`, which React disallows.
+        openPanelVoiceMode();
         await act(async () => {
-          openPanelVoiceMode();
           await Promise.resolve();
         });
         expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
@@ -565,8 +575,10 @@ describe("ChatWidget", () => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
         // Picking "Use your voice" now starts recording immediately.
+        // `openPanelVoiceMode()` manages its own `act()` internally -- don't
+        // nest it inside another `act()`.
+        openPanelVoiceMode();
         await act(async () => {
-          openPanelVoiceMode();
           await Promise.resolve();
         });
         expect(getVoiceButton().getAttribute("aria-pressed")).toBe("true");
@@ -635,9 +647,10 @@ describe("ChatWidget", () => {
       });
 
       // Picking "Use your voice" now starts (and here, fails) recording
-      // immediately -- no tap needed.
+      // immediately -- no tap needed. `openPanelVoiceMode()` manages its own
+      // `act()` internally -- don't nest it inside another `act()`.
+      openPanelVoiceMode();
       await act(async () => {
-        openPanelVoiceMode();
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -658,8 +671,10 @@ describe("ChatWidget", () => {
       });
 
       // Picking "Use your voice" now starts recording immediately.
+      // `openPanelVoiceMode()` manages its own `act()` internally -- don't
+      // nest it inside another `act()`.
+      openPanelVoiceMode();
       await act(async () => {
-        openPanelVoiceMode();
         await Promise.resolve();
       });
       await act(async () => {
@@ -683,8 +698,10 @@ describe("ChatWidget", () => {
       });
 
       // Picking "Use your voice" now starts recording immediately.
+      // `openPanelVoiceMode()` manages its own `act()` internally -- don't
+      // nest it inside another `act()`.
+      openPanelVoiceMode();
       await act(async () => {
-        openPanelVoiceMode();
         await Promise.resolve();
       });
       await act(async () => {
@@ -711,11 +728,17 @@ describe("ChatWidget", () => {
     });
 
     const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
-    // Opens automatically on mount -- no click required.
-    expect(launcher.getAttribute("aria-label")).toBe("Close chat");
-    expect(launcher.getAttribute("aria-expanded")).toBe("true");
+    // Closed on mount -- no auto-open.
+    expect(launcher.getAttribute("aria-label")).toBe("Open chat");
+    expect(launcher.getAttribute("aria-expanded")).toBe("false");
     expect(launcher.textContent).toContain("Chat <b>with us</b>");
     expect(launcher.querySelector("b")).toBeNull();
+
+    act(() => {
+      launcher.click();
+    });
+    expect(launcher.getAttribute("aria-label")).toBe("Close chat");
+    expect(launcher.getAttribute("aria-expanded")).toBe("true");
 
     closePanel();
     expect(launcher.getAttribute("aria-label")).toBe("Open chat");
@@ -866,16 +889,16 @@ describe("ChatWidget", () => {
     expect(widgetCss).not.toContain("Inter");
   });
 
-  it("opens automatically on mount, and the launcher still toggles it closed/open", () => {
+  it("stays closed on mount, and the launcher toggles it open/closed", () => {
     act(() => {
       root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
     });
 
-    expect(container.querySelector(".cw-panel")).not.toBeNull();
-    closePanel();
     expect(container.querySelector(".cw-panel")).toBeNull();
     openPanel();
     expect(container.querySelector(".cw-panel")).not.toBeNull();
+    closePanel();
+    expect(container.querySelector(".cw-panel")).toBeNull();
   });
 
   it("starts a fresh local thread from the Rebecca header reset control", () => {
@@ -1301,12 +1324,15 @@ describe("ChatWidget", () => {
   });
 
   describe("S14.5 focus management + live region + TTS gesture gating", () => {
-    it("is open with focus on the mode gate's 'Type a message' option immediately on mount, moves into the input once that's picked, and re-opening after a close returns to the mode gate", () => {
+    it("is open with focus on the mode gate's 'Type a message' option as soon as the launcher opens it, moves into the input once that's picked, and re-opening after a close returns to the mode gate", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
 
       const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
+      act(() => {
+        launcher.click();
+      });
       expect(launcher.getAttribute("aria-expanded")).toBe("true");
       const typeOption = Array.from(
         container.querySelectorAll<HTMLButtonElement>(".cw-mode-picker-option"),
@@ -1893,9 +1919,12 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        // The panel opens automatically on mount -- the greeting is no
-        // longer gated behind the mode picker, so it should already have
-        // been attempted with no further interaction needed.
+        // Closed on mount -- nothing spoken until the launcher is clicked.
+        expect(speakGreetingMock).not.toHaveBeenCalled();
+
+        openPanelNoModePicked();
+        // The greeting is not gated behind the mode picker, so opening
+        // alone (no mode chosen yet) is enough to trigger it.
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
 
@@ -1903,9 +1932,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
-
-        openPanel(); // picks "Type a message"
+        openPanel(); // opens + picks "Type a message"
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
 
@@ -1913,8 +1940,6 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
-
         openPanelVoiceMode();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
@@ -1923,6 +1948,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        openPanelNoModePicked();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         closePanel();
@@ -1930,10 +1956,11 @@ describe("ChatWidget", () => {
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
 
-      it("does not speak at all when muted before the panel ever opens", () => {
+      it("does not speak again after muting, even after closing and reopening", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        openPanelNoModePicked();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
@@ -1954,6 +1981,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        openPanelNoModePicked();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
@@ -1966,19 +1994,24 @@ describe("ChatWidget", () => {
         expect(ttsCancelMock).toHaveBeenCalled();
       });
 
-      it("retries on the visitor's first interaction anywhere on the page after a blocked open-time attempt", () => {
+      it("retries on the visitor's first interaction anywhere on the page after a blocked open-time attempt", async () => {
         // Simulate Chrome's "no speak() without prior user activation"
-        // autoplay policy: the open-time attempt is blocked (onBlocked
-        // fires synchronously here in place of the utterance's real async
-        // onerror, see tts.ts) -- the retry after a real interaction then
-        // succeeds, matching Chrome's actual behavior once activation has
-        // been granted.
-        speakGreetingMock.mockImplementationOnce((_config, onBlocked) => onBlocked?.());
+        // autoplay policy: onBlocked fires asynchronously (a microtask),
+        // matching the real utterance's async `onerror` (see tts.ts) --
+        // opening the panel is itself a real click, which also satisfies
+        // the document-level "first interaction" fallback below in the SAME
+        // tick, so onBlocked must not resolve until after that has already
+        // no-op'd (hasGreetedRef still true), or both would double-fire.
+        speakGreetingMock.mockImplementationOnce((_config, onBlocked) => {
+          queueMicrotask(() => onBlocked?.());
+        });
 
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        // Mount-time attempt, blocked.
+        openPanelNoModePicked();
+        await flush();
+        // Open-time attempt, blocked.
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         // The visitor's first interaction anywhere on the page -- not the
@@ -2001,6 +2034,7 @@ describe("ChatWidget", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        openPanelNoModePicked();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         act(() => {
@@ -2009,11 +2043,15 @@ describe("ChatWidget", () => {
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
 
-      it("a first-interaction retry does not fire once muted", () => {
-        speakGreetingMock.mockImplementation((_config, onBlocked) => onBlocked?.());
+      it("a first-interaction retry does not fire once muted", async () => {
+        speakGreetingMock.mockImplementation((_config, onBlocked) => {
+          queueMicrotask(() => onBlocked?.());
+        });
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
+        openPanelNoModePicked();
+        await flush();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
