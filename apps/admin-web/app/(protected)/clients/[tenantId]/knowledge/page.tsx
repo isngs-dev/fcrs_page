@@ -12,14 +12,15 @@
  * pattern. `UploadForm` is gone from this screen entirely; the client-facing
  * `/knowledge` page is untouched and keeps it.
  *
- * Train the Agent feature: `listCoverageGaps(tenantId)`/`<TestBotChat
- * tenantId>` are untouched (not named in the request) -- still the same
- * PLATFORM_ADMIN tenant-scoped surface pattern.
+ * "Coverage check" (`<CoverageGaps>`) and "Test the bot" (`<TestBotChat>`)
+ * are also removed from this platform-admin screen -- another capability
+ * platform admins lose on a client's console, same shape as the earlier
+ * upload/bot-settings removals. Both components (and their backing
+ * `listCoverageGaps` action) are untouched and still used by the
+ * client-facing `/knowledge` page.
  */
-import { listCoverageGaps, listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
+import { listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
 import { KnowledgeDocList } from "@/app/(protected)/knowledge/doc-list";
-import { CoverageGaps } from "@/app/(protected)/knowledge/coverage-gaps";
-import { TestBotChat } from "@/app/(protected)/knowledge/test-bot-chat";
 
 export default async function ClientKnowledgePage({
   params,
@@ -28,7 +29,6 @@ export default async function ClientKnowledgePage({
 }) {
   const { tenantId } = await params;
   const docsResult = await listKnowledgeDocs(tenantId);
-  const gapsResult = await listCoverageGaps(tenantId);
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-5 sm:p-7">
@@ -39,19 +39,12 @@ export default async function ClientKnowledgePage({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4.5 lg:grid-cols-[2.2fr_1fr] lg:items-start">
-        <div className="rounded-[14px] border border-[var(--border)] bg-white p-4.5 sm:p-5">
-          <h2 className="mb-3.5 text-[14px] font-bold text-[var(--foreground)]">Uploaded knowledge</h2>
-          <p className="mb-4 text-[12.5px] text-[var(--muted-foreground)]">
-            Every knowledge item on file for this client&apos;s bot, newest upload first.
-          </p>
-          <KnowledgeDocList result={docsResult} tenantId={tenantId} />
-        </div>
-
-        <div className="flex flex-col gap-3.5">
-          <CoverageGaps result={gapsResult} tenantId={tenantId} />
-          <TestBotChat tenantId={tenantId} />
-        </div>
+      <div className="rounded-[14px] border border-[var(--border)] bg-white p-4.5 sm:p-5">
+        <h2 className="mb-3.5 text-[14px] font-bold text-[var(--foreground)]">Uploaded knowledge</h2>
+        <p className="mb-4 text-[12.5px] text-[var(--muted-foreground)]">
+          Every knowledge item on file for this client&apos;s bot, newest upload first.
+        </p>
+        <KnowledgeDocList result={docsResult} tenantId={tenantId} />
       </div>
     </div>
   );

@@ -3,6 +3,10 @@
  * knowledge" (and `<UploadForm>`) must never render on this screen again --
  * uploading is exclusively a CLIENT_ADMIN capability now. The list is
  * rendered with `tenantId` passed through, turning on View/Export.
+ *
+ * "Coverage check" and "Test the bot" are also removed from this screen --
+ * both stay real, working features on the client-facing `/knowledge` page,
+ * just no longer surfaced to platform admins.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -64,5 +68,14 @@ describe("ClientKnowledgePage (/clients/[tenantId]/knowledge)", () => {
     expect(html).toMatch(/>View</);
     expect(html).toMatch(/>Export</);
     expect(html).toContain("/knowledge/download/doc-1?tenant_id=tenant-42");
+
+    expect(html).not.toMatch(/Coverage check/i);
+    expect(html).not.toMatch(/Test the bot/i);
+
+    // Only the knowledge-docs endpoint is ever called -- no coverage-gaps
+    // fetch fires from this screen any more.
+    const calledPaths = adminApiFetchMock.mock.calls.map((call) => call[0] as string);
+    expect(calledPaths.some((p) => p.includes("/ingestion/docs"))).toBe(true);
+    expect(calledPaths.some((p) => p.includes("coverage"))).toBe(false);
   });
 });
