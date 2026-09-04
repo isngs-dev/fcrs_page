@@ -1,21 +1,31 @@
 /**
  * Range + bucket control (S13.5.md decision 5), styled to the reference's
- * segmented pill toggle (7d / 30d / 90d / Custom). Still a plain GET
- * `<form>` -- no client JS, no `select` primitive dependency (decision 7),
- * mirroring `leads/leads-filter.tsx`. Submitting navigates to
+ * segmented pill toggle (7d / 30d / 90d / Custom). A plain GET `<form>`,
+ * no `select` primitive dependency (decision 7), mirroring
+ * `leads/leads-filter.tsx`. Submitting navigates to
  * `/analytics?range=...&bucket=...[&from=...&to=...]`, which re-runs the
- * server component. Server component -- no `"use client"` needed.
+ * server component.
+ *
+ * Picking a range pill or a bucket auto-submits the form (`"use client"` +
+ * `requestSubmit()` on change) instead of requiring a separate "Apply"
+ * click: users reported that clicking a preset pill appeared to do nothing,
+ * since the dashboard only updates once the form is actually submitted.
+ * The "Apply" button stays -- it's still how a custom `from`/`to` pair
+ * gets submitted, since auto-submitting after typing only one of the two
+ * date fields would fetch a half-finished range.
  *
  * The visual segmented control is built from radio inputs styled as pills
- * (native `<input type="radio">` + `<label>`, no JS) so keyboard/screen
- * reader users get real radio-group semantics instead of a div soup. The
- * "Custom" option reveals two native `<input type="date">` fields; because
- * this is a zero-JS server component, both date inputs are always present
- * in the DOM (not conditionally toggled) and are ignored server-side by
- * `resolveAnalyticsQuery` unless `range=custom` is actually submitted --
- * so picking a custom date range while a preset pill is still checked has
- * no unexpected effect.
+ * (native `<input type="radio">` + `<label>`) so keyboard/screen reader
+ * users get real radio-group semantics instead of a div soup. The "Custom"
+ * option reveals two native `<input type="date">` fields; both date inputs
+ * are always present in the DOM (not conditionally toggled) and are
+ * ignored server-side by `resolveAnalyticsQuery` unless `range=custom` is
+ * actually submitted -- so picking a custom date range while a preset pill
+ * is still checked has no unexpected effect.
  */
+"use client";
+
+import type { ChangeEvent } from "react";
 import {
   ANALYTICS_BUCKETS,
   ANALYTICS_RANGES,
@@ -51,6 +61,10 @@ export function AnalyticsRange({
 }) {
   const isCustom = currentRange === CUSTOM_RANGE_KEY;
 
+  function submitOnChange(event: ChangeEvent<HTMLInputElement | HTMLSelectElement>): void {
+    event.currentTarget.form?.requestSubmit();
+  }
+
   return (
     <form
       action={basePath}
@@ -71,6 +85,7 @@ export function AnalyticsRange({
                 name="range"
                 value={range.key}
                 defaultChecked={currentRange === range.key}
+                onChange={submitOnChange}
                 className="sr-only"
               />
               {range.label.replace("Last ", "")}
@@ -82,6 +97,7 @@ export function AnalyticsRange({
               name="range"
               value={CUSTOM_RANGE_KEY}
               defaultChecked={isCustom}
+              onChange={submitOnChange}
               className="sr-only"
             />
             Custom
@@ -122,6 +138,7 @@ export function AnalyticsRange({
           id="bucket"
           name="bucket"
           defaultValue={currentBucket}
+          onChange={submitOnChange}
           className="h-8 rounded-[9px] border border-border bg-white px-2.5 py-1 text-sm text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
         >
           {ANALYTICS_BUCKETS.map((bucket) => (
