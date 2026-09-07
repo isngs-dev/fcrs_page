@@ -100,6 +100,15 @@ const PANEL_HEADER_ID = "cw-panel-header";
 const CONFIRM_CLOSE_TITLE_ID = "cw-confirm-close-title";
 const SUPPORT_STAY_REPLY = "No problem, I'm right here. Can you tell me a bit more about what stopped working?";
 
+/** Feature flag, user request: voice input is temporarily disabled, not
+ * removed -- all the recognition/recording code below stays intact for when
+ * it's turned back on. While `false`, the type-or-voice mode gate never
+ * renders (see `interactionMode`'s initial state below) and the panel opens
+ * straight into the text composer. Exported so `ChatWidget.test.tsx` can
+ * skip (not delete) the voice-mode-dependent tests off the same flag --
+ * flipping this back to `true` re-enables both the feature and its tests. */
+export const VOICE_MODE_ENABLED = false;
+
 /** Max attempts for the bounded auto-retry of a transient turn failure (decision 1/2). */
 const TURN_RETRY_MAX_ATTEMPTS = 4;
 /** Max attempts for the bounded expired-session re-mint (decision 5) — small
@@ -461,7 +470,14 @@ export function ChatWidget({
   // onClick below) -- the click itself is the user gesture `getUserMedia`
   // needs, so there is no reason to make the visitor tap the mic a second
   // time just to begin.
-  const [interactionMode, setInteractionMode] = useState<"type" | "voice" | null>(null);
+  //
+  // While `VOICE_MODE_ENABLED` is `false`, this starts as `"type"` instead
+  // of `null` -- the gate (`interactionMode === null` below) never renders,
+  // so the panel opens straight into the text composer with no picker tap
+  // required.
+  const [interactionMode, setInteractionMode] = useState<"type" | "voice" | null>(
+    VOICE_MODE_ENABLED ? null : "type",
+  );
 
   /**
    * Stops whichever voice-capture mechanism is currently active -- cloud
@@ -1380,7 +1396,7 @@ export function ChatWidget({
                       <ChatGlyph name="chat" />
                       Type a message
                     </button>
-                    {voiceSupported && (
+                    {VOICE_MODE_ENABLED && voiceSupported && (
                       <button
                         type="button"
                         className="cw-mode-picker-option"

@@ -123,7 +123,7 @@ vi.mock("../lead", async () => {
   };
 });
 
-import { ChatWidget } from "./ChatWidget";
+import { ChatWidget, VOICE_MODE_ENABLED } from "./ChatWidget";
 import { widgetCss } from "./widgetCss";
 
 const baseConfig: WidgetConfig = {
@@ -314,9 +314,18 @@ function typeAndSend(text: string): void {
   });
 }
 
+// Voice input is temporarily disabled (VOICE_MODE_ENABLED in ChatWidget.tsx,
+// user request) -- these tests exercise a UI path (the mode gate, the mic
+// composer) that's unreachable while it's off. Skipped, not deleted: they
+// re-activate automatically the moment the flag flips back to `true`.
+const itVoice = VOICE_MODE_ENABLED ? it : it.skip;
+// Inverse: only meaningful while voice mode is off (would go stale/false
+// the moment it's re-enabled, since the gate would then show again).
+const itVoiceDisabled = VOICE_MODE_ENABLED ? it.skip : it;
+
 describe("ChatWidget", () => {
   describe("type-or-voice mode gate", () => {
-    it("shows the mode picker on open, with neither the text composer nor the mic visible yet", () => {
+    itVoice("shows the mode picker on open, with neither the text composer nor the mic visible yet", () => {
       class FakeRecognition {
         continuous = true;
         interimResults = true;
@@ -355,7 +364,7 @@ describe("ChatWidget", () => {
       }
     });
 
-    it("offers only 'Type a message' when speech recognition is unsupported -- no dead voice option", () => {
+    itVoice("offers only 'Type a message' when speech recognition is unsupported -- no dead voice option", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
@@ -381,7 +390,37 @@ describe("ChatWidget", () => {
       expect(container.querySelector(".cw-mode-picker")).toBeNull();
     });
 
-    it("picking 'Use your voice' shows only a mic button -- no text input, no send button", () => {
+    itVoiceDisabled("opens straight into the text composer with no picker at all, even when the browser supports voice", () => {
+      class FakeRecognition {
+        start = vi.fn();
+        stop = vi.fn();
+        abort = vi.fn();
+      }
+      Object.defineProperty(window, "webkitSpeechRecognition", {
+        configurable: true,
+        writable: true,
+        value: FakeRecognition,
+      });
+
+      try {
+        act(() => {
+          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+        });
+        const launcher = container.querySelector<HTMLButtonElement>(".cw-placeholder")!;
+        act(() => {
+          launcher.click();
+        });
+
+        expect(container.querySelector(".cw-mode-picker")).toBeNull();
+        expect(container.querySelector(".cw-input")).not.toBeNull();
+        expect(container.querySelector(".cw-voice-button")).toBeNull();
+        expect(document.activeElement).toBe(container.querySelector(".cw-input"));
+      } finally {
+        Reflect.deleteProperty(window, "webkitSpeechRecognition");
+      }
+    });
+
+    itVoice("picking 'Use your voice' shows only a mic button -- no text input, no send button", () => {
       class FakeRecognition {
         continuous = true;
         interimResults = true;
@@ -415,7 +454,7 @@ describe("ChatWidget", () => {
     });
   });
 
-  describe("cloud ASR (OpenAI, via the backend) -- the preferred mic mechanism when configured+supported", () => {
+  describe.skipIf(!VOICE_MODE_ENABLED)("cloud ASR (OpenAI, via the backend) -- the preferred mic mechanism when configured+supported", () => {
     class FakeMediaRecorder {
       static instances: FakeMediaRecorder[] = [];
       state: "inactive" | "recording" = "inactive";
@@ -1324,7 +1363,7 @@ describe("ChatWidget", () => {
   });
 
   describe("S14.5 focus management + live region + TTS gesture gating", () => {
-    it("is open with focus on the mode gate's 'Type a message' option as soon as the launcher opens it, moves into the input once that's picked, and re-opening after a close returns to the mode gate", () => {
+    itVoice("is open with focus on the mode gate's 'Type a message' option as soon as the launcher opens it, moves into the input once that's picked, and re-opening after a close returns to the mode gate", () => {
       act(() => {
         root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
       });
@@ -1458,7 +1497,7 @@ describe("ChatWidget", () => {
       );
     });
 
-    it("uses browser speech recognition when available, auto-sends the transcript (voice mode has no field to review it in), and stops listening when the panel closes", async () => {
+    itVoice("uses browser speech recognition when available, auto-sends the transcript (voice mode has no field to review it in), and stops listening when the panel closes", async () => {
       type ResultHandler = (event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void;
 
       class FakeRecognition {
@@ -1543,7 +1582,7 @@ describe("ChatWidget", () => {
       expect(container.querySelector(".cw-voice-button")).toBeNull();
     });
 
-    describe("voice input error feedback (previously 100% silent -- onerror just reset listening)", () => {
+    describe.skipIf(!VOICE_MODE_ENABLED)("voice input error feedback (previously 100% silent -- onerror just reset listening)", () => {
       class FakeRecognition {
         static latest: FakeRecognition | null = null;
         continuous = true;
@@ -2098,7 +2137,7 @@ describe("ChatWidget", () => {
       expect(speakMock).not.toHaveBeenCalled();
     });
 
-    it("speaks a bot reply aloud once it arrives in voice mode ('hear it back')", async () => {
+    itVoice("speaks a bot reply aloud once it arrives in voice mode ('hear it back')", async () => {
       class FakeRecognition {
         static latest: FakeRecognition | null = null;
         onstart: (() => void) | null = null;
@@ -2147,7 +2186,7 @@ describe("ChatWidget", () => {
       }
     });
 
-    it("never speaks a bot reply while muted, even in voice mode", async () => {
+    itVoice("never speaks a bot reply while muted, even in voice mode", async () => {
       class FakeRecognition {
         static latest: FakeRecognition | null = null;
         onstart: (() => void) | null = null;
