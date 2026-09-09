@@ -307,6 +307,118 @@ async def create_tenant_for_own_account(
     }
 
 
+# Tables with a plain (unconstrained-to-tenants) ``tenant_id`` column -- no
+# ``ON DELETE CASCADE`` exists for any of these, so a hard tenant delete must
+# clear them explicitly. Order matters for exactly one edge --
+# ``opportunities.contact_id -> contacts`` has no ``ON DELETE`` clause
+# (defaults to RESTRICT), so ``opportunities`` must be cleared before
+# ``contacts``. Every other edge here is CASCADE/SET NULL (order is then
+# just hygiene, not a requirement) -- full audit in the delete-chatbot plan.
+_DEPENDENT_TABLES_DELETE_ORDER: tuple[str, ...] = (
+    "contact_identities",
+    "opportunities",
+    "lead_activities",
+    "reminder_jobs",
+    "notification_event_reads",
+    "contacts",
+    "accounts",
+    "leads",
+    "schedule_events",
+    "notification_events",
+    "tenant_crm_configs",
+    "audit_events",
+    "availability",
+    "tenant_calendar_configs",
+    "tenant_notification_configs",
+    "notification_jobs",
+    "tenant_opportunity_configs",
+    "tenant_call_configs",
+)
+
+
+async def delete_own_tenant(db: Database, claims: AuthClaims) -> dict[str, Any]:
+    """Permanently (hard) delete the CALLER'S OWN currently-active chatbot.
+
+    Requires ``Role.CLIENT_ADMIN``; the target is ALWAYS ``claims.tenant_id``,
+    never a caller-supplied id (same own-tenant-only shape as
+    ``rotate_own_client_key``).
+
+    Refuses (``ValidationError`` ``LAST_CHATBOT``) if this is the account's
+    only remaining ENABLED chatbot -- deleting it would leave the account
+    unable to log in at all (``NO_ACCESSIBLE_TENANT``). The check runs as the
+    first statement inside the delete transaction, after taking a
+    per-account advisory lock (``pg_advisory_xact_lock``), so two concurrent
+    deletes against the same account's last two chatbots can't both pass it.
+
+    Everything else runs in one transaction on one connection
+    (``db.acquire()`` + ``conn.transaction()`` -- a deliberate exception to
+    this file's usual "sequential inserts, no transaction wrapper"
+    convention: an interrupted hard delete leaves cross-table data
+    corruption, not just a disclosed leftover row):
+
+    1. Resolve the account's next tenant (earliest-created other ENABLED
+       tenant) -- this is both the last-chatbot guard and the id the
+       session gets re-minted onto.
+    2. Repoint every user's legacy ``tenant_id`` off the tenant being
+       deleted onto that next tenant. ``users.tenant_id`` still carries
+       ``ON DELETE CASCADE`` to ``tenants(id)`` (kept, unused, for the
+       multi-chatbot-accounts expand-only migration window) -- without this
+       step, deleting the tenant would cascade-delete the login of every
+       user whose vestigial ``tenant_id`` still points at it, which
+       includes the caller themselves whenever they weren't invited under
+       this specific chatbot.
+    3. Clear every dependent table with no FK to ``tenants``
+       (``_DEPENDENT_TABLES_DELETE_ORDER``).
+    4. ``DELETE FROM tenants`` -- now safe to cascade (users, conversations,
+       messages, knowledge_docs, ingestion_runs, and the per-tenant config
+       tables that already have real ``ON DELETE CASCADE`` constraints).
+
+    Returns ``{deleted_tenant_id, next_tenant_id}``. The route mints the new
+    session cookie onto ``next_tenant_id`` -- this function does no
+    cookie/response work, matching how ``switch_tenant``'s route keeps that
+    separate from its own DB lookups.
+    """
+    if claims.role != Role.CLIENT_ADMIN or claims.tenant_id is None:
+        raise AuthorizationError(
+            "Only a CLIENT_ADMIN may delete their own tenant's chatbot.",
+            code="ROLE_NOT_PERMITTED",
+        )
+
+    tenant_id = claims.tenant_id
+    account_id = await _resolve_own_account_id(db, claims)
+
+    async with db.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", account_id)
+
+            next_row = await conn.fetchrow(
+                "SELECT id FROM tenants WHERE client_account_id = $1 AND enabled "
+                "AND id != $2 ORDER BY created_at ASC LIMIT 1",
+                account_id,
+                tenant_id,
+            )
+            if next_row is None:
+                raise ValidationError(
+                    "This is the only chatbot left in your account -- delete "
+                    "another chatbot instead, or contact support.",
+                    code="LAST_CHATBOT",
+                )
+            next_tenant_id = str(next_row["id"])
+
+            await conn.execute(
+                "UPDATE users SET tenant_id = $1 WHERE tenant_id = $2",
+                next_tenant_id,
+                tenant_id,
+            )
+
+            for table in _DEPENDENT_TABLES_DELETE_ORDER:
+                await conn.execute(f"DELETE FROM {table} WHERE tenant_id = $1", tenant_id)  # noqa: S608
+
+            await conn.execute("DELETE FROM tenants WHERE id = $1", tenant_id)
+
+    return {"deleted_tenant_id": tenant_id, "next_tenant_id": next_tenant_id}
+
+
 async def list_tenants_for_own_account(db: Database, claims: AuthClaims) -> list[dict[str, Any]]:
     """List every chatbot (tenant) in the CALLER'S OWN account.
 

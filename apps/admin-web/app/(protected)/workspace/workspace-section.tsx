@@ -7,9 +7,9 @@
  * `.tbl-card`. Language renders as a DISABLED `SetRow` (S3 in the SR-27
  * handoff, D3) -- same row geometry as a live field, but visibly
  * non-interactive with the SR-20 D5 note preserved verbatim. Billing and
- * Delete workspace are NOT rendered here at all -- Billing is a rail entry
- * only (`settings-rail.tsx`), Delete workspace is `disabled-sections.tsx`'s
- * own Danger-zone card.
+ * chatbot deletion are NOT rendered here at all -- Billing is a rail entry
+ * only (`settings-rail.tsx`), chatbot deletion is `delete-chatbot-section
+ * .tsx`'s own Danger-zone card.
  */
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";

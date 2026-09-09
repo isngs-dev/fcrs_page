@@ -15,10 +15,12 @@ from common.crypto import verify_password
 from common.errors import AuthorizationError, NotFoundError, ValidationError
 
 from api.admin.repository import (
+    _DEPENDENT_TABLES_DELETE_ORDER,
     _hash_client_key,
     _is_client_key_hash,
     create_tenant_for_own_account,
     create_tenant_with_admin,
+    delete_own_tenant,
     list_tenants_for_own_account,
     rotate_client_key,
 )
@@ -91,6 +93,54 @@ class _RecordingDB:
             return rows
         self._fetch_i += 1
         return []
+
+    def acquire(self) -> _AcquireCM:
+        return _AcquireCM(self)
+
+
+class _NullTransaction:
+    """No-op stand-in for asyncpg's ``conn.transaction()`` context manager --
+    the recording double has no real commit/rollback semantics, only call
+    ordering, which is all ``delete_own_tenant``'s tests assert on."""
+
+    async def __aenter__(self) -> _NullTransaction:
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+
+class _RecordingConn:
+    """Delegates straight back to the owning ``_RecordingDB`` so every call
+    made via ``conn.execute``/``fetchrow`` lands in the same ``db.calls``
+    list as calls made directly on ``db`` -- tests assert on one sequence
+    regardless of which surface issued the call."""
+
+    def __init__(self, db: _RecordingDB) -> None:
+        self._db = db
+
+    async def execute(self, query: str, *args: Any) -> str:
+        return await self._db.execute(query, *args)
+
+    async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
+        return await self._db.fetchrow(query, *args)
+
+    async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
+        return await self._db.fetch(query, *args)
+
+    def transaction(self) -> _NullTransaction:
+        return _NullTransaction()
+
+
+class _AcquireCM:
+    def __init__(self, db: _RecordingDB) -> None:
+        self._db = db
+
+    async def __aenter__(self) -> _RecordingConn:
+        return _RecordingConn(self._db)
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
 
 
 def _unique_violation() -> asyncpg.UniqueViolationError:
@@ -497,4 +547,133 @@ async def test_list_tenants_for_own_account_filters_by_resolved_account_id() -> 
     fetch_call = next(c for c in db.calls if c.kind == "fetch")
     assert "WHERE client_account_id = $1" in fetch_call.query
     assert fetch_call.params == (_ACCOUNT_ID,)
-    assert _OTHER_ACCOUNT_ID not in fetch_call.params
+
+
+# -- delete_own_tenant: RBAC -------------------------------------------------------
+
+_NEXT_TENANT_ID = "tenant-b-456"
+
+
+@pytest.mark.parametrize("claims", [_PLATFORM_ADMIN, _CLIENT_AGENT, _VISITOR])
+async def test_delete_own_tenant_requires_client_admin(claims: AuthClaims) -> None:
+    db = _RecordingDB()
+
+    with pytest.raises(AuthorizationError) as exc_info:
+        await delete_own_tenant(db, claims)
+
+    assert exc_info.value.code == "ROLE_NOT_PERMITTED"
+    assert db.calls == []  # zero queries attempted
+
+
+# -- delete_own_tenant: happy path -------------------------------------------------
+
+
+async def test_delete_own_tenant_happy_path_full_transaction() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        {"client_account_id": _ACCOUNT_ID},  # get_user_by_id (outside the transaction)
+        {"id": _NEXT_TENANT_ID},  # next enabled tenant in the account
+    ]
+
+    result = await delete_own_tenant(db, _CLIENT_ADMIN)
+
+    assert result == {"deleted_tenant_id": _TENANT_ID, "next_tenant_id": _NEXT_TENANT_ID}
+
+    # Call order: get_user_by_id, advisory lock, next-tenant lookup, the
+    # users.tenant_id repoint, then every dependent table in the documented
+    # order, then the tenant row itself.
+    assert db.calls[0].kind == "fetchrow"
+    assert "FROM users WHERE id" in db.calls[0].query
+
+    assert db.calls[1].kind == "execute"
+    assert "pg_advisory_xact_lock" in db.calls[1].query
+    assert db.calls[1].params == (_ACCOUNT_ID,)
+
+    assert db.calls[2].kind == "fetchrow"
+    assert "client_account_id = $1 AND enabled" in db.calls[2].query
+    assert db.calls[2].params == (_ACCOUNT_ID, _TENANT_ID)
+
+    repoint_call = db.calls[3]
+    assert repoint_call.kind == "execute"
+    assert "UPDATE users SET tenant_id" in repoint_call.query
+    assert repoint_call.params == (_NEXT_TENANT_ID, _TENANT_ID)
+
+    delete_calls = db.calls[4:]
+    assert len(delete_calls) == len(_DEPENDENT_TABLES_DELETE_ORDER) + 1  # + tenants itself
+    for call, table in zip(delete_calls, _DEPENDENT_TABLES_DELETE_ORDER, strict=False):
+        assert call.kind == "execute"
+        assert call.query == f"DELETE FROM {table} WHERE tenant_id = $1"  # noqa: S608
+        assert call.params == (_TENANT_ID,)
+
+    final_call = delete_calls[-1]
+    assert final_call.query == "DELETE FROM tenants WHERE id = $1"
+    assert final_call.params == (_TENANT_ID,)
+
+
+# -- delete_own_tenant: last-chatbot guard -----------------------------------------
+
+
+async def test_delete_own_tenant_blocks_deleting_the_only_remaining_chatbot() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        {"client_account_id": _ACCOUNT_ID},  # get_user_by_id
+        None,  # no OTHER enabled tenant in the account
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        await delete_own_tenant(db, _CLIENT_ADMIN)
+
+    assert exc_info.value.code == "LAST_CHATBOT"
+    # Guard fails before any mutation -- no repoint, no deletes.
+    assert not any(c.kind == "execute" and c.query.startswith("DELETE") for c in db.calls)
+    assert not any(c.kind == "execute" and c.query.startswith("UPDATE") for c in db.calls)
+
+
+# -- delete_own_tenant: isolation ---------------------------------------------------
+
+
+async def test_delete_own_tenant_never_touches_another_tenant() -> None:
+    """Every DELETE/UPDATE this function issues is parameterized on the
+    CALLER'S OWN ``claims.tenant_id`` -- never a caller-supplied id (there is
+    no id parameter to this function at all) -- so it can only ever delete
+    the caller's own currently-active chatbot."""
+    other_claims = AuthClaims(subject="ca-2", role=Role.CLIENT_ADMIN, tenant_id="tenant-c-999")
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        {"client_account_id": _OTHER_ACCOUNT_ID},
+        {"id": "tenant-d-000"},
+    ]
+
+    result = await delete_own_tenant(db, other_claims)
+
+    assert result["deleted_tenant_id"] == "tenant-c-999"
+    for call in db.calls:
+        if call.kind == "execute" and call.query.startswith("DELETE FROM tenants"):
+            assert call.params == ("tenant-c-999",)
+        if call.kind == "execute" and call.query.startswith("DELETE FROM") and "tenants" not in call.query:
+            assert call.params == ("tenant-c-999",)
+    # The advisory lock + next-tenant lookup are scoped to the OTHER
+    # account, never account A's.
+    assert db.calls[1].params == (_OTHER_ACCOUNT_ID,)
+    assert db.calls[2].params == (_OTHER_ACCOUNT_ID, "tenant-c-999")
+
+
+# -- delete_own_tenant: users.tenant_id repoint (cascade landmine) -----------------
+
+
+async def test_delete_own_tenant_repoints_legacy_user_tenant_id_before_deleting() -> None:
+    """``users.tenant_id`` still carries ON DELETE CASCADE to tenants(id).
+    Without repointing it first, deleting the tenant would cascade-delete
+    the login of every user (including the caller) whose vestigial
+    tenant_id still points at the chatbot being deleted."""
+    db = _RecordingDB()
+    db.fetchrow_returns = [{"client_account_id": _ACCOUNT_ID}, {"id": _NEXT_TENANT_ID}]
+
+    await delete_own_tenant(db, _CLIENT_ADMIN)
+
+    update_index = next(i for i, c in enumerate(db.calls) if c.kind == "execute" and "UPDATE users" in c.query)
+    delete_tenants_index = next(
+        i for i, c in enumerate(db.calls) if c.kind == "execute" and c.query.startswith("DELETE FROM tenants")
+    )
+    assert update_index < delete_tenants_index
+    assert db.calls[update_index].params == (_NEXT_TENANT_ID, _TENANT_ID)

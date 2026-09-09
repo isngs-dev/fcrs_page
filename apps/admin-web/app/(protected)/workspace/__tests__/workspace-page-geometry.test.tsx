@@ -86,18 +86,19 @@ describe("WorkspacePage -- Settings shell (split from the combined route)", () =
     expect(railMatches.length).toBe(1);
   });
 
-  it("Delete workspace button is disabled, never a live/clickable control (D2/G19)", async () => {
+  it("Delete this chatbot is a real, live control naming the current chatbot (delete-active-chatbot feature)", async () => {
     getMock.mockReturnValue({ value: signToken("CLIENT_ADMIN") });
     mockWorkspaceFetch();
 
     const element = await WorkspacePage({ searchParams: Promise.resolve({}) });
     const html = renderToStaticMarkup(element);
 
-    expect(html).toMatch(/Delete workspace/);
-    // The Danger-zone button carries `disabled` -- react-dom serializes a
-    // boolean disabled attribute as bare `disabled=""`.
-    expect(html).toMatch(/Delete workspace<\/button>|disabled=""[^>]*>\s*Delete workspace/);
-    expect(html).toMatch(/disabled=""/);
+    expect(html).toMatch(/Delete this chatbot/);
+    expect(html).toMatch(/Acme/);
+    // Unlike the old dead "Delete workspace" placeholder, this button is
+    // NOT disabled -- it opens a real confirm dialog (delete-chatbot-section
+    // .test.tsx covers the dialog's own behavior).
+    expect(html).not.toMatch(/disabled=""[^>]*>\s*Delete this chatbot/);
   });
 
   it("Language row renders aria-disabled, never a live editable field (D3/G18)", async () => {

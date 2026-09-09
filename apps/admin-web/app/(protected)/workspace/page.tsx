@@ -25,7 +25,7 @@ import { ApiKeysSection } from "@/app/(protected)/workspace/api-keys-section";
 import { AvailabilitySection } from "@/app/(protected)/workspace/availability-section";
 import { GoogleCalendarSection } from "@/app/(protected)/workspace/google-calendar-section";
 import { CalendlySection } from "@/app/(protected)/workspace/calendly-section";
-import { DisabledSections } from "@/app/(protected)/workspace/disabled-sections";
+import { DeleteChatbotSection } from "@/app/(protected)/workspace/delete-chatbot-section";
 import { SettingsRail, type SettingsRailRow } from "@/components/admin/settings-rail";
 
 interface WorkspacePageProps {
@@ -116,7 +116,9 @@ export default async function WorkspacePage({ searchParams }: WorkspacePageProps
 
           <CalendlySection />
 
-          <DisabledSections />
+          {workspaceResult.status === "ok" ? (
+            <DeleteChatbotSection currentName={workspaceResult.workspace.name} />
+          ) : null}
         </div>
       </div>
     </div>
