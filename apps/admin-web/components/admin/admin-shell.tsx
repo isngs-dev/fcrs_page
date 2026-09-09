@@ -7,7 +7,6 @@ import {
   BarChart3,
   Bell,
   BookOpen,
-  Bot,
   Building2,
   ChevronDown,
   Contact,
@@ -80,16 +79,12 @@ export interface NavGroup {
 }
 
 const overviewItems: NavEntry[] = [
-  // Multi-chatbot accounts: the account-level "my chatbots" hub + switcher.
-  {
-    href: "/chatbots",
-    label: "My chatbots",
-    icon: Bot,
-    roles: ["CLIENT_ADMIN", "CLIENT_AGENT"],
-    children: [
-      { href: "/chatbots/new", label: "Add a chatbot", icon: PlusCircle, roles: ["CLIENT_ADMIN"] },
-    ],
-  },
+  // Multi-chatbot accounts nav entry removed on user request -- the
+  // sidebar's <TenantSwitcher> (below) already covers list+switch, and now
+  // "+ Add a chatbot" too, so a separate "My chatbots" nav destination was
+  // redundant. Mirrors the existing "Deals nav entry remains soft-disabled"
+  // precedent just below: the /chatbots and /chatbots/new routes + their
+  // components are left on disk, just unreachable from the nav.
   {
     href: "/",
     label: "Dashboard",
@@ -506,6 +501,7 @@ export function AdminShell({
           chatbots={chatbots}
           activeTenantId={activeTenantId}
           collapsed={sidebar.collapsed}
+          canCreate={role === "CLIENT_ADMIN"}
         />
 
         {/* Sidebar.dc.html:14-26 -- `.sb-kicker` is `font-size:10.5px;

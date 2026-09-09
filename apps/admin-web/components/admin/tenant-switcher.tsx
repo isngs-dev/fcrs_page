@@ -9,12 +9,19 @@
  * PLATFORM_ADMIN has no account/switcher, they browse via `/clients/
  * {tenantId}/...` instead.
  *
+ * Also the CLIENT_ADMIN-only entry point into `/chatbots/new` (a special
+ * "+ Add a chatbot" option, user request) -- the standalone "My chatbots"
+ * nav destination this used to live under was removed as redundant once
+ * this dropdown covered list+switch; `/chatbots`/`/chatbots/new` themselves
+ * are untouched, just reached from here now instead of the nav.
+ *
  * Auto-applies on change rather than requiring a separate "Apply" click --
  * same UX decision as this app's `analytics-range.tsx` auto-submit fix
  * (a control that visually looks like it should apply instantly, applying
  * on a separate click instead, reads as broken).
  */
 import { useTransition, type ChangeEvent } from "react";
+import { useRouter } from "next/navigation";
 import { switchTenantAction } from "@/app/(protected)/switch-tenant/actions";
 
 export interface SwitchableChatbot {
@@ -23,24 +30,38 @@ export interface SwitchableChatbot {
   enabled: boolean;
 }
 
+/** Not a real tenant id (those are `uuid4().hex`, 32 lowercase hex chars) --
+ *  a human-readable sentinel `<option>` value picked out in `handleChange`
+ *  before it ever reaches `switchTenantAction`. */
+const ADD_CHATBOT_VALUE = "__add_chatbot__";
+
 export function TenantSwitcher({
   chatbots,
   activeTenantId,
   collapsed,
+  canCreate,
 }: {
   chatbots: SwitchableChatbot[];
   activeTenantId: string | null;
   collapsed: boolean;
+  canCreate: boolean;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  if (chatbots.length === 0) return null;
+  // Nothing to show at all: no chatbots AND the caller can't create one
+  // either (a CLIENT_AGENT on a still-empty account -- ask your admin).
+  if (chatbots.length === 0 && !canCreate) return null;
 
   function handleChange(event: ChangeEvent<HTMLSelectElement>) {
-    const tenantId = event.target.value;
-    if (tenantId === activeTenantId) return;
+    const value = event.target.value;
+    if (value === ADD_CHATBOT_VALUE) {
+      router.push("/chatbots/new");
+      return;
+    }
+    if (value === activeTenantId) return;
     startTransition(() => {
-      void switchTenantAction(tenantId);
+      void switchTenantAction(value);
     });
   }
 
@@ -65,6 +86,7 @@ export function TenantSwitcher({
             {!bot.enabled ? " (disabled)" : ""}
           </option>
         ))}
+        {canCreate ? <option value={ADD_CHATBOT_VALUE}>+ Add a chatbot</option> : null}
       </select>
     </div>
   );
