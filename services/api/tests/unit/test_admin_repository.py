@@ -12,16 +12,20 @@ import asyncpg
 import pytest
 from common.auth import AuthClaims, Role
 from common.crypto import verify_password
-from common.errors import AuthorizationError, ValidationError
+from common.errors import AuthorizationError, NotFoundError, ValidationError
 
 from api.admin.repository import (
     _hash_client_key,
     _is_client_key_hash,
+    create_tenant_for_own_account,
     create_tenant_with_admin,
+    list_tenants_for_own_account,
     rotate_client_key,
 )
 
 _TENANT_ID = "tenant-a-123"
+_ACCOUNT_ID = "account-a-123"
+_OTHER_ACCOUNT_ID = "account-b-999"
 
 _PLATFORM_ADMIN = AuthClaims(subject="pa-1", role=Role.PLATFORM_ADMIN, tenant_id=None)
 _CLIENT_ADMIN = AuthClaims(subject="ca-1", role=Role.CLIENT_ADMIN, tenant_id=_TENANT_ID)
@@ -54,8 +58,10 @@ class _RecordingDB:
         self.calls: list[_Call] = []
         self.execute_side_effects: list[Exception | None] = []
         self.fetchrow_returns: list[dict[str, Any] | None] = []
+        self.fetch_returns: list[list[dict[str, Any]]] = []
         self._execute_i = 0
         self._fetchrow_i = 0
+        self._fetch_i = 0
 
     async def execute(self, query: str, *args: Any) -> str:
         self.calls.append(_Call("execute", query, args))
@@ -76,6 +82,15 @@ class _RecordingDB:
             return row
         self._fetchrow_i += 1
         return None
+
+    async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
+        self.calls.append(_Call("fetch", query, args))
+        if self._fetch_i < len(self.fetch_returns):
+            rows = self.fetch_returns[self._fetch_i]
+            self._fetch_i += 1
+            return rows
+        self._fetch_i += 1
+        return []
 
 
 def _unique_violation() -> asyncpg.UniqueViolationError:
@@ -344,3 +359,142 @@ async def test_rotate_client_key_two_calls_produce_different_keys() -> None:
     key2 = await rotate_client_key(db2, _PLATFORM_ADMIN, _TENANT_ID)
 
     assert key1 != key2
+
+
+# -- create_tenant_for_own_account: RBAC ------------------------------------------
+
+
+@pytest.mark.parametrize("claims", [_PLATFORM_ADMIN, _CLIENT_AGENT, _VISITOR])
+async def test_create_tenant_for_own_account_requires_client_admin(claims: AuthClaims) -> None:
+    db = _RecordingDB()
+
+    with pytest.raises(AuthorizationError) as exc_info:
+        await create_tenant_for_own_account(db, claims, name="Bot 2", slug="bot-2")
+
+    assert exc_info.value.code == "ROLE_NOT_PERMITTED"
+    assert db.calls == []  # zero queries attempted
+
+
+# -- create_tenant_for_own_account: happy path ------------------------------------
+
+
+async def test_create_tenant_for_own_account_happy_path() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [{"client_account_id": _ACCOUNT_ID}]  # get_user_by_id
+
+    result = await create_tenant_for_own_account(db, _CLIENT_ADMIN, name="Bot 2", slug="bot-2")
+
+    # Own-account resolution (fetchrow), tenant INSERT, client-key UPDATE.
+    assert len(db.calls) == 3
+    assert db.calls[0].kind == "fetchrow"
+    assert db.calls[1].kind == "execute"
+    assert "INSERT INTO tenants" in db.calls[1].query
+    assert db.calls[2].kind == "execute"
+    assert "UPDATE tenants" in db.calls[2].query
+    assert "client_key_hash" in db.calls[2].query
+
+    # The tenant is inserted under the CALLER'S OWN account, never a
+    # caller-supplied one -- creates NO user (unlike create_tenant_with_admin).
+    assert _ACCOUNT_ID in db.calls[1].params
+
+    raw_key = result["client_key"]
+    assert raw_key.startswith("pk_")
+    assert result["tenant_id"]
+    assert result["name"] == "Bot 2"
+    assert result["slug"] == "bot-2"
+    assert "admin_user_id" not in result
+
+
+# -- create_tenant_for_own_account: slug collision --------------------------------
+
+
+async def test_create_tenant_for_own_account_slug_collision() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [{"client_account_id": _ACCOUNT_ID}]
+    db.execute_side_effects = [_unique_violation()]
+
+    with pytest.raises(ValidationError) as exc_info:
+        await create_tenant_for_own_account(db, _CLIENT_ADMIN, name="Bot 2", slug="taken")
+
+    assert exc_info.value.code == "TENANT_SLUG_TAKEN"
+    # Only the tenant INSERT was attempted -- no client-key update.
+    assert len([c for c in db.calls if c.kind == "execute"]) == 1
+
+
+# -- create_tenant_for_own_account: defensive (should-never-happen) --------------
+
+
+async def test_create_tenant_for_own_account_missing_account_raises_not_found() -> None:
+    """Defensive: a CLIENT_ADMIN whose own user row somehow has no
+    client_account_id (should never happen given the DB CHECK constraint)
+    fails cleanly rather than creating an orphaned/global tenant."""
+    db = _RecordingDB()
+    db.fetchrow_returns = [None]
+
+    with pytest.raises(NotFoundError) as exc_info:
+        await create_tenant_for_own_account(db, _CLIENT_ADMIN, name="Bot 2", slug="bot-2")
+
+    assert exc_info.value.code == "ACCOUNT_NOT_FOUND"
+    assert db.calls == [db.calls[0]]  # only the account-resolution lookup
+
+
+# -- create_tenant_for_own_account: no cap (locked decision) ---------------------
+
+
+async def test_create_tenant_for_own_account_no_cap_enforced() -> None:
+    """No billing/plan-tier system exists yet -- a 4th/5th chatbot for the
+    same account must still succeed (locked decision, not a placeholder)."""
+    for i in range(5):
+        db = _RecordingDB()
+        db.fetchrow_returns = [{"client_account_id": _ACCOUNT_ID}]
+        result = await create_tenant_for_own_account(
+            db, _CLIENT_ADMIN, name=f"Bot {i}", slug=f"bot-{i}"
+        )
+        assert result["tenant_id"]
+
+
+# -- list_tenants_for_own_account: RBAC -------------------------------------------
+
+
+@pytest.mark.parametrize("claims", [_PLATFORM_ADMIN, _VISITOR])
+async def test_list_tenants_for_own_account_rejects_non_account_roles(claims: AuthClaims) -> None:
+    db = _RecordingDB()
+
+    with pytest.raises(AuthorizationError) as exc_info:
+        await list_tenants_for_own_account(db, claims)
+
+    assert exc_info.value.code == "ROLE_NOT_PERMITTED"
+    assert db.calls == []
+
+
+@pytest.mark.parametrize("claims", [_CLIENT_ADMIN, _CLIENT_AGENT])
+async def test_list_tenants_for_own_account_allows_admin_and_agent(claims: AuthClaims) -> None:
+    """Both CLIENT_ADMIN and CLIENT_AGENT get the same account-level
+    visibility -- the switcher is symmetric (locked decision)."""
+    db = _RecordingDB()
+    db.fetchrow_returns = [{"client_account_id": _ACCOUNT_ID}]
+    db.fetch_returns = [[{"id": _TENANT_ID, "name": "Bot 1", "slug": "bot-1", "enabled": True}]]
+
+    rows = await list_tenants_for_own_account(db, claims)
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == _TENANT_ID
+
+
+# -- list_tenants_for_own_account: isolation --------------------------------------
+
+
+async def test_list_tenants_for_own_account_filters_by_resolved_account_id() -> None:
+    """Isolation -- the SQL is bound to the CALLER'S OWN resolved account_id,
+    never a caller-supplied value, so account A can never see account B's
+    chatbots even if account B has multiple tenants."""
+    db = _RecordingDB()
+    db.fetchrow_returns = [{"client_account_id": _ACCOUNT_ID}]
+    db.fetch_returns = [[]]
+
+    await list_tenants_for_own_account(db, _CLIENT_ADMIN)
+
+    fetch_call = next(c for c in db.calls if c.kind == "fetch")
+    assert "WHERE client_account_id = $1" in fetch_call.query
+    assert fetch_call.params == (_ACCOUNT_ID,)
+    assert _OTHER_ACCOUNT_ID not in fetch_call.params

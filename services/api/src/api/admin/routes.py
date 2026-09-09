@@ -18,7 +18,12 @@ from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
 
-from api.admin.repository import create_tenant_with_admin, rotate_client_key
+from api.admin.repository import (
+    create_tenant_for_own_account,
+    create_tenant_with_admin,
+    list_tenants_for_own_account,
+    rotate_client_key,
+)
 from api.auth.dependencies import require_roles
 
 _log = get_logger(__name__)
@@ -110,6 +115,92 @@ async def onboard_tenant(
         admin_user_id=result["admin_user_id"],
         admin_email=result["admin_email"],
         admin_password=result["admin_password"] if result["password_was_generated"] else None,
+    )
+
+
+class CreateOwnTenantRequest(BaseModel):
+    """Body for POST /admin/tenants/mine (CLIENT_ADMIN self-service)."""
+
+    name: str = Field(min_length=1, max_length=200)
+    slug: str = Field(min_length=1, max_length=63, pattern=_SLUG_PATTERN)
+
+
+class CreateOwnTenantResponse(BaseModel):
+    """Response for POST /admin/tenants/mine."""
+
+    tenant_id: str
+    name: str
+    slug: str
+    client_key: str
+
+
+class OwnTenantSummary(BaseModel):
+    """One row in GET /admin/tenants/mine."""
+
+    id: str
+    name: str
+    slug: str
+    enabled: bool
+
+
+class ListOwnTenantsResponse(BaseModel):
+    """Response for GET /admin/tenants/mine."""
+
+    tenants: list[OwnTenantSummary]
+
+
+@router.post("/mine", status_code=status.HTTP_201_CREATED)
+async def create_own_tenant(
+    body: CreateOwnTenantRequest,
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> CreateOwnTenantResponse:
+    """Self-service: create a new chatbot under the CALLER'S OWN account
+    (multi-chatbot accounts). Creates no new user -- every existing member
+    of the account already reaches the new chatbot via
+    ``POST /auth/switch-tenant``.
+
+    422 ``TENANT_SLUG_TAKEN`` on a duplicate slug. No cap on how many
+    chatbots one account may create (accepted gap -- no billing/plan-tier
+    system exists yet).
+    """
+    db = request.app.state.db
+
+    result = await create_tenant_for_own_account(db, claims, name=body.name, slug=body.slug)
+
+    _log.info(
+        "self-service chatbot created",
+        extra={
+            "event": "own_tenant_created",
+            "tenant_id": result["tenant_id"],
+            "slug": result["slug"],
+        },
+    )
+
+    return CreateOwnTenantResponse(
+        tenant_id=result["tenant_id"],
+        name=result["name"],
+        slug=result["slug"],
+        client_key=result["client_key"],
+    )
+
+
+@router.get("/mine")
+async def list_own_tenants(
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
+) -> ListOwnTenantsResponse:
+    """Self-service: list every chatbot in the CALLER'S OWN account -- the
+    data behind the "my chatbots" hub/switcher. Both CLIENT_ADMIN and
+    CLIENT_AGENT get the same visibility here (the switcher is symmetric)."""
+    db = request.app.state.db
+
+    rows = await list_tenants_for_own_account(db, claims)
+    return ListOwnTenantsResponse(
+        tenants=[
+            OwnTenantSummary(id=r["id"], name=r["name"], slug=r["slug"], enabled=r["enabled"])
+            for r in rows
+        ]
     )
 
 

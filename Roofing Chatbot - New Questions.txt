@@ -1,0 +1,581 @@
+# General Questions (Additional)
+
+### **21\. I want more roof inspections booked.**
+
+* **Var 1:** How do you get me more free inspections on the calendar?
+* **Var 2:** I need more people booking estimate appointments, can you help?
+* **Var 3:** My inspection calendar is empty, how do we fill it up?
+* **Var 4:** Can you specifically drive more inspection requests, not just general leads?
+* **Var 5:** What's the fastest way to get more homeowners scheduling a roof inspection?
+
+> **Answer 1:** That's exactly what a "free inspection" offer is built for—it's the lowest-friction ask we can put in front of a homeowner. We run ads and landing pages centered on booking that free inspection, since it converts way better than asking someone to commit to a full estimate right away.
+
+> **Answer 2:** We build the whole funnel around getting that appointment on the books: an ad that leads with "Free Roof Inspection," a landing page with a simple scheduling form (or a direct calendar link), and instant notifications so your team can lock in the appointment before the homeowner moves on.
+
+> **Answer 3:** An empty calendar is usually a targeting or offer problem, not a you problem. We'll tighten up the geographic targeting to your actual service area, lead with a no-pressure "free inspection" offer instead of a harder sales ask, and make booking dead simple—most homeowners just need a low-commitment reason to say yes.
+
+> **Answer 4:** Yes, we can run a campaign specifically optimized around inspection bookings rather than general contact-form leads. That means the ad copy, landing page, and even the form fields are all built around getting a homeowner to pick a time on your calendar, not just leave their info and hope someone follows up.
+
+> **Answer 5:** Combine a strong, no-cost offer (a free inspection, sometimes with a drone flyover) with Google or Meta ads and a one-click scheduling link right on the landing page. Homeowners are far more likely to book something free and easy than to request a full quote cold, and it gets your foot in the door for the bigger job.
+
+# Reputation Management & Reviews
+
+## Beginner Level Questions
+
+### **1\. Do you help me get more Google reviews?**
+
+* **Var 1:** How do I get more 5-star reviews without begging customers?
+* **Var 2:** Can you set up a system to collect reviews after every job?
+* **Var 3:** What's the easiest way to ask homeowners for a review?
+* **Var 4:** Do you send review requests for me automatically?
+* **Var 5:** How many reviews do I actually need to look legit online?
+
+> **Answer 1:** We set up an automatic text and email that goes out the day after a job wraps, with a direct link that drops the homeowner right onto your Google review page. No more awkwardly asking at the door.
+
+> **Answer 2:** Yep, it's a simple system. The second your crew marks a job complete, the homeowner gets a friendly "thanks for choosing us" message with a one-tap link to leave a review. Way easier than chasing people down.
+
+> **Answer 3:** The best way is to ask right when the customer is happiest—usually the moment the final cleanup is done. We build that into an automated flow so it happens every single time, not just when someone remembers.
+
+> **Answer 4:** Completely automated. We hook it up to your job completion trigger (or a simple manual button if you don't have a CRM), and the review request goes out without your office lifting a finger.
+
+> **Answer 5:** Most homeowners feel comfortable hiring a contractor once they see 25-50+ reviews with a strong average rating. We help you build toward that steadily instead of it happening randomly once a year.
+
+### **2\. What if a customer leaves us a bad review?**
+
+* **Var 1:** How do we handle a 1-star review from an angry homeowner?
+* **Var 2:** Can a bad review actually get removed from Google?
+* **Var 3:** Should I respond to negative reviews myself or let you handle it?
+* **Var 4:** Does one bad review ruin all the good ones?
+* **Var 5:** What if the bad review is from someone who was never even our customer?
+
+> **Answer 1:** First, we help you write a calm, professional response—never defensive. Most homeowners reading it later actually judge you on how you handled the complaint, not the complaint itself.
+
+> **Answer 2:** If it violates Google's policies (fake account, no actual business relationship, spam), we can file a formal request to get it taken down. Legitimate but harsh reviews usually have to stay, so we focus on responding well instead.
+
+> **Answer 3:** We draft the response for your approval so it stays professional and doesn't turn into a public argument, but you always get final say before anything goes out under your name.
+
+> **Answer 4:** Not even close. One 3-star review sitting next to fifty 5-stars actually makes your profile look more trustworthy—an all-perfect page can look fake. What matters is your overall average and how you respond.
+
+> **Answer 5:** We flag it right away. If it's clearly not a real customer, we help you report it through Google's proper channels and draft a response noting you have no record of the job for anyone reading along.
+
+### **3\. Is there software you use to manage all my reviews in one place?**
+
+* **Var 1:** Do I have to check Google, Facebook, and Yelp separately for new reviews?
+* **Var 2:** Can you show me all my reviews on one dashboard?
+* **Var 3:** What tools do you use for review management?
+* **Var 4:** Will I get notified the second a new review comes in?
+* **Var 5:** Can my office staff respond to reviews from one login?
+
+> **Answer 1:** Nope, we centralize it. We use reputation management software that pulls in reviews from Google, Facebook, and other platforms into a single dashboard, so nobody's hunting across five different logins.
+
+> **Answer 2:** Yes, you'll have one clean view of every review, everywhere, with the star rating and platform clearly tagged, so you can see your whole online reputation at a glance.
+
+> **Answer 3:** We use industry-standard reputation platforms built for local service businesses—the same category tools plumbers and electricians use—tuned specifically to how homeowners search for roofers.
+
+> **Answer 4:** Yes, you (or your office manager) get an instant alert the moment a new review posts, so you can respond fast while it's still fresh instead of finding out three weeks later.
+
+> **Answer 5:** Absolutely. We can set up shared access so your office manager handles day-to-day responses, while you keep an eye on the overall trend without being glued to your phone.
+
+### **4\. Do reviews actually matter that much for getting jobs?**
+
+* **Var 1:** Does anyone really read reviews before hiring a roofer?
+* **Var 2:** Why do you keep pushing reviews so hard?
+* **Var 3:** I've got 30 years in this town, do I even need reviews?
+* **Var 4:** How much does a review really move the needle on closing a job?
+* **Var 5:** Are reviews more important than my actual work quality?
+
+> **Answer 1:** Constantly. A homeowner facing a $15,000 decision almost always scrolls your reviews before picking up the phone—it's basically the modern version of asking a neighbor for a recommendation.
+
+> **Answer 2:** Because reviews directly affect two things that make you money: whether Google ranks you high enough to be seen, and whether the person who sees you actually trusts you enough to call.
+
+> **Answer 3:** Local reputation still matters, but a new homeowner who just moved to town doesn't know your 30-year history—reviews are how you prove that reputation to people who've never met you.
+
+> **Answer 4:** A lot. Businesses with a strong review count and rating consistently see higher form-fill and call rates on the exact same ad spend compared to a thin, unreviewed profile.
+
+> **Answer 5:** Never a replacement—your work quality is what generates the good reviews in the first place. Reviews just make sure the people who'd love you actually get the chance to find out.
+
+### **5\. Can you help write the "thank you" text or postcard we send after a job?**
+
+* **Var 1:** Do you write our follow-up messages for us?
+* **Var 2:** Can we send a physical thank-you card that also asks for a review?
+* **Var 3:** What should our post-job message actually say?
+* **Var 4:** Is it better to text or email the review request?
+* **Var 5:** Can you make it sound like it's from the crew, not a corporate template?
+
+> **Answer 1:** Yes, we write it in your voice—short, genuine, thanking them for trusting your crew, with a clean, direct link to leave a review. No generic corporate copy.
+
+> **Answer 2:** We can, though a text or email usually converts better since the customer can tap straight into the review page instead of typing a URL from a printed card. A card is a nice touch alongside it.
+
+> **Answer 3:** Keep it short: thank them, mention the crew or lead by name if you can, and make the ask feel like a favor between people, not a company demanding a rating.
+
+> **Answer 4:** Text wins for speed and open rates—most people read a text within minutes. We usually pair it with a follow-up email a day or two later in case they missed the text.
+
+> **Answer 5:** That's exactly the goal. We avoid stiff "Dear Valued Customer" language and write it the way a good crew lead would actually talk to someone whose roof they just fixed.
+
+## Moderate Level Questions
+
+### **6\. Can you set up review widgets that show up automatically on our website?**
+
+* **Var 1:** Will new 5-star reviews show up on my site without me doing anything?
+* **Var 2:** Can we filter out lower-star reviews from the website widget?
+* **Var 3:** Does the widget slow down our page load speed?
+* **Var 4:** Can we show reviews from multiple platforms in one widget?
+* **Var 5:** Is this the same widget your website team uses?
+
+> **Answer 1:** Yes, we connect a live-feed widget that pulls fresh reviews directly from your Google Business Profile in real time—no manual copy-pasting, no stale testimonials from two years ago.
+
+> **Answer 2:** We can set a minimum star threshold so only your strongest reviews display prominently, while still linking out to your full, honest review history for anyone who wants to see everything.
+
+> **Answer 3:** We use lightweight, lazy-loaded widgets specifically so review content doesn't drag down your page speed—same performance standard our web team holds every other element to.
+
+> **Answer 4:** Yes, we can pull in Google and Facebook reviews side by side in one clean block, so your strongest social proof from every platform shows up in one place.
+
+> **Answer 5:** Same tech, same team. Reputation management and website work are coordinated together so your live reviews and your site design match perfectly.
+
+### **7\. How do you handle it if we get a sudden wave of bad reviews after a rough job?**
+
+* **Var 1:** What's the damage control plan if a job goes really bad?
+* **Var 2:** Can multiple bad reviews tank our Google ranking?
+* **Var 3:** Do you have a crisis response process for reputation issues?
+* **Var 4:** How fast can you help us respond if this happens?
+* **Var 5:** Should we reach out to the customer directly or let the review sit?
+
+> **Answer 1:** We move fast—first we help you make it right with the actual homeowner (that's what matters most), then we craft honest, accountable responses to any reviews so future readers see you handled it like professionals.
+
+> **Answer 2:** A rating dip can affect visibility somewhat, but a swift, genuine recovery (fixing the issue, responding well) actually rebuilds trust faster than most business owners expect—Google and homeowners both notice accountability.
+
+> **Answer 3:** Yes. We have a playbook: acknowledge fast, take the conversation offline with the customer when possible, fix what's fixable, and respond publicly in a way that shows future customers you own your mistakes.
+
+> **Answer 4:** Same day, usually within hours once you flag it. Reputation issues are time-sensitive, so we prioritize this kind of request above regular scheduled work.
+
+> **Answer 5:** Both. Reach out directly to try to resolve it person-to-person, and still respond to the public review professionally—silence on the public side looks worse than an honest, calm response.
+
+### **8\. Can you help us get testimonials in video form, not just text?**
+
+* **Var 1:** Do homeowners actually agree to record a video review?
+* **Var 2:** How do you get a customer comfortable enough to be on camera?
+* **Var 3:** What do we do with the video once we have it?
+* **Var 4:** Can you edit raw phone footage into something usable?
+* **Var 5:** Is a video testimonial worth more than a written one?
+
+> **Answer 1:** More often than you'd think, especially right after a great job when they're excited. A short, low-pressure ask on-site ("mind if we grab 30 seconds on camera?") works better than a formal request later.
+
+> **Answer 2:** We give your crew a simple, casual script of 2-3 questions to ask so the homeowner just talks naturally about their experience—no scripted, stiff corporate feel.
+
+> **Answer 3:** We format it for your website, social pages, and even Google Business Profile posts, so one video clip gets reused across multiple places to build trust everywhere a prospect looks.
+
+> **Answer 4:** Yes, send us the raw phone clip and we'll clean it up, add captions, trim the fluff, and brand it lightly so it looks professional without losing that authentic, real-customer feel.
+
+> **Answer 5:** Generally yes—video feels harder to fake and lets a skeptical prospect see genuine emotion, which tends to build trust faster than reading text alone, though both work well together.
+
+### **9\. How do we compare to our competitors' review counts and ratings?**
+
+* **Var 1:** Can you show me how my reviews stack up against other roofers in town?
+* **Var 2:** How many more 5-stars do I need to catch up to the top guy?
+* **Var 3:** Is a 4.7 rating good enough compared to my competition?
+* **Var 4:** Do you track competitor reviews over time?
+* **Var 5:** What's a realistic review goal for my market?
+
+> **Answer 1:** Yes, we can pull a quick competitive snapshot showing where you sit on review count and rating versus the other roofers homeowners are likely comparing you against locally.
+
+> **Answer 2:** It depends on the gap, but we set a realistic monthly review target based on your job volume so you're steadily closing the distance rather than trying to catch up all at once.
+
+> **Answer 3:** A 4.7 is solid, but if your top competitor is sitting at 4.9 with triple the review count, that volume difference matters more to homeowners than a couple tenths of a star.
+
+> **Answer 4:** We check in periodically so your review strategy stays realistic and competitive, not just growing in a vacuum without knowing what the market actually expects.
+
+> **Answer 5:** It varies by market size, but a strong local goal is usually landing in the top 2-3 roofers by both rating and review count in your immediate service area.
+
+## High Level Questions
+
+### **10\. How does review velocity (the pace of new reviews) actually affect our local rankings?**
+
+* **Var 1:** Does it matter if all my reviews came in five years ago versus recently?
+* **Var 2:** Is a steady trickle of reviews better than a big batch all at once?
+* **Var 3:** How does Google's algorithm weigh review recency?
+* **Var 4:** Can a sudden spike in reviews look suspicious to Google?
+* **Var 5:** What review cadence should we be targeting monthly?
+
+> **Answer 1:** Recency matters. Google's local algorithm gives more weight to businesses showing consistent, ongoing review activity—a profile that stalled out years ago signals less current relevance than one still actively earning trust.
+
+> **Answer 2:** A steady, natural trickle almost always outperforms a big batch. Consistent velocity signals genuine, ongoing customer satisfaction rather than a one-time push, which both Google and skeptical homeowners read as more authentic.
+
+> **Answer 3:** Google's local ranking factors weigh review recency alongside quantity and quality. Fresh reviews reinforce that you're actively operating and serving customers right now, not coasting on reputation from years back.
+
+> **Answer 4:** It can. A sudden unnatural spike (say, 40 reviews in one week after months of nothing) can trigger spam-detection scrutiny. We pace your review requests to look like what they actually are—real, ongoing customer feedback.
+
+> **Answer 5:** We generally target a steady monthly flow proportional to your job volume, rather than a fixed number—consistency that matches your real business activity is what builds durable trust signals over time.
+
+### **11\. Can you set up sentiment tracking to catch reputation issues before they become public reviews?**
+
+* **Var 1:** Is there a way to catch an unhappy customer before they post a bad review?
+* **Var 2:** Do you use any kind of survey to gauge satisfaction pre-review?
+* **Var 3:** How do we route negative feedback away from public platforms?
+* **Var 4:** Can we build in a private feedback step before the review ask?
+* **Var 5:** What's a "gated" review funnel and is it allowed?
+
+> **Answer 1:** Yes, we can build a private feedback step first—a quick "how did we do?" that routes happy customers straight to Google, while flagging anything lukewarm for your team to address directly before it ever becomes public.
+
+> **Answer 2:** We use a simple pre-survey step (often a 1-5 rating question) that filters sentiment before the review ask, giving your office a chance to make things right with anyone who wasn't fully satisfied.
+
+> **Answer 3:** Negative feedback gets routed to a private form or direct message to your office instead of a public platform, so you can resolve real issues quietly while still capturing genuine 5-star experiences publicly.
+
+> **Answer 4:** Exactly that setup—an internal filter step before the public review request, common practice in reputation management, that protects your public rating while still surfacing real problems to fix.
+
+> **Answer 5:** Straight-up gating (only inviting happy customers to leave public reviews while suppressing unhappy ones from posting at all) violates most platforms' terms of service. We build the honest version: everyone gets asked, but you get early visibility to fix issues fast.
+
+### **12\. How do reviews factor into your overall attribution and ROI reporting for our campaigns?**
+
+* **Var 1:** Do you track how review growth correlates with lead conversion rates?
+* **Var 2:** Can we see if better reviews actually lowered our cost per lead?
+* **Var 3:** Is reputation data part of your monthly reporting?
+* **Var 4:** How do you isolate the review-driven lift from ad performance improvements?
+* **Var 5:** Does review sentiment ever factor into ad copy or targeting decisions?
+
+> **Answer 1:** Yes, we track rating and review count alongside conversion rate over time. When you see landing page or ad conversion rates trend upward following a review push, that correlation shows up clearly in your monthly data.
+
+> **Answer 2:** We monitor it. Businesses that improve their review profile while running paid ads typically see a meaningful lift in landing page conversion rate, which directly lowers effective cost per closed lead, not just cost per click.
+
+> **Answer 3:** Yes, reputation metrics (review count, average rating, response rate) are included as a supporting data point in your monthly report, alongside your core ad and lead performance numbers.
+
+> **Answer 4:** We look at conversion rate trends on stable ad campaigns before and after meaningful review growth, controlling for seasonality and budget changes, to isolate the reputation-driven portion of any lift.
+
+> **Answer 5:** Absolutely—strong review themes (like fast response time or clean job sites) often get pulled directly into ad copy and landing page messaging, since real customer language tends to outperform generic marketing claims.
+
+# Getting Started & Choosing the Right Marketing Mix
+
+## Beginner Level Questions
+
+### **1\. I've never done any marketing before, where do I even start?**
+
+* **Var 1:** I don't have a website, social media, or anything—where do we begin?
+* **Var 2:** What's the very first thing you'd set up for a brand-new client?
+* **Var 3:** Do I need everything at once or can we build it piece by piece?
+* **Var 4:** What's the bare minimum I need to start getting leads?
+* **Var 5:** I'm overwhelmed by all the options, can you just tell me what to do?
+
+> **Answer 1:** No problem, that's actually a clean slate to work with. We usually start with a simple landing page and either Google or Meta ads, since that combo can start generating leads within about a week while everything else gets built out behind it.
+
+> **Answer 2:** For a brand-new client, we typically build a fast, focused landing page first, then launch one paid channel (Google Ads if you want high-intent leads, Meta if you want volume at a lower cost) so you see results quickly.
+
+> **Answer 3:** Piece by piece is exactly how we recommend it. Trying to launch six services on day one usually means nothing gets the attention it needs. We start with what'll make you money fastest, then layer in the rest.
+
+> **Answer 4:** At minimum: a simple landing page that can capture a lead, and one paid channel driving traffic to it. Everything else (SEO, social, reputation, a full website) compounds on top of that foundation over time.
+
+> **Answer 5:** Fair enough—here's the straight answer: start with paid ads and a landing page for fast leads, then add SEO and social media management as ongoing investments that build long-term value underneath it.
+
+### **2\. Should I do Google Ads or Meta Ads first if I can only afford one?**
+
+* **Var 1:** Which one gets me leads faster, Google or Facebook?
+* **Var 2:** Which is cheaper to start with?
+* **Var 3:** If I only have $1,500 a month, where should it go?
+* **Var 4:** Which platform closes jobs at a higher rate?
+* **Var 5:** Can you just tell me which one is better for roofers?
+
+> **Answer 1:** Google tends to close faster and at a higher rate because people are actively searching "roof repair near me" right now. Meta usually costs less per lead but requires quicker follow-up since they weren't actively looking.
+
+> **Answer 2:** Meta is typically the cheaper entry point per lead, often $30-70 versus $75-150 on Google. If budget is tight, Meta can get you more volume for the same spend.
+
+> **Answer 3:** At that budget, we'd usually lean Google first if you want fewer, higher-intent leads that close easier, or Meta first if you want more volume to keep a sales team busy dialing.
+
+> **Answer 4:** Google generally closes higher because the homeowner is already actively shopping for a roofer. Meta leads need faster follow-up and a bit more nurturing since they were just scrolling, not searching.
+
+> **Answer 5:** If your crew or sales team is quick on follow-up and you want lower cost per lead, start with Meta. If you want fewer but hotter, ready-to-buy leads, start with Google.
+
+### **3\. Do I need a full custom website before I can run any ads?**
+
+* **Var 1:** Can we run ads with just a landing page and build the real site later?
+* **Var 2:** Is my old, outdated website going to hurt my ad performance?
+* **Var 3:** What's faster to build, a landing page or a full website?
+* **Var 4:** Should I fix my website first or launch ads first?
+* **Var 5:** Can we do both website and ads at the same time?
+
+> **Answer 1:** No, you don't need to wait. We build a fast, focused landing page (usually live within about a week) that's purpose-built to convert ad clicks, then work on a full website separately without holding up your lead flow.
+
+> **Answer 2:** Not for ad performance specifically, since we send ad traffic to a dedicated landing page instead of your main site. But an outdated site can still hurt you when researched prospects Google your business name directly.
+
+> **Answer 3:** A landing page is much faster—usually live within a week versus 3-4 weeks for a full custom site. That's exactly why we lead with a landing page when speed to lead-flow matters most.
+
+> **Answer 4:** Launch ads first if lead flow is the priority. The landing page gets you generating jobs immediately while a full website (a bigger, more thorough project) gets built properly in parallel.
+
+> **Answer 5:** Yes, that's actually our most common setup—ads and landing page launch fast for immediate leads, while the full website project runs on its own timeline without slowing anything down.
+
+### **4\. How do I know if I even need SEO, or if ads are enough?**
+
+* **Var 1:** Is SEO worth it if I'm already getting leads from ads?
+* **Var 2:** What does SEO give me that ads don't?
+* **Var 3:** Can I skip SEO entirely and just run ads forever?
+* **Var 4:** When does it make sense to add SEO to the mix?
+* **Var 5:** Is SEO a "nice to have" or something every roofer needs?
+
+> **Answer 1:** It's still worth it long-term. Ads are rented visibility—the second you stop paying, the leads stop. SEO builds an owned asset that keeps generating free leads for years, which compounds nicely alongside your paid channels.
+
+> **Answer 2:** SEO gives you leads that cost nothing per click once you're ranking, plus credibility—many homeowners specifically trust organic results over ads. Ads give you speed; SEO gives you long-term equity.
+
+> **Answer 3:** You can run ads indefinitely without SEO, but you'll always be paying for every single lead. Most successful roofers eventually add SEO so a growing portion of their leads come in for free.
+
+> **Answer 4:** Usually once your ad-driven lead flow is stable and profitable, adding SEO on top starts building a second, free lead source that reduces your overall cost per lead as it matures over 4-6 months.
+
+> **Answer 5:** It's not mandatory to start, but it's one of the highest-ROI additions once your business has some breathing room, since it keeps paying you back long after you'd have to keep spending on ads.
+
+### **5\. Can you combine multiple services for me, or do I pick just one?**
+
+* **Var 1:** Can I do Google Ads and social media management at the same time?
+* **Var 2:** Do you offer bundled packages across services?
+* **Var 3:** Does combining services save me money compared to buying separately?
+* **Var 4:** How many services does the average roofer run with you?
+* **Var 5:** Can we start with one and add more later without starting over?
+
+> **Answer 1:** Absolutely, and it's actually common—paid ads bring in fast leads while social media management builds the trust and credibility that makes those ads convert even better.
+
+> **Answer 2:** Yes, we build custom bundles based on your goals rather than forcing you into rigid packages. If you want ads plus SEO plus reputation management, we structure a plan that makes sense for your budget.
+
+> **Answer 3:** Often yes, since services reinforce each other and we can streamline setup and management across a combined plan rather than treating each as a totally separate project.
+
+> **Answer 4:** It varies, but a lot of our established clients run 2-3 services together—commonly one paid ad channel plus SEO or social management—once they see the initial channel paying for itself.
+
+> **Answer 5:** Yes, nothing's locked in. Start with whatever fits your current budget and goals, and layer in more services whenever you're ready—we build everything to stack cleanly on top of what's already running.
+
+## Moderate Level Questions
+
+### **6\. How do you decide the right budget split across multiple channels?**
+
+* **Var 1:** If I'm running Google, Meta, and SEO together, how do you divide the money?
+* **Var 2:** Do you shift budget between channels based on performance?
+* **Var 3:** What's a healthy starting split for a roofer running two channels?
+* **Var 4:** How often do you re-evaluate the allocation?
+* **Var 5:** Can I tell you to prioritize one channel over another regardless of performance?
+
+> **Answer 1:** We start with an educated split based on your goals (speed vs. long-term equity), then adjust based on real performance data—cost per lead, close rate, and job value—rather than splitting evenly just for the sake of it.
+
+> **Answer 2:** Yes, that's core to how we manage a multi-channel account. If Google is converting at half the cost per closed job compared to Meta this month, we shift weight toward what's actually making you money.
+
+> **Answer 3:** A common starting point is roughly 60/40 or 50/50 between your two channels, then we let 30-60 days of real data tell us where to lean harder.
+
+> **Answer 4:** We review channel performance monthly at minimum, and more frequently during the first 60-90 days while we're still gathering enough data to make confident calls.
+
+> **Answer 5:** Yes, it's your business and your call. If you have a strategic reason to prioritize a specific channel (brand-building, a market you want to dominate), we'll weight the plan accordingly even if the raw numbers suggest otherwise.
+
+### **7\. What's a realistic first-90-days roadmap when starting from scratch?**
+
+* **Var 1:** What actually happens week by week when we kick things off?
+* **Var 2:** When should I expect to see meaningful results versus just "setup"?
+* **Var 3:** What milestones should I be watching for in the first 3 months?
+* **Var 4:** Does the roadmap change if I'm doing multiple services at once?
+* **Var 5:** What's considered a successful first quarter?
+
+> **Answer 1:** Weeks 1-2: onboarding, landing page build, campaign setup. Weeks 2-4: launch and initial lead flow, learning phase on ad platforms. Month 2-3: optimization based on real data, SEO foundation work if included.
+
+> **Answer 2:** Paid channels typically show lead flow within the first 1-2 weeks; meaningful optimization and lower cost-per-lead trends usually emerge by weeks 4-8 once we've cleared the platform learning phases.
+
+> **Answer 3:** Watch for: first leads within week 2, stabilizing cost-per-lead by week 6-8, and your first closed jobs from the campaign by end of month 2-3, which is when true ROI becomes visible.
+
+> **Answer 4:** Somewhat—paid channels move faster while SEO and reputation building run on longer timelines in parallel. We sequence the setup so nothing bottlenecks the faster-moving pieces.
+
+> **Answer 5:** A strong first quarter means stable, predictable lead flow, a clear (even if still developing) sense of your cost per lead and close rate, and at least a couple of closed jobs that prove the math works.
+
+### **8\. If I'm already getting some leads from word-of-mouth, how does paid marketing fit in?**
+
+* **Var 1:** Will ads just cannibalize the referral leads I'm already getting?
+* **Var 2:** Can you track which leads are referrals versus paid so we're not double-counting?
+* **Var 3:** Does having some existing reputation help my ad performance?
+* **Var 4:** Should I scale down referral efforts once ads are running?
+* **Var 5:** How do the two lead sources work together long-term?
+
+> **Answer 1:** No, they target different people entirely—referrals come from people who already know you, while ads reach homeowners who've never heard of you. It's additive volume, not competing for the same leads.
+
+> **Answer 2:** Yes, we tag every ad-generated lead distinctly (via tracking numbers and form source data) so your reporting clearly separates referral business from what the campaigns are actually driving.
+
+> **Answer 3:** Definitely. Existing reviews and reputation make your ads and landing pages convert better immediately, since new prospects landing there see social proof from your word-of-mouth history right away.
+
+> **Answer 4:** Not at all—referrals are typically your highest-margin, easiest-to-close leads. Keep nurturing that relationship-based business while ads fill in the volume gap referrals alone can't cover.
+
+> **Answer 5:** Long-term, the two reinforce each other. Ad-driven jobs become future referral sources, and your growing reputation (partly built by ad-driven customers) makes every future ad dollar convert a little better.
+
+### **9\. How do you handle onboarding if I have multiple locations or crews?**
+
+* **Var 1:** Can you run separate campaigns for each of my branch locations?
+* **Var 2:** Do we need separate landing pages per city we operate in?
+* **Var 3:** How does reporting work across multiple locations?
+* **Var 4:** Can different crews or managers see just their own location's data?
+* **Var 5:** Does the budget get split evenly across locations or based on performance?
+
+> **Answer 1:** Yes, we typically build location-specific campaigns so each branch's budget, targeting, and performance data stays cleanly separated rather than blending into one confusing account.
+
+> **Answer 2:** Usually yes—a dedicated landing page per city or region performs better for local SEO relevance and lets the messaging speak directly to that specific service area's homeowners.
+
+> **Answer 3:** We can build a combined dashboard view for ownership alongside separate, location-specific reports for each branch manager, so everyone sees what's relevant to them without digging through unrelated data.
+
+> **Answer 4:** Yes, we can set up access so each location's manager only sees their own numbers, while you or ownership retain the full cross-location view.
+
+> **Answer 5:** We start with a fair baseline split and then adjust based on each location's actual performance and capacity, the same way we'd optimize budget across any multi-channel account.
+
+## High Level Questions
+
+### **10\. How do you think about customer acquisition cost (CAC) versus lifetime value (LTV) when planning our overall marketing strategy?**
+
+* **Var 1:** What's my realistic CAC to LTV ratio target across channels?
+* **Var 2:** Do you factor in repeat business (gutter cleaning, maintenance) into LTV math?
+* **Var 3:** How does understanding LTV change what we're willing to pay per lead?
+* **Var 4:** Can you model out different budget scenarios and their CAC impact?
+* **Var 5:** Does channel mix affect long-term LTV, not just initial acquisition cost?
+
+> **Answer 1:** For most home services businesses, a healthy target is roughly a 3:1 LTV to CAC ratio or better. Given a single roof job often nets $12-20K, even a fairly expensive lead easily clears that bar if your close rate is solid.
+
+> **Answer 2:** Yes, when it's available. If you offer maintenance plans, gutter services, or warranty work, we factor projected repeat revenue into the real LTV picture, which often justifies a higher acceptable cost per lead than a single-job view would suggest.
+
+> **Answer 3:** Understanding true LTV often means you can profitably pay more per lead than gut instinct suggests, especially on channels that tend to bring in customers likely to need follow-on services down the line.
+
+> **Answer 4:** Yes, we can build out scenario models showing projected lead volume, cost per lead, and expected CAC at different monthly budget levels, so you can see the tradeoffs before committing to a number.
+
+> **Answer 5:** It can. Referral-heavy channels and reputation-driven organic leads sometimes correlate with stronger long-term customer relationships and repeat business compared to pure cold-traffic paid leads, which is worth factoring into channel prioritization.
+
+### **11\. How do you approach market saturation—at what point does adding more budget stop producing proportional returns?**
+
+* **Var 1:** Is there a ceiling on how much I can spend before it stops being efficient?
+* **Var 2:** How do you know when we've maxed out a local market?
+* **Var 3:** Does diminishing returns kick in differently for Google versus Meta?
+* **Var 4:** Should I expand geography instead of just increasing budget in one area?
+* **Var 5:** How do you model out the point where CPL starts climbing?
+
+> **Answer 1:** Yes, every local market has a finite search/impression volume ceiling. We watch impression share and cost-per-lead trends closely—when CPL starts climbing faster than lead volume grows, you're approaching that ceiling.
+
+> **Answer 2:** We track impression share (what percentage of available searches/impressions you're capturing) alongside CPL trends. When impression share is high (75%+) and CPL is rising, that's a clear saturation signal.
+
+> **Answer 3:** Somewhat—Google's saturation shows up faster since search volume is naturally capped by how many people are actively searching. Meta has a larger available audience pool, so it can often absorb more budget before hitting the same wall.
+
+> **Answer 4:** Often yes. Rather than overspending into diminishing returns in one zip code cluster, expanding your geographic radius or targeting adjacent service areas frequently produces better marginal returns than pushing budget further into a saturated market.
+
+> **Answer 5:** We monitor cost-per-lead trendlines against spend increases over rolling periods. When a given percentage increase in budget stops producing a proportional increase in leads, that inflection point tells us we've found the market's practical ceiling.
+
+### **12\. How does channel selection change for a roofer targeting insurance/storm restoration work versus retail replacement?**
+
+* **Var 1:** Should storm chasers run a different channel mix than retail-focused roofers?
+* **Var 2:** Does the CAC math change for insurance jobs versus cash/financed retail jobs?
+* **Var 3:** Which channels respond fastest when we need to pivot after a storm?
+* **Var 4:** Do insurance jobs justify a higher cost per lead than retail?
+* **Var 5:** How do you build a strategy that flexes between steady retail and storm surges?
+
+> **Answer 1:** Yes, storm-focused operations lean harder on Google and Meta's rapid geo-targeting flexibility to move fast after weather events, while steady retail-focused roofers often benefit more from a heavier long-term SEO investment.
+
+> **Answer 2:** It can. Insurance jobs often have a longer sales cycle (approval processes) but can carry a different margin profile than straight cash/financed retail work, which affects what cost per lead actually makes sense for each type.
+
+> **Answer 3:** Google and Meta both respond within hours to a budget or targeting shift, making them the go-to tools for storm response. SEO can't react that fast, though a pre-built storm landing page ready to activate helps bridge that gap.
+
+> **Answer 4:** Often yes, given insurance-approved replacement jobs frequently carry strong margins and less price sensitivity from the homeowner (since insurance is covering much of the cost), which can support a higher acceptable CPL.
+
+> **Answer 5:** We build a "core" steady-state campaign for retail work running year-round, plus a pre-configured storm campaign that sits ready to activate on short notice, so you're never building a storm response from scratch after the fact.
+
+# Reporting, Analytics & Advanced Attribution
+
+## Moderate Level Questions
+
+### **1\. What's actually in my monthly report, and how do I read it?**
+
+* **Var 1:** Can you walk me through what the numbers in my report actually mean?
+* **Var 2:** What are the top 3 metrics I should actually pay attention to?
+* **Var 3:** Is the report automated or does someone actually write it?
+* **Var 4:** How do I know if a month was "good" just from looking at the report?
+* **Var 5:** Can you simplify the report if it's too much data for me?
+
+> **Answer 1:** Every report walks through lead volume, cost per lead, and estimated jobs closed, alongside channel-specific performance so you can see exactly where your money went and what it produced.
+
+> **Answer 2:** Focus on cost per lead, total leads generated, and (most importantly) how many of those leads turned into signed jobs—everything else is supporting detail underneath those three.
+
+> **Answer 3:** It's a hybrid—automated data pulls feed the numbers, but a real person on our team reviews it and adds context and recommendations, so it's never just a raw, unexplained spreadsheet dump.
+
+> **Answer 4:** A good month generally means stable or dropping cost per lead alongside steady or growing lead volume, and ideally you're seeing that volume translate into signed contracts on your end.
+
+> **Answer 5:** Absolutely, we can build you a simplified one-page summary hitting just the numbers that matter to you, with the full detailed report available if you ever want to dig deeper.
+
+### **2\. How do you know a phone call actually came from our marketing versus a yard sign or referral?**
+
+* **Var 1:** What's call tracking and how does it actually work?
+* **Var 2:** Do the tracking numbers ever confuse customers?
+* **Var 3:** Can we listen to the actual call recordings?
+* **Var 4:** Does call tracking work for texts too, not just calls?
+* **Var 5:** How accurate is call tracking really?
+
+> **Answer 1:** We assign a dedicated phone number that only appears on a specific ad or landing page. When someone calls that number, it automatically forwards to your real office line while logging exactly which source it came from.
+
+> **Answer 2:** No, the tracking number forwards seamlessly and instantly—the caller has no idea it's a tracking line, and it shows up as a normal incoming call to your office phone.
+
+> **Answer 3:** Yes, most call tracking setups include recording, which lets you review how your staff is handling these leads and confirm the quality of what's coming through each channel.
+
+> **Answer 4:** Yes, modern call tracking platforms typically log both calls and texts to the tracking number, giving you a complete picture of engagement, not just phone conversations.
+
+> **Answer 5:** Very accurate for direct response—it reliably captures a call or text triggered by a specific ad or page. It's less precise at capturing indirect influence (someone who saw your ad weeks ago, then called your main number later).
+
+### **3\. What's the difference between last-click attribution and what actually influenced the sale?**
+
+* **Var 1:** If someone clicks my Facebook ad but converts through a Google search later, who gets credit?
+* **Var 2:** Is last-click attribution misleading me about which channel is really working?
+* **Var 3:** How many touchpoints does the average homeowner have before converting?
+* **Var 4:** Should I trust the "source" field in my CRM at face value?
+* **Var 5:** What's a more honest way to measure channel performance?
+
+> **Answer 1:** By default, most tracking gives full credit to whichever channel was clicked last before conversion—in your example, Google would get the credit even though the Facebook ad started the journey.
+
+> **Answer 2:** It can be. Last-click attribution tends to overvalue "closing" channels like Google search and undervalue "discovery" channels like Meta or social, even though both played a real role in the decision.
+
+> **Answer 3:** Research across home services generally shows 3-7 touchpoints before a homeowner converts, meaning the channel that gets the final click is rarely the whole story of how they found and decided on you.
+
+> **Answer 4:** Take it as a strong signal, not gospel. It's accurate for the final action but often misses the earlier channels that built awareness and trust along the way.
+
+> **Answer 5:** A multi-touch view (tracking every touchpoint, not just the last one) gives a more honest picture, though it requires more sophisticated tracking setup than most small roofing operations start with.
+
+## High Level Questions
+
+### **4\. Can you set up multi-touch attribution modeling for our campaigns?**
+
+* **Var 1:** Do you support first-touch, last-touch, and linear attribution models?
+* **Var 2:** How do you handle attribution when a lead touches both paid and organic channels?
+* **Var 3:** What tools do you use to build a multi-touch attribution view?
+* **Var 4:** Is this worth the added complexity for a roofing business our size?
+* **Var 5:** How does multi-touch attribution change how we allocate budget?
+
+> **Answer 1:** Yes, depending on your tracking maturity we can implement first-touch (credit to the discovery channel), last-touch (credit to the closing channel), or linear (credit spread across every touchpoint) models.
+
+> **Answer 2:** We use UTM tagging and cross-channel tracking (via GA4 and your CRM) to log every touchpoint a lead has, whether that's a Meta ad, an organic search visit, then a final Google Ads click, so the full path is visible.
+
+> **Answer 3:** Typically GA4 for web-level tracking, combined with your CRM's lead source logging and call tracking data, unified into a reporting dashboard that shows the full multi-touch journey.
+
+> **Answer 4:** For most single-location roofers, a simplified view (tracking the top 2-3 touchpoints) delivers 90% of the strategic value without the overhead of a fully built-out enterprise attribution model. We scale complexity to fit your actual decision-making needs.
+
+> **Answer 5:** It often reveals that "discovery" channels (like social or SEO content) deserve more budget credit than last-click data alone suggests, which can shift you toward funding awareness-stage channels you might otherwise have cut.
+
+### **5\. Do you implement server-side tracking or Conversion API for more accurate ad data?**
+
+* **Var 1:** What's the Meta Conversion API and why does it matter now?
+* **Var 2:** How has iOS privacy stuff affected our tracking accuracy?
+* **Var 3:** Is browser-based pixel tracking still reliable on its own?
+* **Var 4:** Do you set up server-side tracking for Google Ads too?
+* **Var 5:** What's the actual impact of implementing this on our reported cost per lead?
+
+> **Answer 1:** Meta's Conversion API (CAPI) sends conversion data directly from your server to Meta, bypassing browser-based tracking limitations. It matters because it recovers data that ad blockers and privacy restrictions would otherwise hide from standard pixel tracking.
+
+> **Answer 2:** Significantly. Since Apple's App Tracking Transparency changes, a large portion of iOS users block cross-app tracking by default, which can cause standard browser pixels to undercount real conversions substantially.
+
+> **Answer 3:** Less reliable than it used to be. Ad blockers, privacy browsers, and iOS restrictions all chip away at pixel-only tracking accuracy, which is exactly why server-side methods like CAPI have become standard practice.
+
+> **Answer 4:** Yes, we implement Google's Enhanced Conversions (their equivalent server-side approach) alongside standard tracking to recover conversion data that browser-based tracking alone would miss.
+
+> **Answer 5:** Implementing server-side tracking typically reveals more actual conversions than pixel-only data was showing, which often means your true cost per lead is better than what un-recovered browser data alone suggested.
+
+### **6\. How do you build out a full-funnel dashboard connecting ad spend to closed revenue, not just leads?**
+
+* **Var 1:** Can we see actual signed-contract revenue next to our ad spend, not just lead counts?
+* **Var 2:** Do you integrate directly with our CRM's job-closed data?
+* **Var 3:** How real-time is this kind of dashboard?
+* **Var 4:** Can we calculate true ROAS (return on ad spend) this way?
+* **Var 5:** What's required on our end to make this work properly?
+
+> **Answer 1:** Yes, once your CRM tracks job status (won/lost) tied to lead source, we can build a dashboard showing ad spend directly next to closed revenue per channel, giving you true dollar-for-dollar performance instead of just lead volume.
+
+> **Answer 2:** We integrate via API or webhook with platforms like JobNimbus, AccuLynx, or similar, pulling job-closed and contract-value data back into the same reporting view as your ad spend.
+
+> **Answer 3:** It depends on your CRM's update frequency, but most setups sync daily, giving you a near-real-time view rather than waiting for a manual monthly reconciliation.
+
+> **Answer 4:** Yes, this is exactly what unlocks true ROAS calculation—actual closed revenue divided by ad spend, rather than the rougher proxy of cost-per-lead alone, which doesn't account for close rate or job value.
+
+> **Answer 5:** Mainly consistent CRM hygiene—your sales team needs to accurately mark jobs won/lost and tag lead sources correctly. The tracking infrastructure is on us; clean data discipline on job outcomes is the main thing we need from your side.

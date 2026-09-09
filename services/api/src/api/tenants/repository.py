@@ -50,3 +50,28 @@ class TenantRepository:
         row = await self.db.fetchrow(sql, tenant_id, name, slug, enabled)
         assert row is not None  # noqa: S101
         return dict(row)
+
+
+class ClientAccountRepository:
+    """Read-only ``client_accounts`` access -- PLATFORM_ADMIN-only, global by
+    construction (multi-chatbot accounts). Backs `/debug/client-accounts`,
+    which the platform-admin `/clients` list uses purely to GROUP its
+    existing flat tenant list by account -- no other consumer exists yet.
+
+    Deliberately NOT folded into `TenantRepository`'s `tenant_filter`
+    convention: joining `client_accounts` there would make `tenant_filter`'s
+    bare `column="id"` filter ambiguous (both tables have an `id` column),
+    and that helper's column-identifier validation exists specifically to
+    keep injection-proofing simple -- not worth reworking for one debug
+    route. `client_account_id` already flows through `TenantRepository`'s
+    own `SELECT *` automatically once the column exists (migration 0060).
+    """
+
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    async def list(self, claims: AuthClaims) -> list[Row]:
+        """List every client account. Requires PLATFORM_ADMIN (global)."""
+        require_role(claims, Role.PLATFORM_ADMIN)
+        rows = await self.db.fetch("SELECT * FROM client_accounts ORDER BY created_at")
+        return [dict(r) for r in rows]

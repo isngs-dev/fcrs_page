@@ -18,12 +18,12 @@ async def get_user_by_email(db: Database, email: str) -> Row | None:
     """Look up a user by email (case-insensitive). Returns the full row or None.
 
     UNSCOPED by design -- this is the pre-auth identity-resolution query.
-    The caller uses the row's ``tenant_id`` and ``role`` to build AuthClaims;
-    ``tenant_id`` is never accepted from user input.
+    The caller uses the row's ``tenant_id``/``client_account_id`` and
+    ``role`` to build AuthClaims; neither is ever accepted from user input.
     """
     sql = (
-        "SELECT id, tenant_id, email, role, password_hash, name, "
-        "active, last_login_at "
+        "SELECT id, tenant_id, client_account_id, email, role, password_hash, "
+        "name, active, last_login_at "
         "FROM users WHERE lower(email) = lower($1)"
     )
     record = await db.fetchrow(sql, email)
@@ -40,11 +40,37 @@ async def get_user_by_id(db: Database, user_id: str) -> Row | None:
     its own yet.
     """
     sql = (
-        "SELECT id, tenant_id, email, role, password_hash, name, "
-        "active, last_login_at "
+        "SELECT id, tenant_id, client_account_id, email, role, password_hash, "
+        "name, active, last_login_at "
         "FROM users WHERE id = $1"
     )
     record = await db.fetchrow(sql, user_id)
+    return dict(record) if record is not None else None
+
+
+async def get_default_tenant_id_for_account(db: Database, account_id: str) -> str | None:
+    """The account's earliest-created ENABLED tenant, or ``None`` if it has
+    none -- the deterministic "active tenant" a login resolves to. Computed
+    on demand (no stored "default tenant" column that could go stale)."""
+    sql = (
+        "SELECT id FROM tenants WHERE client_account_id = $1 AND enabled "
+        "ORDER BY created_at ASC LIMIT 1"
+    )
+    row = await db.fetchrow(sql, account_id)
+    return str(row["id"]) if row is not None else None
+
+
+async def get_tenant_for_switch(db: Database, tenant_id: str) -> Row | None:
+    """Minimal tenant lookup for ``POST /auth/switch-tenant`` -- just enough
+    to validate the target belongs to the caller's own account and is
+    enabled. Unscoped by design (the caller re-checks ``client_account_id``
+    against their own account themselves; there is no ``AuthClaims`` yet
+    scoped to the *target* tenant at this point)."""
+    sql = (
+        "SELECT id, name, slug, enabled, client_account_id "
+        "FROM tenants WHERE id = $1"
+    )
+    record = await db.fetchrow(sql, tenant_id)
     return dict(record) if record is not None else None
 
 

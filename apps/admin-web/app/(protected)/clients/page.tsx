@@ -28,7 +28,50 @@
  */
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
-import { listClients, type ClientSummary } from "@/lib/clients";
+import {
+  listClients,
+  listClientAccounts,
+  type ClientSummary,
+  type ClientAccountSummary,
+} from "@/lib/clients";
+
+/** Buckets the flat tenant list by `clientAccountId` (multi-chatbot
+ *  accounts) -- one section per account, in first-seen order. An account
+ *  whose name lookup fails (shouldn't happen -- every tenant has a real
+ *  account) falls back to its first tenant's own name rather than a blank
+ *  header, matching the no-silent-fallback standard with a harmless
+ *  degrade, not a crash. */
+export interface AccountGroup {
+  accountId: string;
+  accountName: string;
+  tenants: ClientSummary[];
+}
+
+export function groupClientsByAccount(
+  tenants: ClientSummary[],
+  accounts: ClientAccountSummary[]
+): AccountGroup[] {
+  const nameById = new Map(accounts.map((a) => [a.id, a.name]));
+  const order: string[] = [];
+  const byAccount = new Map<string, ClientSummary[]>();
+  for (const tenant of tenants) {
+    const existing = byAccount.get(tenant.clientAccountId);
+    if (existing) {
+      existing.push(tenant);
+    } else {
+      byAccount.set(tenant.clientAccountId, [tenant]);
+      order.push(tenant.clientAccountId);
+    }
+  }
+  return order.map((accountId) => {
+    const accountTenants = byAccount.get(accountId)!;
+    return {
+      accountId,
+      accountName: nameById.get(accountId) ?? accountTenants[0].name,
+      tenants: accountTenants,
+    };
+  });
+}
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -98,9 +141,15 @@ function AddChatbotTile() {
 export default async function ClientsPage() {
   await requireRole("PLATFORM_ADMIN");
 
-  const result = await listClients();
+  const [result, accountsResult] = await Promise.all([listClients(), listClientAccounts()]);
   const activeCount =
     result.status === "ok" ? result.items.filter((c) => c.enabled).length : null;
+  // A failed accounts fetch degrades to an empty grouping map rather than
+  // erroring the whole page -- groupClientsByAccount already falls back to
+  // each tenant's own name when an account name lookup misses, so tenants
+  // still render, just without a real account display name.
+  const accounts = accountsResult.status === "ok" ? accountsResult.items : [];
+  const groups = result.status === "ok" ? groupClientsByAccount(result.items, accounts) : [];
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-6 lg:p-8">
@@ -117,7 +166,8 @@ export default async function ClientsPage() {
           </div>
           {result.status === "ok" ? (
             <p className="mt-0.5 text-[12.5px] text-[var(--muted-foreground)]">
-              {result.items.length} tenant{result.items.length === 1 ? "" : "s"}
+              {groups.length} client{groups.length === 1 ? "" : "s"} · {result.items.length} chatbot
+              {result.items.length === 1 ? "" : "s"}
               {activeCount !== null ? ` · ${activeCount} active` : ""}
             </p>
           ) : null}
@@ -149,12 +199,24 @@ export default async function ClientsPage() {
           to onboard the first one.
         </p>
       ) : (
-        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {result.items.map((client) => (
-            <ClientCard key={client.tenantId} client={client} />
+        <div className="flex flex-col gap-6">
+          {groups.map((group, index) => (
+            <div key={group.accountId} className="flex flex-col gap-3">
+              <h2 className="text-[13px] font-bold text-[var(--foreground)]">
+                {group.accountName}
+                <span className="ml-1.5 font-normal text-[var(--muted-foreground)]">
+                  — {group.tenants.length} chatbot{group.tenants.length === 1 ? "" : "s"}
+                </span>
+              </h2>
+              <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {group.tenants.map((client) => (
+                  <ClientCard key={client.tenantId} client={client} />
+                ))}
+                {index === groups.length - 1 ? <AddChatbotTile /> : null}
+              </ul>
+            </div>
           ))}
-          <AddChatbotTile />
-        </ul>
+        </div>
       )}
     </div>
   );

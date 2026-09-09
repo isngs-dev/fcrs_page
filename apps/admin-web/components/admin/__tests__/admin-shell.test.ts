@@ -73,6 +73,7 @@ describe("SR-30 D30-1: nested Overview nav (supersedes SR-15 D6's flat-nav claus
   it("nests Analytics/Reports under Dashboard and Contacts/Accounts under Leads (D30-1), leaving Conversations flat", () => {
     const overviewGroup = navGroups.find((group) => group.label === "Overview")!;
     expect(overviewGroup.items.map((item) => item.href)).toEqual([
+      "/chatbots",
       "/",
       "/conversations",
       "/leads",

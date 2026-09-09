@@ -20,6 +20,7 @@ from api.auth.tokens import create_access_token
 
 _TEST_JWT_SECRET = "x" * 48
 _TENANT_ID = "tenant-abc-123"
+_ACCOUNT_ID = "account-abc-123"
 _TEST_PASSWORD_HASH = "$pbkdf2-sha256$test-hash"
 
 # -- Test doubles --------------------------------------------------------------
@@ -43,9 +44,12 @@ class _StubDatabase:
                 "password_hash": _TEST_PASSWORD_HASH,
                 "role": "CLIENT_ADMIN",
                 "tenant_id": _TENANT_ID,
+                "client_account_id": _ACCOUNT_ID,
                 "active": True,
                 "name": "Admin User",
             }
+        if "tenants" in query:
+            return {"id": _TENANT_ID}
         return None
 
     async def fetch(self, query: str, *args: object) -> list[dict[str, Any]]:

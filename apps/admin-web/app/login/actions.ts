@@ -16,7 +16,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { env } from "@/lib/env";
-import { ACCESS_TOKEN_COOKIE, ttlSecondsFromToken } from "@/lib/auth";
+import { ACCESS_TOKEN_COOKIE, extractAccessToken, ttlSecondsFromToken } from "@/lib/auth";
 import { PROFILE_COOKIE } from "@/lib/profile";
 
 interface LoginProfileBody {
@@ -38,26 +38,6 @@ export interface LoginState {
 
 /** Matches admin-api's enumeration-safe message verbatim (auth/routes.py). */
 const GENERIC_AUTH_ERROR = "Invalid email or password.";
-
-/**
- * Extract the JWT value from a `Set-Cookie` header emitted by admin-api for
- * `settings.cookie_name` ("access_token"). Returns `null` if not present or
- * unparseable.
- */
-function extractAccessToken(setCookieValues: string[]): string | null {
-  for (const raw of setCookieValues) {
-    // A single Set-Cookie header line: "access_token=<jwt>; HttpOnly; Path=/; ..."
-    const firstSegment = raw.split(";")[0]?.trim() ?? "";
-    const eq = firstSegment.indexOf("=");
-    if (eq === -1) continue;
-    const name = firstSegment.slice(0, eq);
-    const value = firstSegment.slice(eq + 1);
-    if (name === ACCESS_TOKEN_COOKIE && value.length > 0) {
-      return value;
-    }
-  }
-  return null;
-}
 
 export async function login(
   _prevState: LoginState,

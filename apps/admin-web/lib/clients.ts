@@ -34,6 +34,9 @@ export interface ClientSummary {
   name: string;
   slug: string;
   enabled: boolean;
+  /** Multi-chatbot accounts (migration 0060): the account this chatbot
+   *  belongs to. Always present -- every tenant has one. */
+  clientAccountId: string;
 }
 
 interface DebugTenantRow {
@@ -41,6 +44,7 @@ interface DebugTenantRow {
   name: string;
   slug: string;
   enabled: boolean;
+  client_account_id: string;
   [key: string]: unknown;
 }
 
@@ -50,7 +54,47 @@ function toClientSummary(row: DebugTenantRow): ClientSummary {
     name: row.name,
     slug: row.slug,
     enabled: row.enabled,
+    clientAccountId: row.client_account_id,
   };
+}
+
+/** A single `client_accounts` row (tenants/repository.py
+ *  `ClientAccountRepository`) -- the grouping entity above `tenants`. */
+export interface ClientAccountSummary {
+  id: string;
+  name: string;
+}
+
+interface DebugClientAccountRow {
+  id: string;
+  name: string;
+  [key: string]: unknown;
+}
+
+export type ClientAccountsResult =
+  | { status: "ok"; items: ClientAccountSummary[] }
+  | { status: "error"; message: string; correlationId: string };
+
+/**
+ * List every client account (PLATFORM_ADMIN-only, `GET /debug/client-
+ * accounts`). Used purely to GROUP the existing flat `/clients` tenant list
+ * by account -- no other consumer exists yet.
+ */
+export async function listClientAccounts(): Promise<ClientAccountsResult> {
+  try {
+    const response = await adminApiFetch("/debug/client-accounts");
+    const body = (await response.json()) as DebugClientAccountRow[];
+    return { status: "ok", items: body.map((row) => ({ id: row.id, name: row.name })) };
+  } catch (error) {
+    if (error instanceof AdminApiError) {
+      return { status: "error", message: mapErrorMessage(error), correlationId: error.correlationId };
+    }
+    return {
+      status: "error",
+      message: "Unable to reach the server. Please try again.",
+      correlationId: "",
+    };
+  }
 }
 
 export type ClientsResult =

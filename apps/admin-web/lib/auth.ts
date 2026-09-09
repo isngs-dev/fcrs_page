@@ -152,6 +152,28 @@ const DEFAULT_TTL_SECONDS = 3600;
  * `exp` (should not happen for a token admin-api just minted, but this
  * keeps login from hard-failing on an edge case).
  */
+/**
+ * Extract the JWT value from a `Set-Cookie` header emitted by admin-api for
+ * `settings.cookie_name` ("access_token"). Returns `null` if not present or
+ * unparseable. Shared by the login server action and the switch-tenant
+ * action (multi-chatbot accounts) -- both re-mint this app's own cookie from
+ * an admin-api `Set-Cookie` response the same way.
+ */
+export function extractAccessToken(setCookieValues: string[]): string | null {
+  for (const raw of setCookieValues) {
+    // A single Set-Cookie header line: "access_token=<jwt>; HttpOnly; Path=/; ..."
+    const firstSegment = raw.split(";")[0]?.trim() ?? "";
+    const eq = firstSegment.indexOf("=");
+    if (eq === -1) continue;
+    const name = firstSegment.slice(0, eq);
+    const value = firstSegment.slice(eq + 1);
+    if (name === ACCESS_TOKEN_COOKIE && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
 export function ttlSecondsFromToken(token: string): number {
   try {
     const decoded = jwt.verify(token, env.jwtSecret, { algorithms: ["HS256"] });

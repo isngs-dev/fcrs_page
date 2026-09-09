@@ -238,6 +238,7 @@ def create_app() -> FastAPI:
     from api.scheduling.calendly_webhook import router as calendly_webhook_router
     from api.scheduling.routes import router as scheduling_router
     from api.tasks.routes import router as tasks_router
+    from api.tenants.routes import client_accounts_router
     from api.tenants.routes import router as tenants_router
     from api.timeline.admin_routes import router as timeline_router
     from api.timeline.admin_routes import tenant_scoped_router as timeline_tenant_router
@@ -279,6 +280,7 @@ def create_app() -> FastAPI:
     app.include_router(calendly_webhook_router)
     app.include_router(tasks_router)
     app.include_router(tenants_router)
+    app.include_router(client_accounts_router)
     app.include_router(timeline_router)
     app.include_router(training_router)
 

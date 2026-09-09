@@ -32,8 +32,10 @@ import asyncpg
 from common.auth import AuthClaims, Role
 from common.crypto import hash_password
 from common.db import Database
-from common.errors import AuthorizationError, ValidationError
+from common.errors import AuthorizationError, NotFoundError, ValidationError
 from common.tenancy import require_role
+
+from api.auth.repository import get_user_by_id
 
 _CLIENT_KEY_PREFIX = "pk_"  # noqa: S105
 _CLIENT_KEY_RANDOM_BYTES = 24
@@ -226,3 +228,103 @@ async def rotate_own_client_key(db: Database, claims: AuthClaims) -> str | None:
             code="ROLE_NOT_PERMITTED",
         )
     return await _rotate_client_key_impl(db, claims.tenant_id)
+
+
+async def _resolve_own_account_id(db: Database, claims: AuthClaims) -> str:
+    """The caller's own ``client_account_id``, resolved from their user row --
+    authoritative, and NOT derived from whichever tenant happens to be
+    active in ``claims.tenant_id`` (account membership, not the
+    currently-switched-to chatbot, is what governs multi-chatbot access).
+    """
+    user_row = await get_user_by_id(db, claims.subject)
+    account_id = user_row.get("client_account_id") if user_row is not None else None
+    if account_id is None:
+        raise NotFoundError("Account not found.", code="ACCOUNT_NOT_FOUND")
+    return str(account_id)
+
+
+async def create_tenant_for_own_account(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    name: str,
+    slug: str,
+) -> dict[str, Any]:
+    """Create a new chatbot (tenant) under the CALLER'S OWN account --
+    CLIENT_ADMIN self-service for multi-chatbot accounts.
+
+    Unlike ``create_tenant_with_admin``, this creates NO new user: the
+    caller's own account membership already grants every member of the
+    account access to the new chatbot via ``POST /auth/switch-tenant``.
+    Reuses the exact same client-key generation/hashing helpers as the
+    platform onboarding path (one mechanism, two RBAC-gated entry points,
+    per the same "extend, never reinvent" precedent as
+    ``rotate_own_client_key``).
+
+    Requires ``Role.CLIENT_ADMIN`` -- checked BEFORE any insert. No cap on
+    how many chatbots one account may create (accepted gap: no billing/
+    plan-tier system exists yet). Same ``TENANT_SLUG_TAKEN`` handling as
+    today's platform onboarding.
+    """
+    if claims.role != Role.CLIENT_ADMIN or claims.tenant_id is None:
+        raise AuthorizationError(
+            "Only a CLIENT_ADMIN may create a chatbot for their own account.",
+            code="ROLE_NOT_PERMITTED",
+        )
+
+    account_id = await _resolve_own_account_id(db, claims)
+
+    tenant_id = uuid4().hex
+    try:
+        await db.execute(
+            "INSERT INTO tenants (id, name, slug, enabled, client_account_id) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            tenant_id,
+            name,
+            slug,
+            True,
+            account_id,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise ValidationError(
+            "A tenant with this slug already exists.",
+            code="TENANT_SLUG_TAKEN",
+        ) from exc
+
+    raw_client_key = _generate_client_key()
+    client_key_hash = _hash_client_key(raw_client_key)
+    await db.execute(
+        "UPDATE tenants SET client_key_hash = $1 WHERE id = $2",
+        client_key_hash,
+        tenant_id,
+    )
+
+    return {
+        "tenant_id": tenant_id,
+        "name": name,
+        "slug": slug,
+        "client_key": raw_client_key,
+    }
+
+
+async def list_tenants_for_own_account(db: Database, claims: AuthClaims) -> list[dict[str, Any]]:
+    """List every chatbot (tenant) in the CALLER'S OWN account.
+
+    ``Role.CLIENT_ADMIN`` or ``Role.CLIENT_AGENT`` -- both get the same
+    account-level "my chatbots" visibility (the switcher is symmetric;
+    per-endpoint role gates elsewhere already restrict what an agent can
+    DO once switched, so no new permission logic is needed here).
+    """
+    if claims.role not in (Role.CLIENT_ADMIN, Role.CLIENT_AGENT) or claims.tenant_id is None:
+        raise AuthorizationError(
+            "Only an account member may list their own chatbots.",
+            code="ROLE_NOT_PERMITTED",
+        )
+
+    account_id = await _resolve_own_account_id(db, claims)
+    rows = await db.fetch(
+        "SELECT id, name, slug, enabled, created_at FROM tenants "
+        "WHERE client_account_id = $1 ORDER BY created_at",
+        account_id,
+    )
+    return [dict(r) for r in rows]

@@ -19,10 +19,14 @@ _KNOWN_PASSPHRASE = "correct horse battery staple"
 _KNOWN_HASH = hash_password(_KNOWN_PASSPHRASE)
 
 _TENANT_ID = "tenant-abc-123"
+_ACCOUNT_ID = "account-abc-123"
+_SECOND_TENANT_ID = "tenant-abc-456"  # a 2nd chatbot under the SAME account
+_NO_TENANT_ACCOUNT_ID = "account-empty-999"  # an account with zero enabled tenants
 
 _CLIENT_ADMIN_ROW: dict[str, Any] = {
     "id": "ca-user-1",
     "tenant_id": _TENANT_ID,
+    "client_account_id": _ACCOUNT_ID,
     "email": "admin@example.com",
     "role": "CLIENT_ADMIN",
     "password_hash": _KNOWN_HASH,
@@ -34,6 +38,7 @@ _CLIENT_ADMIN_ROW: dict[str, Any] = {
 _PLATFORM_ADMIN_ROW: dict[str, Any] = {
     "id": "pa-user-1",
     "tenant_id": None,
+    "client_account_id": None,
     "email": "platform@chatbot.local",
     "role": "PLATFORM_ADMIN",
     "password_hash": _KNOWN_HASH,
@@ -45,6 +50,7 @@ _PLATFORM_ADMIN_ROW: dict[str, Any] = {
 _INACTIVE_ROW: dict[str, Any] = {
     "id": "inactive-1",
     "tenant_id": _TENANT_ID,
+    "client_account_id": _ACCOUNT_ID,
     "email": "inactive@example.com",
     "role": "CLIENT_ADMIN",
     "password_hash": _KNOWN_HASH,
@@ -53,23 +59,57 @@ _INACTIVE_ROW: dict[str, Any] = {
     "last_login_at": None,
 }
 
+_NO_TENANT_ROW: dict[str, Any] = {
+    "id": "no-tenant-user-1",
+    "tenant_id": None,
+    "client_account_id": _NO_TENANT_ACCOUNT_ID,
+    "email": "no-tenant@example.com",
+    "role": "CLIENT_ADMIN",
+    "password_hash": _KNOWN_HASH,
+    "name": "Orphaned Admin",
+    "active": True,
+    "last_login_at": None,
+}
+
 _USER_DB: dict[str, dict[str, Any]] = {
     "admin@example.com": _CLIENT_ADMIN_ROW,
     "platform@chatbot.local": _PLATFORM_ADMIN_ROW,
     "inactive@example.com": _INACTIVE_ROW,
+    "no-tenant@example.com": _NO_TENANT_ROW,
 }
+
+# tenants visible to get_default_tenant_id_for_account -- (id, client_account_id,
+# enabled, created_at rank -- lower rank = created earlier).
+_TENANTS_DB: list[dict[str, Any]] = [
+    {"id": _SECOND_TENANT_ID, "client_account_id": _ACCOUNT_ID, "enabled": True, "rank": 2},
+    {"id": _TENANT_ID, "client_account_id": _ACCOUNT_ID, "enabled": True, "rank": 1},
+]
 
 
 class _StubDatabase:
-    """Database double that serves canned user rows for auth queries."""
+    """Database double that serves canned user/tenant rows for auth queries."""
 
     async def fetchrow(self, query: str, *args: object) -> dict[str, Any] | None:
-        # The auth repo query passes email as $1
-        if args:
+        q = query.upper()
+        if "FROM USERS" in q and "LOWER(EMAIL)" in q:
             email = str(args[0]).lower()
             for key, row in _USER_DB.items():
                 if key.lower() == email:
                     return dict(row)
+            return None
+        if "FROM USERS" in q and "WHERE ID = $1" in q:
+            user_id = str(args[0])
+            for row in _USER_DB.values():
+                if row["id"] == user_id:
+                    return dict(row)
+            return None
+        if "FROM TENANTS" in q and "CLIENT_ACCOUNT_ID = $1 AND ENABLED" in q:
+            account_id = str(args[0])
+            candidates = [t for t in _TENANTS_DB if t["client_account_id"] == account_id and t["enabled"]]
+            if not candidates:
+                return None
+            earliest = min(candidates, key=lambda t: t["rank"])
+            return {"id": earliest["id"]}
         return None
 
     async def fetchval(self, query: str, *args: object) -> object:
@@ -292,3 +332,37 @@ async def test_inactive_user_returns_401() -> None:
     assert resp.status_code == 401
     body = resp.json()
     assert body["error_code"] == "UNAUTHENTICATED"
+
+
+# -- Multi-chatbot accounts: login resolves the account's DEFAULT tenant -----
+
+
+async def test_login_resolves_earliest_created_enabled_tenant_not_the_newer_one() -> None:
+    """The account behind admin@example.com owns TWO chatbots (_TENANT_ID,
+    created first, and _SECOND_TENANT_ID, created later) -- login must
+    resolve to the EARLIEST one, never the most-recently-created."""
+    app = _build_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post("/auth/login", json={
+            "email": "admin@example.com",
+            "password": _KNOWN_PASSPHRASE,
+        })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tenant_id"] == _TENANT_ID
+    assert body["tenant_id"] != _SECOND_TENANT_ID
+
+
+async def test_login_zero_accessible_tenants_returns_401_no_accessible_tenant() -> None:
+    """An account with zero enabled tenants must fail cleanly -- never mint a
+    claims object with a fabricated/missing tenant_id (no silent fallback)."""
+    app = _build_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        resp = await c.post("/auth/login", json={
+            "email": "no-tenant@example.com",
+            "password": _KNOWN_PASSPHRASE,
+        })
+    assert resp.status_code == 401
+    body = resp.json()
+    assert body["error_code"] == "NO_ACCESSIBLE_TENANT"
+    assert "set-cookie" not in resp.headers

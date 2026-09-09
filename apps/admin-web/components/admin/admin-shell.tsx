@@ -7,6 +7,7 @@ import {
   BarChart3,
   Bell,
   BookOpen,
+  Bot,
   Building2,
   ChevronDown,
   Contact,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import type { Role } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { TenantSwitcher, type SwitchableChatbot } from "@/components/admin/tenant-switcher";
 
 interface AdminShellProps {
   children: React.ReactNode;
@@ -34,6 +36,10 @@ interface AdminShellProps {
   sidebarWorkspaceLabel?: string | null;
   sidebarStorageScope?: string;
   logoutAction: () => Promise<void>;
+  /** Multi-chatbot accounts: every chatbot on the caller's own account, for
+   *  the sidebar switcher. Empty/omitted for PLATFORM_ADMIN (no account). */
+  chatbots?: SwitchableChatbot[];
+  activeTenantId?: string | null;
 }
 
 /** A leaf navigation entry -- a real route. Unchanged from SR-15 except that
@@ -74,6 +80,16 @@ export interface NavGroup {
 }
 
 const overviewItems: NavEntry[] = [
+  // Multi-chatbot accounts: the account-level "my chatbots" hub + switcher.
+  {
+    href: "/chatbots",
+    label: "My chatbots",
+    icon: Bot,
+    roles: ["CLIENT_ADMIN", "CLIENT_AGENT"],
+    children: [
+      { href: "/chatbots/new", label: "Add a chatbot", icon: PlusCircle, roles: ["CLIENT_ADMIN"] },
+    ],
+  },
   {
     href: "/",
     label: "Dashboard",
@@ -387,6 +403,8 @@ export function AdminShell({
   sidebarWorkspaceLabel,
   sidebarStorageScope,
   logoutAction,
+  chatbots = [],
+  activeTenantId = null,
 }: AdminShellProps) {
   const pathname = usePathname();
   const sidebar = useSyncExternalStore(
@@ -483,6 +501,12 @@ export function AdminShell({
             {sidebar.collapsed ? <PanelLeftOpen aria-hidden className="size-4" /> : <PanelLeftClose aria-hidden className="size-4" />}
           </button>
         </div>
+
+        <TenantSwitcher
+          chatbots={chatbots}
+          activeTenantId={activeTenantId}
+          collapsed={sidebar.collapsed}
+        />
 
         {/* Sidebar.dc.html:14-26 -- `.sb-kicker` is `font-size:10.5px;
             letter-spacing:.12em; padding:0 21px; margin:16px 0 5px`, and

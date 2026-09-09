@@ -23,6 +23,8 @@ from api.auth.tokens import create_access_token
 _TEST_JWT_SECRET = "x" * 48
 _TENANT_ID = "tenant-abc-123"
 _OTHER_TENANT_ID = "tenant-xyz-999"
+_ACCOUNT_ID = "account-abc-123"
+_OTHER_ACCOUNT_ID = "account-xyz-999"
 
 _TEST_SETTINGS_ENV = {
     "DEPLOYMENT_MODE": "saas",
@@ -42,8 +44,10 @@ class _StubDatabase:
     def __init__(self) -> None:
         self._users: dict[str, dict[str, Any]] = {}
         self._tenants = {
-            _TENANT_ID: {"id": _TENANT_ID, "enabled": True},
-            _OTHER_TENANT_ID: {"id": _OTHER_TENANT_ID, "enabled": True},
+            _TENANT_ID: {"id": _TENANT_ID, "enabled": True, "client_account_id": _ACCOUNT_ID},
+            _OTHER_TENANT_ID: {
+                "id": _OTHER_TENANT_ID, "enabled": True, "client_account_id": _OTHER_ACCOUNT_ID,
+            },
         }
         self._emails_lower: set[str] = set()
         self._seq = 0
@@ -61,6 +65,7 @@ class _StubDatabase:
         self._users[user_id] = {
             "id": user_id,
             "tenant_id": tenant_id,
+            "client_account_id": self._tenants[tenant_id]["client_account_id"],
             "email": email,
             "role": role,
             "password_hash": "hashed",
@@ -74,8 +79,8 @@ class _StubDatabase:
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
         q = query.strip().upper()
         if "FROM USERS" in q:
-            tenant_id = args[0]
-            rows = [row for row in self._users.values() if row["tenant_id"] == tenant_id]
+            account_id = args[0]
+            rows = [row for row in self._users.values() if row["client_account_id"] == account_id]
             return rows
         return []
 
@@ -83,16 +88,16 @@ class _StubDatabase:
         q = query.strip().upper()
         if q.startswith("SELECT") and "FROM TENANTS" in q and "WHERE ID = $1" in q:
             return self._tenants.get(str(args[0]))
-        if q.startswith("SELECT") and "FROM USERS" in q and "WHERE ID = $1 AND TENANT_ID" in q:
-            user_id, tenant_id = args
+        if q.startswith("SELECT") and "FROM USERS" in q and "WHERE ID = $1 AND CLIENT_ACCOUNT_ID" in q:
+            user_id, account_id = args
             row = self._users.get(user_id)
-            if row is None or row["tenant_id"] != tenant_id:
+            if row is None or row["client_account_id"] != account_id:
                 return None
             return dict(row)
         if q.startswith("UPDATE USERS") and "RETURNING" in q:
-            active, user_id, tenant_id = args
+            active, user_id, account_id = args
             row = self._users.get(user_id)
-            if row is None or row["tenant_id"] != tenant_id:
+            if row is None or row["client_account_id"] != account_id:
                 return None
             row["active"] = active
             return dict(row)
@@ -101,13 +106,14 @@ class _StubDatabase:
     async def execute(self, query: str, *args: Any) -> str:
         q = query.strip().upper()
         if q.startswith("INSERT INTO USERS"):
-            user_id, tenant_id, email, role, _password_hash, name = args
+            user_id, tenant_id, account_id, email, role, _password_hash, name = args
             if email.lower() in self._emails_lower:
                 raise asyncpg.UniqueViolationError()
             self._emails_lower.add(email.lower())
             self._users[user_id] = {
                 "id": user_id,
                 "tenant_id": tenant_id,
+                "client_account_id": account_id,
                 "email": email,
                 "role": role,
                 "password_hash": _password_hash,

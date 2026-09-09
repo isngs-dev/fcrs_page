@@ -12,15 +12,21 @@ from __future__ import annotations
 
 from common.auth import AuthClaims, Role
 from common.crypto import hash_password, verify_password
-from common.errors import AuthenticationError
+from common.errors import AuthenticationError, NotFoundError
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 
 from api.auth.blacklist import get_token_blacklist, remaining_ttl
-from api.auth.dependencies import get_current_claims
+from api.auth.dependencies import get_current_claims, require_roles
 from api.auth.password_reset import _hash_token, get_password_reset_store
-from api.auth.repository import get_user_by_email, set_password_hash
+from api.auth.repository import (
+    get_default_tenant_id_for_account,
+    get_tenant_for_switch,
+    get_user_by_email,
+    get_user_by_id,
+    set_password_hash,
+)
 from api.auth.tokens import create_access_token, decode_access_token
 from api.config import get_api_settings
 from api.notifications.repository import enqueue_notification
@@ -93,10 +99,33 @@ async def login(body: LoginRequest, request: Request, response: Response) -> Log
         )
         raise AuthenticationError(_AUTH_FAILED_MSG)
 
-    # 4. Build claims from the user row
+    # 4. Build claims from the user row. PLATFORM_ADMIN stays global
+    # (tenant_id=None); every other role resolves to the account's default
+    # (earliest-created, enabled) tenant -- never the raw users.tenant_id
+    # column, which is being phased out in favor of account-scoped
+    # membership (multi-chatbot accounts).
     user_id: str = str(row["id"])
     role = Role(row["role"])
-    tenant_id: str | None = str(row["tenant_id"]) if row.get("tenant_id") is not None else None
+
+    tenant_id: str | None
+    if role is Role.PLATFORM_ADMIN:
+        tenant_id = None
+    else:
+        account_id = row.get("client_account_id")
+        tenant_id = (
+            await get_default_tenant_id_for_account(db, str(account_id))
+            if account_id is not None
+            else None
+        )
+        if tenant_id is None:
+            _log.info(
+                "login attempt with no accessible tenant",
+                extra={"event": "login_failed"},
+            )
+            raise AuthenticationError(
+                "Your account currently has no accessible chatbot. Contact your administrator.",
+                code="NO_ACCESSIBLE_TENANT",
+            )
 
     claims = AuthClaims(
         subject=user_id,
@@ -157,6 +186,96 @@ async def login(body: LoginRequest, request: Request, response: Response) -> Log
         role=role.value,
         tenant_id=tenant_id,
         name=row.get("name"),
+    )
+
+
+class SwitchTenantRequest(BaseModel):
+    """Body for POST /auth/switch-tenant."""
+
+    tenant_id: str
+
+
+class SwitchTenantResponse(BaseModel):
+    """Successful switch response -- enough for the caller to update its UI."""
+
+    tenant_id: str
+    name: str
+    slug: str
+
+
+@router.post("/switch-tenant", response_model=SwitchTenantResponse)
+async def switch_tenant(
+    body: SwitchTenantRequest,
+    request: Request,
+    response: Response,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN, Role.CLIENT_AGENT)),  # noqa: B008
+) -> SwitchTenantResponse:
+    """Re-mint the session cookie scoped to a different chatbot within the
+    caller's own account (multi-chatbot accounts).
+
+    The target tenant must belong to the CALLER'S OWN ``client_account_id``
+    and be enabled -- any mismatch (foreign account, unknown id, disabled)
+    returns the SAME 404 ``TENANT_NOT_FOUND``, never a 403, so a probing
+    caller can't distinguish "exists in another account" from "does not
+    exist" (no cross-account enumeration).
+    """
+    settings = get_api_settings()
+    db = request.app.state.db
+
+    user_row = await get_user_by_id(db, claims.subject)
+    account_id = user_row.get("client_account_id") if user_row is not None else None
+    if account_id is None:
+        raise NotFoundError("Tenant not found.", code="TENANT_NOT_FOUND")
+
+    target = await get_tenant_for_switch(db, body.tenant_id)
+    if (
+        target is None
+        or not target.get("enabled", False)
+        or str(target.get("client_account_id")) != str(account_id)
+    ):
+        raise NotFoundError("Tenant not found.", code="TENANT_NOT_FOUND")
+
+    new_claims = AuthClaims(
+        subject=claims.subject,
+        role=claims.role,
+        tenant_id=str(target["id"]),
+    )
+
+    ttl = settings.access_token_ttl_seconds
+    token, _jti = create_access_token(new_claims, secret=settings.jwt_secret, ttl_seconds=ttl)
+
+    response.set_cookie(
+        key=settings.cookie_name,
+        value=token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=ttl,
+        path="/",
+    )
+
+    _log.info("switched active tenant", extra={"event": "switch_tenant_success"})
+
+    try:
+        from api.audit.repository import record_audit
+
+        await record_audit(
+            db,
+            new_claims,
+            action="auth.switch_tenant",
+            target_type="tenant",
+            target_id=str(target["id"]),
+        )
+    except Exception:
+        _log.warning(
+            "failed to record audit event for switch_tenant",
+            extra={"event": "audit_record_failed"},
+        )
+
+    return SwitchTenantResponse(
+        tenant_id=str(target["id"]),
+        name=str(target["name"]),
+        slug=str(target["slug"]),
     )
 
 

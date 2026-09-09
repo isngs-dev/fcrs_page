@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { getClaims } from "@/lib/auth";
 import { getProfile } from "@/lib/profile";
 import { getBotSettings } from "@/lib/settings";
+import { listMyChatbots } from "@/lib/chatbots";
 import { AdminShell } from "@/components/admin/admin-shell";
 import { logout } from "@/app/(protected)/actions";
 
@@ -32,6 +33,13 @@ export default async function ProtectedLayout({
   const sidebarWorkspaceLabel =
     settingsResult?.status === "ok" ? settingsResult.settings.sidebarWorkspaceLabel : null;
 
+  // Multi-chatbot accounts: the sidebar switcher's data. PLATFORM_ADMIN has
+  // no account of its own (it browses via /clients/{tenantId}/... instead),
+  // so this is only fetched for the two account-scoped roles.
+  const isAccountScoped = claims.role === "CLIENT_ADMIN" || claims.role === "CLIENT_AGENT";
+  const chatbotsResult = isAccountScoped ? await listMyChatbots() : null;
+  const chatbots = chatbotsResult?.status === "ok" ? chatbotsResult.items : [];
+
   return (
     <AdminShell
       role={claims.role}
@@ -39,6 +47,8 @@ export default async function ProtectedLayout({
       sidebarWorkspaceLabel={sidebarWorkspaceLabel}
       sidebarStorageScope={claims.subject}
       logoutAction={logout}
+      chatbots={chatbots}
+      activeTenantId={claims.tenantId}
     >
       {children}
     </AdminShell>
