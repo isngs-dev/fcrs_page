@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { saveCallConfig, type CallConfigResult } from "@/lib/calls";
 
-const DEFAULT_API_BASE = "https://api.chatleads.io";
+const DEFAULT_API_BASE = "https://159-89-230-107.nip.io";
 
 function buildWebhookUrl(tenantId: string): string {
   return `${DEFAULT_API_BASE}/public/calls/twilio/${tenantId}`;
