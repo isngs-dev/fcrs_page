@@ -18,8 +18,8 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
 const PLACEHOLDER_CLIENT_KEY = "pk_YOUR_CLIENT_KEY";
-const WIDGET_SCRIPT_SRC = "https://cdn.chatleads.io/widget.js";
-const DEFAULT_API_BASE = "https://api.chatleads.io";
+const WIDGET_SCRIPT_SRC = "https://chat.isngs.com/widget.js";
+const DEFAULT_API_BASE = "https://159-89-230-107.nip.io";
 
 function buildSnippet(clientKey: string | undefined, apiBase: string | undefined): string {
   const key = clientKey ?? PLACEHOLDER_CLIENT_KEY;
