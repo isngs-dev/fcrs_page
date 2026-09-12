@@ -101,6 +101,14 @@ class _StubDatabase:
                 return None
             row["active"] = active
             return dict(row)
+        if q.startswith("DELETE FROM USERS") and "RETURNING" in q:
+            user_id, account_id = args
+            row = self._users.get(user_id)
+            if row is None or row["client_account_id"] != account_id:
+                return None
+            del self._users[user_id]
+            self._emails_lower.discard(row["email"].lower())
+            return dict(row)
         return None
 
     async def execute(self, query: str, *args: Any) -> str:
@@ -493,5 +501,115 @@ async def test_patch_no_cookie_401(app: Any, db: _StubDatabase) -> None:
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.patch("/admin/users/agent-1", json={"active": False})
+
+    assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# DELETE /admin/users/{user_id}
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_inactive_agent_returns_204_and_removes_the_row(
+    app: Any, db: _StubDatabase
+) -> None:
+    db.seed_user(user_id="agent-1", tenant_id=_TENANT_ID, active=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.delete("/admin/users/agent-1", cookies={"access_token": token})
+        list_response = await client.get("/admin/users", cookies={"access_token": token})
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert list_response.json() == []
+
+
+async def test_delete_still_active_agent_returns_422_user_not_inactive(
+    app: Any, db: _StubDatabase
+) -> None:
+    db.seed_user(user_id="agent-1", tenant_id=_TENANT_ID, active=True)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.delete("/admin/users/agent-1", cookies={"access_token": token})
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "USER_NOT_INACTIVE"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        list_response = await client.get("/admin/users", cookies={"access_token": token})
+    assert len(list_response.json()) == 1  # still there -- delete was rejected
+
+
+async def test_delete_cross_tenant_user_id_returns_404(app: Any, db: _StubDatabase) -> None:
+    db.seed_user(user_id="agent-1", tenant_id=_OTHER_TENANT_ID, active=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN, tenant_id=_TENANT_ID)
+        response = await client.delete("/admin/users/agent-1", cookies={"access_token": token})
+
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "USER_NOT_FOUND"
+
+
+async def test_delete_missing_user_id_returns_404(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        response = await client.delete("/admin/users/does-not-exist", cookies={"access_token": token})
+
+    assert response.status_code == 404
+
+
+async def test_delete_self_targeting_returns_422(app: Any, db: _StubDatabase) -> None:
+    db.seed_user(user_id="admin-1", tenant_id=_TENANT_ID, role="CLIENT_ADMIN", active=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN, subject="admin-1")
+        response = await client.delete("/admin/users/admin-1", cookies={"access_token": token})
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "INVALID_TARGET_USER"
+
+
+async def test_delete_targeting_another_client_admin_returns_422(
+    app: Any, db: _StubDatabase
+) -> None:
+    db.seed_user(user_id="other-admin", tenant_id=_TENANT_ID, role="CLIENT_ADMIN", active=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN, subject="admin-1")
+        response = await client.delete("/admin/users/other-admin", cookies={"access_token": token})
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "INVALID_TARGET_USER"
+
+
+async def test_delete_client_agent_forbidden(app: Any, db: _StubDatabase) -> None:
+    db.seed_user(user_id="agent-1", tenant_id=_TENANT_ID, active=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_AGENT)
+        response = await client.delete("/admin/users/agent-1", cookies={"access_token": token})
+
+    assert response.status_code == 403
+
+
+async def test_delete_visitor_forbidden(app: Any, db: _StubDatabase) -> None:
+    db.seed_user(user_id="agent-1", tenant_id=_TENANT_ID, active=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.VISITOR)
+        response = await client.delete("/admin/users/agent-1", cookies={"access_token": token})
+
+    assert response.status_code == 403
+
+
+async def test_delete_no_cookie_401(app: Any, db: _StubDatabase) -> None:
+    db.seed_user(user_id="agent-1", tenant_id=_TENANT_ID, active=False)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.delete("/admin/users/agent-1")
 
     assert response.status_code == 401

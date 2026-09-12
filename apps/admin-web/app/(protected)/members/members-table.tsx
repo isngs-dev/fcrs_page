@@ -39,7 +39,7 @@ import { TableCard, TableHeadCell, TableCell, TableRow } from "@/components/admi
 import { Chip } from "@/components/admin/chip";
 import type { MemberSummary } from "@/lib/members";
 import { formatLastActive, initialsFromMember, roleBadgeStyle } from "@/lib/members-presentation";
-import { toggleMemberActiveAction } from "@/app/(protected)/members/actions";
+import { deleteMemberAction, toggleMemberActiveAction } from "@/app/(protected)/members/actions";
 
 type SortColumn = "member" | "role" | "lastActive";
 type SortDirection = "asc" | "desc";
@@ -212,6 +212,47 @@ function DeactivateConfirmDialog({
   );
 }
 
+function DeleteConfirmDialog({
+  member,
+  onConfirm,
+  onCancel,
+  pending,
+}: {
+  member: MemberSummary;
+  onConfirm: () => void;
+  onCancel: () => void;
+  pending: boolean;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="delete-dialog-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+    >
+      <div className="flex w-full max-w-sm flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-xl">
+        <div>
+          <h2 id="delete-dialog-title" className="text-[15px] font-bold text-foreground">
+            Delete {member.name ?? member.email}?
+          </h2>
+          <p className="mt-1.5 text-[13px] text-[var(--ink-2)]">
+            This permanently removes their account. Unlike deactivating, this cannot be undone --
+            they would need to be invited again from scratch.
+          </p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>
+            Cancel
+          </Button>
+          <Button type="button" variant="destructive" onClick={onConfirm} disabled={pending}>
+            {pending ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Reference grid-template-columns: 44px 2fr 150px 170px 130px 130px (a
 // leading checkbox column, Member, Role, Last active, Status, actions). The
 // checkbox column is dropped (no bulk endpoint -- see file header); the
@@ -224,8 +265,10 @@ export function MembersTable({ members }: { members: MemberSummary[] }) {
   const [rows, setRows] = useState(members);
   const [sort, setSort] = useState<SortState | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<MemberSummary | null>(null);
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<MemberSummary | null>(null);
   const [errorByMember, setErrorByMember] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
+  const [isDeletePending, startDeleteTransition] = useTransition();
 
   const sortedRows = useMemo(() => sortRows(rows, sort), [rows, sort]);
 
@@ -264,6 +307,25 @@ export function MembersTable({ members }: { members: MemberSummary[] }) {
     } else {
       applyToggle(member.id, true);
     }
+  }
+
+  function handleDelete(member: MemberSummary) {
+    setErrorByMember((prev) => {
+      const next = { ...prev };
+      delete next[member.id];
+      return next;
+    });
+    startDeleteTransition(async () => {
+      const result = await deleteMemberAction(member.id);
+      if (result.status === "ok") {
+        setRows((prev) => prev.filter((m) => m.id !== member.id));
+      } else {
+        setErrorByMember((prev) => ({
+          ...prev,
+          [member.id]: result.message ?? "Something went wrong.",
+        }));
+      }
+    });
   }
 
   if (rows.length === 0) {
@@ -353,15 +415,31 @@ export function MembersTable({ members }: { members: MemberSummary[] }) {
                 ) : null}
               </TableCell>
               <TableCell className="pr-4 text-right">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={isPending}
-                  onClick={() => handleToggleClick(member)}
-                  className="h-8 rounded-[9px] border-border bg-card px-[13px] text-[12.5px] font-semibold text-[var(--ink-2)] hover:bg-[#e6e6e6]"
-                >
-                  {member.active ? "Deactivate" : "Activate"}
-                </Button>
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isPending}
+                    onClick={() => handleToggleClick(member)}
+                    className="h-8 rounded-[9px] border-border bg-card px-[13px] text-[12.5px] font-semibold text-[var(--ink-2)] hover:bg-[#e6e6e6]"
+                  >
+                    {member.active ? "Deactivate" : "Activate"}
+                  </Button>
+                  {/* Delete is only offered once a member is already
+                      deactivated -- mirrors the backend's USER_NOT_INACTIVE
+                      guard, so this is never a dead/rejected control. */}
+                  {!member.active ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isDeletePending}
+                      onClick={() => setConfirmDeleteTarget(member)}
+                      className="h-8 rounded-[9px] border-destructive/40 bg-card px-[13px] text-[12.5px] font-semibold text-destructive hover:bg-destructive/10"
+                    >
+                      Delete
+                    </Button>
+                  ) : null}
+                </div>
               </TableCell>
             </TableRow>
           ))}
@@ -376,6 +454,18 @@ export function MembersTable({ members }: { members: MemberSummary[] }) {
           onConfirm={() => {
             applyToggle(confirmTarget.id, false);
             setConfirmTarget(null);
+          }}
+        />
+      ) : null}
+
+      {confirmDeleteTarget ? (
+        <DeleteConfirmDialog
+          member={confirmDeleteTarget}
+          pending={isDeletePending}
+          onCancel={() => setConfirmDeleteTarget(null)}
+          onConfirm={() => {
+            handleDelete(confirmDeleteTarget);
+            setConfirmDeleteTarget(null);
           }}
         />
       ) : null}

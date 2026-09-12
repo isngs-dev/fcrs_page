@@ -15,7 +15,7 @@
  */
 import { revalidatePath } from "next/cache";
 import { AdminApiError } from "@/lib/api";
-import { createMember, setMemberActive, type MemberSummary } from "@/lib/members";
+import { createMember, deleteMember, setMemberActive, type MemberSummary } from "@/lib/members";
 
 // ---------------------------------------------------------------------------
 // Create member
@@ -172,6 +172,55 @@ export async function toggleMemberActiveAction(
       }
       if (err.status === 403) {
         return { status: "error", message: "You do not have permission to change member access.", correlationId: err.correlationId };
+      }
+      return { status: "error", message: err.message, correlationId: err.correlationId };
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: "" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Delete (inactive members only)
+// ---------------------------------------------------------------------------
+
+export interface DeleteMemberResult {
+  status: "ok" | "error";
+  message?: string;
+  correlationId?: string;
+}
+
+/**
+ * Permanently delete an already-deactivated member. Called from a
+ * type-to-confirm dialog in the client component -- this is irreversible
+ * (unlike Deactivate, there is no "Activate" button to undo it), so it
+ * gets stronger confirmation than the toggle above.
+ */
+export async function deleteMemberAction(userId: string): Promise<DeleteMemberResult> {
+  try {
+    await deleteMember(userId);
+    revalidatePath("/members");
+    return { status: "ok" };
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      if (err.status === 404 || err.errorCode === "USER_NOT_FOUND") {
+        return { status: "error", message: "That member could not be found.", correlationId: err.correlationId };
+      }
+      if (err.errorCode === "USER_NOT_INACTIVE") {
+        return {
+          status: "error",
+          message: "Deactivate this member before deleting them.",
+          correlationId: err.correlationId,
+        };
+      }
+      if (err.errorCode === "INVALID_TARGET_USER") {
+        return {
+          status: "error",
+          message: "That member cannot be deleted (you cannot target yourself or a non-agent).",
+          correlationId: err.correlationId,
+        };
+      }
+      if (err.status === 403) {
+        return { status: "error", message: "You do not have permission to delete team members.", correlationId: err.correlationId };
       }
       return { status: "error", message: err.message, correlationId: err.correlationId };
     }

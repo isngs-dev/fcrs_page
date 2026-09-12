@@ -8,7 +8,7 @@ vi.mock("next/headers", () => ({
 
 // Imported after the mock is registered so the module under test picks up
 // the mocked `next/headers` (adminApiFetch reads the access_token cookie).
-const { listMembers, createMember, setMemberActive } = await import("@/lib/members");
+const { listMembers, createMember, setMemberActive, deleteMember } = await import("@/lib/members");
 
 // Field-name constant, not a literal `temp_password: "..."` assignment, so
 // this fixture-building code doesn't resemble a hardcoded credential.
@@ -220,6 +220,52 @@ describe("setMemberActive", () => {
     );
 
     await expect(setMemberActive("missing-id", true)).rejects.toMatchObject({
+      errorCode: "USER_NOT_FOUND",
+    });
+  });
+});
+
+describe("deleteMember", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    getMock.mockReset();
+  });
+
+  it("calls DELETE /admin/users/{id}", async () => {
+    getMock.mockReturnValue(undefined);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+
+    await deleteMember("user-2");
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8000/admin/users/user-2");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("throws AdminApiError with USER_NOT_INACTIVE when the member is still active", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ error_code: "USER_NOT_INACTIVE", message: "still active", correlation_id: "c" }),
+        { status: 422 }
+      )
+    );
+
+    await expect(deleteMember("user-2")).rejects.toMatchObject({
+      errorCode: "USER_NOT_INACTIVE",
+    });
+  });
+
+  it("throws AdminApiError with USER_NOT_FOUND for a missing user", async () => {
+    getMock.mockReturnValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ error_code: "USER_NOT_FOUND", message: "missing", correlation_id: "c" }),
+        { status: 404 }
+      )
+    );
+
+    await expect(deleteMember("missing-id")).rejects.toMatchObject({
       errorCode: "USER_NOT_FOUND",
     });
   });

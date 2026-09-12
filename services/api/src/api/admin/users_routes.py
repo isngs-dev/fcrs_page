@@ -24,7 +24,12 @@ from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
 
-from api.admin.users_repository import create_tenant_agent, list_tenant_users, set_user_active
+from api.admin.users_repository import (
+    create_tenant_agent,
+    delete_tenant_agent,
+    list_tenant_users,
+    set_user_active,
+)
 from api.auth.dependencies import require_roles, resolve_tenant_scope
 
 _log = get_logger(__name__)
@@ -173,3 +178,32 @@ async def patch_user_active(
     )
 
     return _to_response(updated)
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: str,
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> None:
+    """Permanently delete an INACTIVE same-account ``CLIENT_AGENT``.
+
+    404 ``USER_NOT_FOUND`` for a missing/cross-account ``user_id``. 422
+    ``INVALID_TARGET_USER`` for self-targeting or a non-``CLIENT_AGENT``
+    target (decisions 3-4). 422 ``USER_NOT_INACTIVE`` if the target is still
+    active -- deactivate first.
+    """
+    db = request.app.state.db
+
+    deleted = await delete_tenant_agent(db, claims, user_id)
+    if deleted is None:
+        raise NotFoundError("User not found.", code="USER_NOT_FOUND")
+
+    _log.info(
+        "tenant user deleted",
+        extra={
+            "event": "tenant_user_deleted",
+            "tenant_id": claims.tenant_id,
+            "user_id": user_id,
+        },
+    )

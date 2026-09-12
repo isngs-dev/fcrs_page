@@ -137,6 +137,17 @@ export async function setMemberActive(userId: string, active: boolean): Promise<
   return toMemberSummary(body);
 }
 
+/**
+ * Call `DELETE /admin/users/{user_id}` to permanently remove an already-
+ * deactivated same-account `CLIENT_AGENT`. Throws `AdminApiError` on any
+ * non-2xx (404 `USER_NOT_FOUND`, 422 `INVALID_TARGET_USER` for self-
+ * targeting or a non-`CLIENT_AGENT` target, 422 `USER_NOT_INACTIVE` if the
+ * member is still active -- deactivate first).
+ */
+export async function deleteMember(userId: string): Promise<void> {
+  await adminApiFetch(`/admin/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+}
+
 function mapErrorMessage(error: AdminApiError): string {
   if (error.status === 403 || error.errorCode === "ROLE_NOT_PERMITTED") {
     return "You do not have permission to view team members.";

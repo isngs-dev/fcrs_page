@@ -19,7 +19,12 @@ from common.auth import AuthClaims, Role
 from common.crypto import verify_password
 from common.errors import AuthorizationError, NotFoundError, ValidationError
 
-from api.admin.users_repository import create_tenant_agent, list_tenant_users, set_user_active
+from api.admin.users_repository import (
+    create_tenant_agent,
+    delete_tenant_agent,
+    list_tenant_users,
+    set_user_active,
+)
 
 _ACCOUNT_A = "account-a"
 _ACCOUNT_B = "account-b"
@@ -410,6 +415,146 @@ async def test_set_user_active_rejects_global_caller() -> None:
 
     with pytest.raises(ValidationError) as exc_info:
         await set_user_active(db, _PLATFORM_ADMIN, "agent-1", active=False)
+
+    assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
+    assert db.calls == []
+
+
+# -- delete_tenant_agent -------------------------------------------------------
+
+
+async def test_delete_tenant_agent_missing_returns_none() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [_tenant_row(_TENANT_A1, _ACCOUNT_A), None]
+
+    result = await delete_tenant_agent(db, _CLIENT_ADMIN, "does-not-exist")
+
+    assert result is None
+    assert not any(c.kind == "execute" for c in db.calls)
+
+
+async def test_delete_tenant_agent_cross_account_returns_none() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [_tenant_row(_TENANT_A1, _ACCOUNT_A), None]
+
+    result = await delete_tenant_agent(db, _CLIENT_ADMIN, "user-in-account-b")
+
+    assert result is None
+    select_call = db.calls[1]
+    assert select_call.kind == "fetchrow"
+    assert _ACCOUNT_A in select_call.params
+
+
+async def test_delete_tenant_agent_self_targeting_raises_invalid_target() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        _tenant_row(_TENANT_A1, _ACCOUNT_A),
+        _user_row(user_id=_CLIENT_ADMIN.subject, role="CLIENT_ADMIN", active=False),
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        await delete_tenant_agent(db, _CLIENT_ADMIN, _CLIENT_ADMIN.subject)
+
+    assert exc_info.value.code == "INVALID_TARGET_USER"
+    assert len(db.calls) == 2  # account resolution + SELECT only, no DELETE
+
+
+async def test_delete_tenant_agent_targeting_client_admin_raises_invalid_target() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        _tenant_row(_TENANT_A1, _ACCOUNT_A),
+        _user_row(user_id="other-admin", role="CLIENT_ADMIN", active=False),
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        await delete_tenant_agent(db, _CLIENT_ADMIN, "other-admin")
+
+    assert exc_info.value.code == "INVALID_TARGET_USER"
+
+
+async def test_delete_tenant_agent_still_active_raises_user_not_inactive() -> None:
+    """The user's actual request: deletion is only legal once a member is
+    already deactivated -- a live login is never destroyed in one click."""
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        _tenant_row(_TENANT_A1, _ACCOUNT_A),
+        _user_row(user_id="agent-1", role="CLIENT_AGENT", active=True),
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        await delete_tenant_agent(db, _CLIENT_ADMIN, "agent-1")
+
+    assert exc_info.value.code == "USER_NOT_INACTIVE"
+    assert len(db.calls) == 2  # account resolution + SELECT only, no DELETE
+
+
+async def test_delete_tenant_agent_legit_target_succeeds() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        _tenant_row(_TENANT_A1, _ACCOUNT_A),
+        _user_row(user_id="agent-1", role="CLIENT_AGENT", active=False),
+        _user_row(user_id="agent-1", role="CLIENT_AGENT", active=False),
+    ]
+
+    result = await delete_tenant_agent(db, _CLIENT_ADMIN, "agent-1")
+
+    assert result is not None
+    assert result["id"] == "agent-1"
+    delete_call = db.calls[2]
+    assert delete_call.kind == "fetchrow"
+    assert "DELETE FROM users" in delete_call.query
+    assert "agent-1" in delete_call.params
+    assert _ACCOUNT_A in delete_call.params
+
+
+async def test_delete_tenant_agent_reachable_regardless_of_which_account_tenant_is_active() -> None:
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        _tenant_row(_TENANT_A2, _ACCOUNT_A),
+        _user_row(user_id="agent-1", role="CLIENT_AGENT", active=False),
+        _user_row(user_id="agent-1", role="CLIENT_AGENT", active=False),
+    ]
+
+    result = await delete_tenant_agent(db, _CLIENT_ADMIN_ON_A2, "agent-1")
+
+    assert result is not None
+
+
+async def test_delete_tenant_agent_never_touches_another_accounts_row() -> None:
+    """Isolation -- the DELETE is always parameterized on the CALLER'S OWN
+    resolved account_id, never a caller-supplied value, so account A can
+    never delete a row belonging to account B."""
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        _tenant_row(_TENANT_B1, _ACCOUNT_B),
+        _user_row(user_id="agent-1", role="CLIENT_AGENT", active=False),
+        _user_row(user_id="agent-1", role="CLIENT_AGENT", active=False),
+    ]
+
+    await delete_tenant_agent(db, _OTHER_CLIENT_ADMIN, "agent-1")
+
+    for call in db.calls:
+        if call.kind == "fetchrow" and "DELETE" in call.query:
+            assert _ACCOUNT_B in call.params
+            assert _ACCOUNT_A not in call.params
+
+
+@pytest.mark.parametrize("claims", [_CLIENT_AGENT, _VISITOR])
+async def test_delete_tenant_agent_rejects_non_client_admin(claims: AuthClaims) -> None:
+    db = _RecordingDB()
+
+    with pytest.raises(AuthorizationError) as exc_info:
+        await delete_tenant_agent(db, claims, "agent-1")
+
+    assert exc_info.value.code == "ROLE_NOT_PERMITTED"
+    assert db.calls == []
+
+
+async def test_delete_tenant_agent_rejects_global_caller() -> None:
+    db = _RecordingDB()
+
+    with pytest.raises(ValidationError) as exc_info:
+        await delete_tenant_agent(db, _PLATFORM_ADMIN, "agent-1")
 
     assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"
     assert db.calls == []

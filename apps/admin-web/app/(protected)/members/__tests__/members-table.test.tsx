@@ -102,4 +102,14 @@ describe("MembersTable (visual/structural rebuild)", () => {
     const html = renderToStaticMarkup(<MembersTable members={[makeMember()]} />);
     expect(html).toMatch(/h-8 w-8/);
   });
+
+  it("renders a Delete button for an inactive member (delete-inactive-members feature)", () => {
+    const html = renderToStaticMarkup(<MembersTable members={[makeMember({ active: false })]} />);
+    expect(html).toMatch(/>Delete</);
+  });
+
+  it("never renders a Delete button for an active member -- must be deactivated first", () => {
+    const html = renderToStaticMarkup(<MembersTable members={[makeMember({ active: true })]} />);
+    expect(html).not.toMatch(/>Delete</);
+  });
 });

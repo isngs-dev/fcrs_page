@@ -199,3 +199,60 @@ async def set_user_active(
         account_id,
     )
     return dict(updated) if updated is not None else None
+
+
+async def delete_tenant_agent(
+    db: Database, claims: AuthClaims, user_id: str
+) -> dict[str, Any] | None:
+    """Permanently delete a same-ACCOUNT ``CLIENT_AGENT`` target -- ONLY if
+    already inactive.
+
+    Deletion is restricted to already-deactivated members (user request: an
+    active login is never destroyed by one click -- the caller must
+    Deactivate first, an existing, separately-confirmed step). Returns
+    ``None`` for a missing or cross-account ``user_id`` (route maps to 404
+    ``USER_NOT_FOUND`` -- same indistinguishable-from-nonexistent handling as
+    ``set_user_active``). Raises ``ValidationError INVALID_TARGET_USER`` when
+    the target is the caller themselves or is not a ``CLIENT_AGENT`` in the
+    caller's account (same symmetry as ``set_user_active``'s decisions 3-4).
+    Raises ``ValidationError USER_NOT_INACTIVE`` when the target is still
+    active.
+
+    Safe as a hard DELETE: no FK constraint anywhere in the schema
+    references ``users(id)`` -- every other table's user-referencing column
+    (``leads.assigned_agent_id``, notification recipients, audit actor ids)
+    is a plain, unconstrained text column, so this can never violate a
+    foreign key or be blocked by one (unlike a tenant delete).
+    """
+    account_id = await _require_account_scoped_client_admin(db, claims)
+
+    row = await db.fetchrow(
+        "SELECT id, tenant_id, client_account_id, email, role, name, active, "
+        "last_login_at, created_at "
+        "FROM users WHERE id = $1 AND client_account_id = $2",
+        user_id,
+        account_id,
+    )
+    if row is None:
+        return None
+
+    if user_id == claims.subject or row["role"] != Role.CLIENT_AGENT.value:
+        raise ValidationError(
+            "This user is not a legal target for deletion.",
+            code="INVALID_TARGET_USER",
+        )
+
+    if row["active"]:
+        raise ValidationError(
+            "Deactivate this member before deleting them.",
+            code="USER_NOT_INACTIVE",
+        )
+
+    deleted = await db.fetchrow(
+        "DELETE FROM users WHERE id = $1 AND client_account_id = $2 "
+        "RETURNING id, tenant_id, client_account_id, email, role, name, active, "
+        "last_login_at, created_at",
+        user_id,
+        account_id,
+    )
+    return dict(deleted) if deleted is not None else None
