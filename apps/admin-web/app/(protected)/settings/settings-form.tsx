@@ -591,7 +591,6 @@ export function SettingsForm({
                 className={SET_ROW_FIELD_CLASS}
               >
                 <option value="">Default (right)</option>
-                <option value="right">Right</option>
                 <option value="left">Left</option>
               </select>
               {fieldErrors.launcherPosition ? (
