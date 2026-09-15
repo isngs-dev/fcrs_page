@@ -24,6 +24,7 @@ const {
   listCoverageGaps,
   submitTrainedAnswer,
   dismissGap,
+  addKnowledgeUrl,
 } = await import("@/app/(protected)/knowledge/actions");
 const { AdminApiError } = await import("@/lib/api");
 
@@ -892,6 +893,175 @@ describe("dismissGap (Train the Agent: not a real question)", () => {
     expect(result.status).toBe("error");
     if (result.status === "error") {
       expect(result.message).toMatch(/unable to reach the server/i);
+    }
+  });
+});
+
+function buildUrlFormData(extra: { url?: string; title?: string; description?: string } = {}): FormData {
+  const fd = new FormData();
+  if (extra.url !== undefined) fd.set("url", extra.url);
+  if (extra.title !== undefined) fd.set("title", extra.title);
+  if (extra.description !== undefined) fd.set("description", extra.description);
+  return fd;
+}
+
+describe("addKnowledgeUrl", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+    revalidatePathMock.mockReset();
+  });
+
+  it("rejects a missing URL client-side without calling adminApiFetch", async () => {
+    const state = await addKnowledgeUrl({ status: "idle" }, buildUrlFormData());
+
+    expect(state.status).toBe("error");
+    expect(adminApiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-http(s) URL client-side without calling adminApiFetch", async () => {
+    const state = await addKnowledgeUrl({ status: "idle" }, buildUrlFormData({ url: "ftp://example.com" }));
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.message).toMatch(/valid http/i);
+    }
+    expect(adminApiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("posts to /admin/ingestion/url and returns an 'uploaded' state on success", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-url-1", run_id: "run-url-1", status: "pending" }, 200)
+    );
+
+    const state = await addKnowledgeUrl(
+      { status: "idle" },
+      buildUrlFormData({ url: "https://example.com/pricing", title: "Pricing" })
+    );
+
+    expect(state.status).toBe("uploaded");
+    if (state.status === "uploaded") {
+      expect(state.docId).toBe("doc-url-1");
+      expect(state.runId).toBe("run-url-1");
+      expect(state.idempotent).toBe(false);
+    }
+    const [path, init] = adminApiFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/admin/ingestion/url");
+    expect(JSON.parse(init.body as string)).toEqual({
+      url: "https://example.com/pricing",
+      title: "Pricing",
+    });
+    expect(revalidatePathMock).toHaveBeenCalledWith("/knowledge");
+  });
+
+  it("does not revalidate on an idempotent resubmit (run_id: null)", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-url-1", run_id: null, status: "parsed" }, 200)
+    );
+
+    const state = await addKnowledgeUrl(
+      { status: "idle" },
+      buildUrlFormData({ url: "https://example.com/pricing" })
+    );
+
+    expect(state.status).toBe("uploaded");
+    if (state.status === "uploaded") {
+      expect(state.idempotent).toBe(true);
+    }
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+
+  it("maps URL_NOT_ALLOWED to an SSRF-aware friendly message", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(422, {
+        error_code: "URL_NOT_ALLOWED",
+        message: "blocked",
+        correlation_id: "corr-1",
+      })
+    );
+
+    const state = await addKnowledgeUrl(
+      { status: "idle" },
+      buildUrlFormData({ url: "https://internal.example/" })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.message).toMatch(/private\/internal address/i);
+    }
+  });
+
+  it("maps URL_FETCH_FAILED to a friendly message", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(422, {
+        error_code: "URL_FETCH_FAILED",
+        message: "timeout",
+        correlation_id: "corr-2",
+      })
+    );
+
+    const state = await addKnowledgeUrl(
+      { status: "idle" },
+      buildUrlFormData({ url: "https://example.com/" })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.message).toMatch(/couldn't reach that website/i);
+    }
+  });
+
+  it("maps URL_TOO_LARGE to a friendly message", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(422, {
+        error_code: "URL_TOO_LARGE",
+        message: "too big",
+        correlation_id: "corr-3",
+      })
+    );
+
+    const state = await addKnowledgeUrl(
+      { status: "idle" },
+      buildUrlFormData({ url: "https://example.com/" })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.message).toMatch(/too large to ingest/i);
+    }
+  });
+
+  it("maps a 403 to a permission message", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(403, {
+        error_code: "ROLE_NOT_PERMITTED",
+        message: "nope",
+        correlation_id: "corr-4",
+      })
+    );
+
+    const state = await addKnowledgeUrl(
+      { status: "idle" },
+      buildUrlFormData({ url: "https://example.com/" })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.message).toMatch(/permission/i);
+    }
+  });
+
+  it("maps a network throw to a generic error result", async () => {
+    adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const state = await addKnowledgeUrl(
+      { status: "idle" },
+      buildUrlFormData({ url: "https://example.com/" })
+    );
+
+    expect(state.status).toBe("error");
+    if (state.status === "error") {
+      expect(state.message).toMatch(/unable to reach the server/i);
     }
   });
 });

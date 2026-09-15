@@ -20,8 +20,10 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { getWorkspace } from "@/lib/workspace";
 import { getApiKeyInfo } from "@/lib/api-keys";
+import { getLlmConfig } from "@/lib/llm-config";
 import { WorkspaceSection } from "@/app/(protected)/workspace/workspace-section";
 import { ApiKeysSection } from "@/app/(protected)/workspace/api-keys-section";
+import { AiProviderSection } from "@/app/(protected)/workspace/ai-provider-section";
 import { AvailabilitySection } from "@/app/(protected)/workspace/availability-section";
 import { GoogleCalendarSection } from "@/app/(protected)/workspace/google-calendar-section";
 import { CalendlySection } from "@/app/(protected)/workspace/calendly-section";
@@ -45,6 +47,7 @@ const SETTINGS_RAIL_ROWS: readonly SettingsRailRow[] = [
   { kind: "link", key: "members", label: "Members", href: "/members" },
   { kind: "disabled", key: "billing", label: "Billing" },
   { kind: "anchor", key: "api-keys", label: "API keys", href: "#settings-api-keys" },
+  { kind: "anchor", key: "ai-provider", label: "AI provider", href: "#settings-ai-provider" },
   { kind: "link", key: "notifications", label: "Notifications", href: "/notifications" },
 ];
 
@@ -55,7 +58,11 @@ export default async function WorkspacePage({ searchParams }: WorkspacePageProps
   const justConnected = firstValue(params.calendar_connected) === "true";
   const callbackError = firstValue(params.calendar_error) ?? null;
 
-  const [workspaceResult, apiKeyResult] = await Promise.all([getWorkspace(), getApiKeyInfo()]);
+  const [workspaceResult, apiKeyResult, llmConfigResult] = await Promise.all([
+    getWorkspace(),
+    getApiKeyInfo(),
+    getLlmConfig(),
+  ]);
 
   return (
     <div className="flex flex-1 flex-col">
@@ -100,6 +107,14 @@ export default async function WorkspacePage({ searchParams }: WorkspacePageProps
           ) : (
             <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
               {apiKeyResult.message}
+            </p>
+          )}
+
+          {llmConfigResult.status === "ok" ? (
+            <AiProviderSection currentConfig={llmConfigResult.config} />
+          ) : (
+            <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+              {llmConfigResult.message}
             </p>
           )}
 

@@ -8,10 +8,12 @@ Every method:
 - Never returns or accepts ``tenant_id`` in its public return types; that is
   an internal filter only.
 
-Data model (migration 0010):
+Data model (migration 0010; ``source_url`` added in 0061):
 - ``knowledge_docs(tenant_id PK, doc_id PK, source, filename, content_type,
-  status, content_hash, storage_key, created_at, updated_at)``
-  UNIQUE (tenant_id, content_hash).
+  status, content_hash, storage_key, created_at, updated_at, source_url)``
+  UNIQUE (tenant_id, content_hash). ``source_url`` is only set for
+  ``source="url"`` docs (add-a-website feature) -- the page it was fetched
+  from; NULL for ``source="upload"``.
 - ``ingestion_runs(tenant_id PK, run_id PK, doc_id, status, chars_out, errors
   jsonb, started_at, finished_at, duration_ms)``.
 
@@ -66,6 +68,7 @@ class KnowledgeDoc:
     title: str | None = None
     description: str | None = None
     uploaded_by: str | None = None
+    source_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,7 @@ async def create_doc(
     title: str | None = None,
     description: str | None = None,
     uploaded_by: str | None = None,
+    source_url: str | None = None,
 ) -> KnowledgeDoc:
     """Insert a new ``knowledge_docs`` row with ``status='pending'``.
 
@@ -124,7 +128,8 @@ async def create_doc(
     ``description`` are admin-supplied, optional metadata (Knowledge Base
     list feature); ``uploaded_by`` is the uploading admin's user id
     (``AuthClaims.subject``) for provenance/display, never accepted from a
-    request body.
+    request body. ``source_url`` (add-a-website feature) is only set for
+    ``source="url"`` docs -- the page the doc was fetched from.
     """
     _reject_global(claims)
 
@@ -141,17 +146,19 @@ async def create_doc(
         title,
         description,
         uploaded_by,
+        source_url,
     ]
     await db.execute(
         "INSERT INTO knowledge_docs "
         "(tenant_id, doc_id, source, filename, content_type, status, "
-        " content_hash, storage_key, title, description, uploaded_by) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        " content_hash, storage_key, title, description, uploaded_by, source_url) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         *params,
     )
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
-        "storage_key, created_at, updated_at, title, description, uploaded_by "
+        "storage_key, created_at, updated_at, title, description, uploaded_by, "
+        "source_url "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND doc_id = $2",
         claims.tenant_id,
@@ -177,7 +184,8 @@ async def find_doc_by_hash(
 
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
-        "storage_key, created_at, updated_at, title, description, uploaded_by "
+        "storage_key, created_at, updated_at, title, description, uploaded_by, "
+        "source_url "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND content_hash = $2",
         claims.tenant_id,
@@ -196,7 +204,8 @@ async def get_doc(
 
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
-        "storage_key, created_at, updated_at, title, description, uploaded_by "
+        "storage_key, created_at, updated_at, title, description, uploaded_by, "
+        "source_url "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND doc_id = $2",
         claims.tenant_id,
@@ -222,7 +231,8 @@ async def list_docs(
 
     rows = await db.fetch(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
-        "storage_key, created_at, updated_at, title, description, uploaded_by "
+        "storage_key, created_at, updated_at, title, description, uploaded_by, "
+        "source_url "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 "
         "ORDER BY created_at DESC "
@@ -535,6 +545,7 @@ def _row_to_doc(row: Any) -> KnowledgeDoc:
         title=row.get("title"),
         description=row.get("description"),
         uploaded_by=row.get("uploaded_by"),
+        source_url=row.get("source_url"),
     )
 
 

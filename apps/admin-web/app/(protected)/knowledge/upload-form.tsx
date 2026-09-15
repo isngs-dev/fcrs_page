@@ -118,7 +118,13 @@ function precheckFile(file: File): string | null {
   return null;
 }
 
-function StatusPanel({
+/**
+ * Exported so `add-url-form.tsx` (add-a-website feature) can reuse this
+ * exact live-polling status UI for a URL-sourced doc -- it's already fully
+ * generic over docId/runId/docStatus/idempotent/tenantId, so it needs zero
+ * changes to serve a second source type.
+ */
+export function StatusPanel({
   docId,
   initialRunId,
   initialDocStatus,

@@ -180,11 +180,13 @@ def _make_doc_row(
     content_type: str = "text/plain",
     storage_key: str | None = None,
     status: str = "pending",
+    source: str = "upload",
+    source_url: str | None = None,
 ) -> dict[str, Any]:
     sk = storage_key or f"{tenant_id}/{doc_id}/sample.txt"
     return {
         "doc_id": doc_id,
-        "source": "upload",
+        "source": source,
         "filename": "sample.txt",
         "content_type": content_type,
         "status": status,
@@ -193,6 +195,7 @@ def _make_doc_row(
         "created_at": _NOW,
         "updated_at": _NOW,
         "tenant_id": tenant_id,
+        "source_url": source_url,
     }
 
 
@@ -323,6 +326,131 @@ async def test_ingest_document_success_path() -> None:
     # doc updated to 'parsed'.
     doc_updates = [e for e in db.executions if "KNOWLEDGE_DOCS" in e[0].upper()]
     assert any(e[1][0] == "parsed" for e in doc_updates)
+
+
+# ==============================================================================
+# URL source (add-a-website feature)
+# ==============================================================================
+
+
+async def test_ingest_document_url_source_fetches_and_stores() -> None:
+    """A source='url' doc fetches via fetch_url_safely (NOT storage.get --
+    the storage stub starts empty, so a wrongly-called storage.get would
+    raise FileNotFoundError and fail this test), writes what it fetched to
+    the doc's storage_key, then parses/succeeds exactly like an upload."""
+    _reset_modules()
+
+    html_bytes = b"<html><body><p>Widgets for sale.</p></body></html>"
+    storage_key = f"{_TENANT_ID}/{_DOC_ID}/example.com.html"
+    storage = _InMemoryStorage()  # deliberately empty -- nothing pre-stored
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.config import get_api_settings
+
+        get_api_settings.cache_clear()
+
+        llm_config_row = _make_llm_config_row()
+        db = _RecordingDatabase(
+            doc_row=_make_doc_row(
+                content_type="text/html",
+                storage_key=storage_key,
+                source="url",
+                source_url="https://example.com/",
+            ),
+            llm_config_row=llm_config_row,
+        )
+
+        fetch_mock = AsyncMock(return_value=html_bytes)
+        with (
+            patch("api.ingestion.tasks.get_storage", return_value=storage),
+            patch("api.ingestion.tasks.Database.connect", return_value=db),
+            patch("api.ingestion.tasks.provider_for", return_value=_StubEmbeddingProvider(dim=768)),
+            patch("api.ingestion.tasks.repo.replace_chunks"),
+            patch("api.ingestion.tasks.fetch_url_safely", fetch_mock),
+        ):
+            from common.auth import AuthClaims, Role  # noqa: PLC0415
+
+            from api.ingestion.tasks import _execute  # noqa: PLC0415
+
+            claims = AuthClaims(subject="system:ingestion", role=Role.CLIENT_ADMIN, tenant_id=_TENANT_ID)
+
+            class _FakeTask:
+                pass
+
+            result = await _execute(
+                _FakeTask(),  # type: ignore[arg-type]
+                db,  # type: ignore[arg-type]
+                claims,
+                _DOC_ID,
+                _RUN_ID,
+                storage,
+            )
+
+    assert result["status"] == "succeeded"
+    fetch_mock.assert_awaited_once()
+    assert fetch_mock.await_args.args[0] == "https://example.com/"
+    # The fetched bytes were written to the doc's own storage_key (enables
+    # "download original" unchanged) before parsing.
+    assert storage.get(storage_key) == html_bytes
+    assert (storage_key, html_bytes) in storage.puts
+
+    parsed_key = f"{_TENANT_ID}/{_DOC_ID}/parsed.txt"
+    assert b"Widgets for sale." in storage.get(parsed_key)
+
+
+async def test_ingest_document_url_fetch_failure_marks_failed_no_retry() -> None:
+    """fetch_url_safely raising ValidationError (e.g. URL_NOT_ALLOWED on a
+    DNS-rebind, or URL_FETCH_FAILED) hits the SAME deterministic-failure
+    path a parse error already does: run/doc -> failed, task returns
+    cleanly (no uncaught exception -- Celery must NOT retry this)."""
+    _reset_modules()
+
+    from common.errors import ValidationError
+
+    storage_key = f"{_TENANT_ID}/{_DOC_ID}/example.com.html"
+    storage = _InMemoryStorage()
+    db = _RecordingDatabase(
+        doc_row=_make_doc_row(
+            content_type="text/html",
+            storage_key=storage_key,
+            source="url",
+            source_url="https://example.com/",
+        )
+    )
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        fetch_mock = AsyncMock(side_effect=ValidationError("blocked", code="URL_NOT_ALLOWED"))
+        with (
+            patch("api.ingestion.tasks.get_storage", return_value=storage),
+            patch("api.ingestion.tasks.Database.connect", return_value=db),
+            patch("api.ingestion.tasks.fetch_url_safely", fetch_mock),
+        ):
+            from common.auth import AuthClaims, Role  # noqa: PLC0415
+
+            from api.ingestion.tasks import _execute  # noqa: PLC0415
+
+            claims = AuthClaims(subject="system:ingestion", role=Role.CLIENT_ADMIN, tenant_id=_TENANT_ID)
+
+            class _FakeTask:
+                pass
+
+            result = await _execute(
+                _FakeTask(),  # type: ignore[arg-type]
+                db,  # type: ignore[arg-type]
+                claims,
+                _DOC_ID,
+                _RUN_ID,
+                storage,
+            )
+
+    assert result["status"] == "failed"
+    run_updates = [e for e in db.executions if "INGESTION_RUNS" in e[0].upper()]
+    assert "failed" in [e[1][0] for e in run_updates]
+    doc_updates = [e for e in db.executions if "KNOWLEDGE_DOCS" in e[0].upper()]
+    assert any(e[1][0] == "failed" for e in doc_updates)
+    # Never fell through to storage.get (would raise FileNotFoundError on
+    # this empty stub) -- confirms the branch never tries the upload path.
+    assert storage.puts == []
 
 
 # ==============================================================================

@@ -1,6 +1,18 @@
 """Ingestion endpoints — upload + read.
 
-Both endpoints require ``CLIENT_ADMIN`` (RBAC, CLAUDE.md §3).
+All endpoints require ``CLIENT_ADMIN`` (RBAC, CLAUDE.md §3).
+
+POST /admin/ingestion/url
+    (Add-a-website feature) Body ``{url, title?, description?}``. Validates
+    the URL is safe to fetch (``api.ingestion.url_safety.validate_url`` --
+    422 ``URL_NOT_ALLOWED`` before any DB write for a disallowed scheme/
+    host), computes ``content_hash = sha256(normalize_url(url))`` for the
+    SAME idempotent-resubmit short-circuit ``/upload`` uses, inserts
+    ``knowledge_docs`` (``source="url"``, ``content_type="text/html"``) +
+    ``ingestion_runs``, enqueues ``ingestion.ingest_document`` (which
+    fetches the page and stores it, then runs the identical parse/chunk/
+    embed pipeline). Deliberately CLIENT_ADMIN-only with no tenant-scoped
+    platform-admin mirror -- see ``_ingest_url``'s docstring.
 
 POST /admin/ingestion/upload
     Multipart ``file`` field. Validates size and content type, computes
@@ -52,7 +64,9 @@ DELETE /admin/ingestion/docs/{doc_id}
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from common.auth import AuthClaims, Role
@@ -60,6 +74,7 @@ from common.errors import InternalServerError, NotFoundError, ValidationError
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Form, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
@@ -68,6 +83,7 @@ from api.config import get_api_settings
 from api.ingestion import repository as repo
 from api.ingestion.storage import get_storage
 from api.ingestion.tasks import ingest_document
+from api.ingestion.url_safety import normalize_url, validate_url
 
 _log = get_logger(__name__)
 
@@ -232,6 +248,118 @@ async def upload_document_for_tenant(
 ) -> Any:
     """PLATFORM_ADMIN super-user variant of ``POST /admin/ingestion/upload`` (S12.7)."""
     return await _upload_document(file, request, claims, title=title, description=description)
+
+
+class IngestUrlRequest(BaseModel):
+    """Body for POST /admin/ingestion/url (add-a-website feature)."""
+
+    url: str = Field(min_length=1, max_length=2048)
+    title: str | None = None
+    description: str | None = None
+
+
+def _synthesize_filename(hostname: str, path: str) -> str:
+    """A stable, human-readable filename for a URL doc (knowledge_docs
+    .filename is NOT NULL) -- e.g. "example.com-pricing.html". Truncated so
+    it never exceeds a sane length regardless of URL path length."""
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", path).strip("-")
+    base = f"{hostname}-{slug}" if slug else hostname
+    return f"{base[:120]}.html"
+
+
+async def _ingest_url(
+    body: IngestUrlRequest,
+    request: Request,
+    claims: AuthClaims,
+) -> Any:
+    """Accept a website URL, validate it, and enqueue the ingestion task.
+
+    Mirrors ``_upload_document``'s exact shape. Idempotency reuses the
+    existing content-hash mechanism unmodified: ``content_hash =
+    sha256(normalize_url(url))`` (there's nothing to hash from the page
+    itself before it's fetched), so re-submitting the same URL hits the
+    same ``find_doc_by_hash`` short-circuit an identical re-upload would.
+
+    422 ``URL_NOT_ALLOWED`` for a disallowed scheme/host (private, loopback,
+    etc. -- see ``url_safety.validate_url``), raised BEFORE any DB write or
+    enqueue, so an obviously-blocked URL is rejected immediately rather than
+    failing asynchronously in the worker.
+    """
+    db = request.app.state.db
+
+    normalized = normalize_url(body.url)
+    validate_url(normalized)  # raises ValidationError(URL_NOT_ALLOWED) if unsafe
+
+    parts = urlsplit(normalized)
+    content_hash = hashlib.sha256(normalized.encode()).hexdigest()
+
+    existing = await repo.find_doc_by_hash(db, claims, content_hash)
+    if existing is not None:
+        _log.info("document_url_idempotent", extra={"event": "document_url_idempotent"})
+        return {
+            "doc_id": existing.doc_id,
+            "run_id": None,
+            "status": existing.status,
+        }
+
+    doc_id = uuid4().hex
+    filename = _synthesize_filename(parts.hostname or "page", parts.path)
+    storage_key = f"{claims.tenant_id}/{doc_id}/{filename}"
+
+    await repo.create_doc(
+        db,
+        claims,
+        source="url",
+        filename=filename,
+        content_type="text/html",
+        content_hash=content_hash,
+        storage_key=storage_key,
+        doc_id=doc_id,
+        title=_normalize_optional_text(body.title),
+        description=_normalize_optional_text(body.description),
+        uploaded_by=claims.subject,
+        source_url=normalized,
+    )
+    run = await repo.create_run(db, claims, doc_id=doc_id)
+
+    from common.logging import _correlation_id  # noqa: PLC2701, PLC0415
+
+    cid = _correlation_id.get() or ""
+    ingest_document.delay(
+        doc_id=doc_id,
+        tenant_id=claims.tenant_id,
+        run_id=run.run_id,
+        correlation_id=cid,
+    )
+
+    await record_audit(
+        db,
+        claims,
+        action="document_url_added",
+        target_type="knowledge_doc",
+        target_id=doc_id,
+        metadata={"source_url": normalized},
+        actor_context=get_platform_admin_actor(request),
+    )
+
+    _log.info("document_url_added", extra={"event": "document_url_added"})
+
+    return {"doc_id": doc_id, "run_id": run.run_id, "status": "pending"}
+
+
+@router.post("/url", response_model=None)
+async def ingest_url(
+    body: IngestUrlRequest,
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> Any:
+    """CLIENT_ADMIN only -- deliberately no ``resolve_tenant_scope`` platform-
+    admin mirror (unlike ``/upload``'s dual-route pattern): platform admins
+    lost knowledge-mutation capability entirely (S13.7, see ``clients/
+    [tenantId]/knowledge/page.tsx``'s header comment), and this is new
+    capability, not a pre-existing one being preserved -- adding a
+    tenant-scoped mirror here would reopen that closed door."""
+    return await _ingest_url(body, request, claims)
 
 
 async def _list_documents(request: Request, claims: AuthClaims) -> dict[str, Any]:

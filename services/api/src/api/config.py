@@ -91,6 +91,11 @@ class ApiSettings(Settings):
     storage_s3_access_key_id: str | None = None
     storage_s3_secret_access_key: str | None = None
     ingestion_max_upload_bytes: int = 10_485_760
+    # Add-a-website feature: max bytes read from a scraped page's response
+    # (streamed, aborts once exceeded) and the fetch timeout, mirroring
+    # ingestion_max_upload_bytes's own pattern for the URL-fetch path.
+    ingestion_url_fetch_max_bytes: int = 5_242_880
+    ingestion_url_fetch_timeout_seconds: float = 15.0
 
     # Embedding / chunking (S5.3).
     # embedding_dimension: must match the vector(N) column in knowledge_chunks.

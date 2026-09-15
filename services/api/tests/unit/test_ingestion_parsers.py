@@ -160,6 +160,90 @@ def test_parse_docx_garbage_raises_parse_error() -> None:
 
 
 # ==============================================================================
+# text/html (add-a-website feature)
+# ==============================================================================
+
+
+def test_parse_html_extracts_visible_text() -> None:
+    """Basic HTML: visible text in the body is extracted."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.parsers import parse
+
+        html = b"<html><body><h1>Welcome</h1><p>We sell widgets.</p></body></html>"
+        result = parse("text/html", html)
+        assert "Welcome" in result
+        assert "We sell widgets." in result
+
+
+def test_parse_html_strips_boilerplate_tags() -> None:
+    """script/style/nav/header/footer/aside/form/noscript content is dropped
+    entirely, not just their tags -- so nav links and inline scripts never
+    pollute what gets chunked/embedded."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.parsers import parse
+
+        html = (
+            b"<html><body>"
+            b"<nav>Home | About | Contact</nav>"
+            b"<script>var x = 'tracking-pixel-id';</script>"
+            b"<style>.foo { color: red; }</style>"
+            b"<header>Site Header</header>"
+            b"<main><p>Actual page content.</p></main>"
+            b"<footer>Copyright 2026</footer>"
+            b"<aside>Related links</aside>"
+            b"<form><input name='email'></form>"
+            b"<noscript>Enable JS</noscript>"
+            b"</body></html>"
+        )
+        result = parse("text/html", html)
+        assert "Actual page content." in result
+        for boilerplate in (
+            "Home | About | Contact",
+            "tracking-pixel-id",
+            "Site Header",
+            "Copyright 2026",
+            "Related links",
+            "Enable JS",
+        ):
+            assert boilerplate not in result
+
+
+def test_parse_html_normalizes_whitespace() -> None:
+    """Multiple spaces/blank lines collapse, same as _parse_text_plain."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.parsers import parse
+
+        html = b"<html><body><p>hello   world</p>\n\n\n\n<p>foo</p></body></html>"
+        result = parse("text/html", html)
+        assert "  " not in result
+        assert result.count("\n\n\n") == 0
+
+
+def test_parse_html_empty_page_returns_empty_string() -> None:
+    """An HTML page with no visible text -> empty string, no crash."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.parsers import parse
+
+        result = parse("text/html", b"<html><head></head><body></body></html>")
+        assert result == ""
+
+
+def test_parse_html_tolerates_malformed_markup() -> None:
+    """Unclosed tags / malformed HTML don't crash (html.parser is lenient)."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.parsers import parse
+
+        result = parse("text/html", b"<html><body><p>Unclosed paragraph<div>Nested</html>")
+        assert "Unclosed paragraph" in result
+        assert "Nested" in result
+
+
+# ==============================================================================
 # Unknown content type
 # ==============================================================================
 

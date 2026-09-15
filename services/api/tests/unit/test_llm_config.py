@@ -16,7 +16,7 @@ from common.crypto import SecretBox
 from common.errors import ValidationError
 
 from api.config import get_api_settings
-from api.llm.config_repository import get_llm_config, upsert_llm_config
+from api.llm.config_repository import get_llm_config, get_llm_config_summary, upsert_llm_config
 
 # -- Test doubles --------------------------------------------------------------
 
@@ -630,3 +630,189 @@ async def test_api_key_never_echoed_in_config() -> None:
     # "safe to echo" fields.
     safe_fields = {config.provider, config.model, config.embedding_model, config.base_url, config.api_version}
     assert "sk-super-secret" not in safe_fields
+
+
+# ==============================================================================
+# AI provider settings feature: optional api_key on update, required on
+# first-ever config
+# ==============================================================================
+
+
+async def test_upsert_requires_api_key_on_first_config() -> None:
+    """No existing row + api_key omitted -> ValidationError(API_KEY_REQUIRED),
+    and the write never happens (only the existence-check SELECT ran)."""
+    db = _RecordingDatabase(rows=[])  # no existing row
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await upsert_llm_config(db, claims, provider="openai", model="gpt-4o", api_key=None)
+
+    assert exc_info.value.code == "API_KEY_REQUIRED"
+    # Only the existence-check SELECT happened -- no INSERT/UPDATE.
+    assert "SELECT" in db.last_sql.upper()
+
+
+async def test_upsert_blank_api_key_preserves_existing_on_update() -> None:
+    """An existing row + api_key omitted -> the write proceeds (no error),
+    binding NULL for the ciphertext param so SQL's COALESCE keeps the old
+    value -- never overwrites it with NULL."""
+    existing_row = {"tenant_id": "tenant-a"}  # existence-check only cares it's non-None
+    db = _RecordingDatabase(rows=[existing_row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await upsert_llm_config(db, claims, provider="openai", model="gpt-4o-mini", api_key=None)
+
+    assert db.last_params[3] is None  # bound ciphertext param
+    assert "COALESCE" in db.last_sql
+    assert "api_key_ciphertext" in db.last_sql
+
+
+async def test_upsert_blank_embedding_api_key_preserves_existing_on_update() -> None:
+    """Same preserve-on-blank treatment for embedding_api_key."""
+    existing_row = {"tenant_id": "tenant-a"}
+    db = _RecordingDatabase(rows=[existing_row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await upsert_llm_config(
+        db, claims, provider="openai", model="gpt-4o-mini", api_key=None, embedding_api_key=None,
+    )
+
+    assert db.last_params[8] is None  # bound embedding ciphertext param
+    assert "COALESCE" in db.last_sql
+    assert "embedding_api_key_ciphertext" in db.last_sql
+
+
+async def test_upsert_new_api_key_on_update_still_overwrites() -> None:
+    """A real (non-blank) api_key on an update still encrypts + overwrites,
+    exactly like before this feature -- optionality never blocks a real
+    key rotation."""
+    existing_row = {"tenant_id": "tenant-a"}
+    db = _RecordingDatabase(rows=[existing_row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+    new_key = "sk-rotated-key"
+
+    await upsert_llm_config(db, claims, provider="openai", model="gpt-4o", api_key=new_key)
+
+    ciphertext = db.last_params[3]
+    assert ciphertext is not None
+    box = SecretBox(get_api_settings().secret_encryption_key)
+    assert box.decrypt_str(ciphertext) == new_key
+
+
+# ==============================================================================
+# get_llm_config_summary: display-safe read, never key material
+# ==============================================================================
+
+
+async def test_get_llm_config_summary_returns_none_when_unconfigured() -> None:
+    db = _RecordingDatabase(rows=[])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    summary = await get_llm_config_summary(db, claims)
+
+    assert summary is None
+
+
+async def test_get_llm_config_summary_reports_has_api_key_true_when_set() -> None:
+    row = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": "text-embedding-3-small",
+        "embedding_base_url": None,
+        "embedding_dimensions": 768,
+        "has_api_key": True,
+        "has_embedding_api_key": False,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    summary = await get_llm_config_summary(db, claims)
+
+    assert summary is not None
+    assert summary.provider == "openai"
+    assert summary.model == "gpt-4o"
+    assert summary.embedding_model == "text-embedding-3-small"
+    assert summary.embedding_dimensions == 768
+    assert summary.has_api_key is True
+    assert summary.has_embedding_api_key is False
+
+
+async def test_get_llm_config_summary_reports_has_embedding_api_key_true_when_set() -> None:
+    row = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": None,
+        "embedding_base_url": None,
+        "embedding_dimensions": None,
+        "has_api_key": True,
+        "has_embedding_api_key": True,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    summary = await get_llm_config_summary(db, claims)
+
+    assert summary is not None
+    assert summary.has_embedding_api_key is True
+
+
+async def test_get_llm_config_summary_never_returns_key_material() -> None:
+    """The SELECT this function issues must never even ask for the
+    ciphertext columns -- a defense-in-depth check on the query text
+    itself, on top of the dataclass shape check."""
+    row = {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": None,
+        "embedding_base_url": None,
+        "embedding_dimensions": None,
+        "has_api_key": True,
+        "has_embedding_api_key": False,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    summary = await get_llm_config_summary(db, claims)
+
+    assert summary is not None
+    # Never selects the raw ciphertext column names as plain SELECT targets.
+    assert "SELECT api_key_ciphertext" not in db.last_sql
+    assert "SELECT embedding_api_key_ciphertext" not in db.last_sql
+    # The dataclass itself has no field that could carry key material.
+    assert not hasattr(summary, "api_key")
+    assert not hasattr(summary, "embedding_api_key")
+
+
+async def test_get_llm_config_summary_filters_by_tenant_id() -> None:
+    row = {
+        "provider": "anthropic",
+        "model": "claude-opus-4-8",
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": None,
+        "embedding_base_url": None,
+        "embedding_dimensions": None,
+        "has_api_key": True,
+        "has_embedding_api_key": False,
+    }
+    db = _RecordingDatabase(rows=[row])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    await get_llm_config_summary(db, claims)
+
+    assert "tenant_id" in db.last_sql
+    assert db.last_params[0] == "tenant-a"
+
+
+async def test_get_llm_config_summary_rejects_platform_admin() -> None:
+    db = _RecordingDatabase()
+    claims = _claims(None, Role.PLATFORM_ADMIN)
+
+    with pytest.raises(ValidationError):
+        await get_llm_config_summary(db, claims)

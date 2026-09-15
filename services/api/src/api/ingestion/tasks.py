@@ -58,6 +58,7 @@ from api.ingestion import repository as repo
 from api.ingestion.chunker import chunk_text
 from api.ingestion.parsers import parse
 from api.ingestion.storage import StorageProvider, get_storage
+from api.ingestion.url_safety import fetch_url_safely
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import LLMError
@@ -191,8 +192,26 @@ async def _execute(
     t0 = time.monotonic()
 
     try:
-        # Step 3 — load bytes from storage.
-        raw_bytes: bytes = storage.get(doc.storage_key)
+        # Step 3 — get raw bytes. Uploads read stored bytes; a "url" doc
+        # (add-a-website feature) fetches the page live and writes what it
+        # fetched to the same storage_key (first write -- the route doesn't
+        # have the bytes yet, only the worker does), so "download original"
+        # and the delete-cleanup path work unchanged either way.
+        raw_bytes: bytes
+        if doc.source == "url":
+            if doc.source_url is None:
+                # Programming error (the route always sets source_url for a
+                # "url" doc) -- not a ValidationError, so it propagates
+                # uncaught and Celery retries per the transient-error path.
+                raise RuntimeError(f"Doc {doc_id!r} has source='url' but no source_url.")
+            raw_bytes = await fetch_url_safely(
+                doc.source_url,
+                max_bytes=settings.ingestion_url_fetch_max_bytes,
+                timeout_seconds=settings.ingestion_url_fetch_timeout_seconds,
+            )
+            storage.put(doc.storage_key, raw_bytes)
+        else:
+            raw_bytes = storage.get(doc.storage_key)
 
         # Step 4 — parse.
         parsed_text = parse(doc.content_type, raw_bytes)

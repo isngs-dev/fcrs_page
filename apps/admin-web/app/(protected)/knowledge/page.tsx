@@ -33,6 +33,7 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { listCoverageGaps, listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
 import { UploadForm } from "@/app/(protected)/knowledge/upload-form";
+import { AddUrlForm } from "@/app/(protected)/knowledge/add-url-form";
 import { KnowledgeDocList } from "@/app/(protected)/knowledge/doc-list";
 import { CoverageGaps } from "@/app/(protected)/knowledge/coverage-gaps";
 import { TestBotChat } from "@/app/(protected)/knowledge/test-bot-chat";
@@ -61,16 +62,29 @@ export default async function KnowledgePage() {
       </div>
 
       <div className="flex flex-col gap-[18px] lg:flex-row lg:items-start">
-        <SoftCard className="flex-1 px-6 pb-2 pt-1">
-          <h2 className="pt-4 pb-0.5 text-[16px] font-semibold text-foreground">Upload knowledge</h2>
-          <p className="mb-[18px] mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
-            .txt or .docx, up to 10 MiB. It is parsed, chunked, and embedded asynchronously -- the
-            status card below tracks the run&apos;s progress in real time.
-          </p>
-          <div className="pb-2">
-            <UploadForm />
-          </div>
-        </SoftCard>
+        <div className="flex flex-1 flex-col gap-[18px]">
+          <SoftCard className="px-6 pb-2 pt-1">
+            <h2 className="pt-4 pb-0.5 text-[16px] font-semibold text-foreground">Upload knowledge</h2>
+            <p className="mb-[18px] mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
+              .txt or .docx, up to 10 MiB. It is parsed, chunked, and embedded asynchronously -- the
+              status card below tracks the run&apos;s progress in real time.
+            </p>
+            <div className="pb-2">
+              <UploadForm />
+            </div>
+          </SoftCard>
+
+          <SoftCard className="px-6 pb-2 pt-1">
+            <h2 className="pt-4 pb-0.5 text-[16px] font-semibold text-foreground">Add a website</h2>
+            <p className="mb-[18px] mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
+              Fetches one page and adds its text to your knowledge base automatically -- add a URL
+              per page you want covered.
+            </p>
+            <div className="pb-2">
+              <AddUrlForm />
+            </div>
+          </SoftCard>
+        </div>
 
         <div className="flex w-full flex-none flex-col gap-[18px] lg:w-[360px]">
           <CoverageGaps result={gapsResult} />

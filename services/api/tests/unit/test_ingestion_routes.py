@@ -85,6 +85,7 @@ class _StubDatabase:
                 title,
                 description,
                 uploaded_by,
+                source_url,
             ) = args
             self._insert_seq += 1
             self._docs[(tenant_id, doc_id)] = {
@@ -98,6 +99,7 @@ class _StubDatabase:
                 "title": title,
                 "description": description,
                 "uploaded_by": uploaded_by,
+                "source_url": source_url,
                 "created_at": _NOW,
                 "updated_at": _NOW,
                 "tenant_id": tenant_id,
@@ -602,6 +604,237 @@ async def test_upload_no_cookie_returns_401() -> None:
             )
 
     assert resp.status_code == 401
+
+
+# ==============================================================================
+# POST /admin/ingestion/url (add-a-website feature)
+# ==============================================================================
+
+_PUBLIC_ADDRINFO = [(2, 1, 6, "", ("93.184.216.34", 443))]
+_PRIVATE_ADDRINFO = [(2, 1, 6, "", ("127.0.0.1", 443))]
+
+
+async def test_ingest_url_happy_path_returns_pending() -> None:
+    """A safe URL -> 200 {doc_id, run_id, status:'pending'}, task enqueued,
+    doc created with source='url'/content_type='text/html'."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with (
+            patch("api.ingestion.routes.ingest_document") as mock_task,
+            patch("api.ingestion.url_safety.socket.getaddrinfo", return_value=_PUBLIC_ADDRINFO),
+        ):
+            mock_task.delay = MagicMock(return_value=MagicMock(id="task-url-1"))
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/admin/ingestion/url",
+                    cookies={"access_token": token},
+                    json={"url": "https://example.com/pricing"},
+                )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "doc_id" in body
+    assert "run_id" in body
+    assert body["status"] == "pending"
+    assert mock_task.delay.called
+
+    stored = stub_db._docs[(_TENANT_ID, body["doc_id"])]
+    assert stored["source"] == "url"
+    assert stored["content_type"] == "text/html"
+    assert stored["source_url"] == "https://example.com/pricing"
+
+
+async def test_ingest_url_idempotent_resubmit_returns_existing_doc_id() -> None:
+    """Re-submitting the same URL returns the same doc_id; .delay called once."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        delay_call_count = 0
+
+        with (
+            patch("api.ingestion.routes.ingest_document") as mock_task,
+            patch("api.ingestion.url_safety.socket.getaddrinfo", return_value=_PUBLIC_ADDRINFO),
+        ):
+            def _counting_delay(**kwargs: Any) -> MagicMock:
+                nonlocal delay_call_count
+                delay_call_count += 1
+                return MagicMock(id="task-url-idem")
+
+            mock_task.delay = _counting_delay
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp1 = await client.post(
+                    "/admin/ingestion/url",
+                    cookies={"access_token": token},
+                    json={"url": "https://example.com/pricing"},
+                )
+                resp2 = await client.post(
+                    "/admin/ingestion/url",
+                    cookies={"access_token": token},
+                    json={"url": "https://example.com/pricing"},
+                )
+
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+    assert resp1.json()["doc_id"] == resp2.json()["doc_id"]
+    assert resp2.json()["run_id"] is None
+    assert delay_call_count == 1
+
+
+async def test_ingest_url_blocked_host_returns_422_no_doc_created_no_enqueue() -> None:
+    """A URL resolving to a private/internal address -> 422 URL_NOT_ALLOWED,
+    BEFORE any doc/run row is created or the task is enqueued."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie()
+
+        with (
+            patch("api.ingestion.routes.ingest_document") as mock_task,
+            patch("api.ingestion.url_safety.socket.getaddrinfo", return_value=_PRIVATE_ADDRINFO),
+        ):
+            mock_task.delay = MagicMock()
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.post(
+                    "/admin/ingestion/url",
+                    cookies={"access_token": token},
+                    json={"url": "https://internal.example/"},
+                )
+
+    assert resp.status_code == 422
+    assert resp.json()["error_code"] == "URL_NOT_ALLOWED"
+    assert stub_db._docs == {}
+    assert not mock_task.delay.called
+
+
+async def test_ingest_url_client_agent_returns_403() -> None:
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.CLIENT_AGENT)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/admin/ingestion/url",
+                cookies={"access_token": token},
+                json={"url": "https://example.com/"},
+            )
+
+    assert resp.status_code == 403
+
+
+async def test_ingest_url_visitor_returns_403() -> None:
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.VISITOR)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/admin/ingestion/url",
+                cookies={"access_token": token},
+                json={"url": "https://example.com/"},
+            )
+
+    assert resp.status_code == 403
+
+
+async def test_ingest_url_global_platform_admin_returns_403() -> None:
+    """PLATFORM_ADMIN (global, tenant_id=None) -> 403, not a silent 422/500.
+    Confirms the implicit route stayed CLIENT_ADMIN-only."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/admin/ingestion/url",
+                cookies={"access_token": token},
+                json={"url": "https://example.com/"},
+            )
+
+    assert resp.status_code == 403
+
+
+async def test_ingest_url_no_cookie_returns_401() -> None:
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/admin/ingestion/url",
+                json={"url": "https://example.com/"},
+            )
+
+    assert resp.status_code == 401
+
+
+async def test_ingest_url_has_deliberately_no_tenant_scoped_mirror_route() -> None:
+    """Unlike /upload, there is NO PLATFORM_ADMIN tenant-scoped mirror for
+    this route (S13.7: platform admins don't get new knowledge-mutation
+    capability) -- confirm it's genuinely absent, not just unauthorized."""
+    _reset_modules()
+
+    stub_db = _StubDatabase()
+
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        app = _build_app(stub_db)
+        token = _mint_cookie(role=Role.PLATFORM_ADMIN, tenant_id=None)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                f"/admin/tenants/{_TENANT_ID}/ingestion/url",
+                cookies={"access_token": token},
+                json={"url": "https://example.com/"},
+            )
+
+    assert resp.status_code == 404
 
 
 # ==============================================================================

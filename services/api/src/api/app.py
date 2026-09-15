@@ -222,6 +222,7 @@ def create_app() -> FastAPI:
     from api.leads.admin_routes import tenant_scoped_router as leads_admin_tenant_router
     from api.leads.identity_routes import router as identity_router
     from api.leads.routes import router as leads_router
+    from api.llm.admin_routes import router as admin_llm_router
     from api.llm.routes import router as llm_router
     from api.notifications.admin_routes import router as notifications_admin_router
     from api.notifications.admin_routes import (
@@ -250,6 +251,7 @@ def create_app() -> FastAPI:
     app.include_router(calls_admin_router)
     app.include_router(calls_webhook_router)
     app.include_router(admin_api_keys_router)
+    app.include_router(admin_llm_router)
     app.include_router(admin_assignment_router)
     app.include_router(admin_router)
     app.include_router(admin_settings_router)

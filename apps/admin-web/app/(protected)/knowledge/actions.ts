@@ -198,6 +198,133 @@ function mapUploadError(err: AdminApiError): UploadErrorState {
 }
 
 // ---------------------------------------------------------------------------
+// addKnowledgeUrl (add-a-website feature)
+// ---------------------------------------------------------------------------
+
+/** Courtesy client/server pre-check only -- the real gate is the backend's
+ * `url_safety.validate_url` (scheme + DNS/private-IP checks); this just
+ * catches an obviously-empty/malformed submission before a round trip. */
+const URL_SHAPE_PATTERN = /^https?:\/\/[^\s]+$/i;
+
+interface AdminIngestUrlResponseBody {
+  doc_id: string;
+  run_id: string | null;
+  status: string;
+}
+
+/**
+ * Adds a website URL as a new knowledge source: `POST /admin/ingestion/url`.
+ * Returns the SAME `UploadState` union `uploadKnowledge` does, so the
+ * existing `<StatusPanel>` needs no new prop shape to render either source.
+ * CLIENT_ADMIN-only, no `tenantId` bind (deliberately no platform-admin
+ * mirror route -- see `services/api/src/api/ingestion/routes.py`'s
+ * `ingest_url` docstring).
+ */
+export async function addKnowledgeUrl(
+  _prevState: UploadState,
+  formData: FormData
+): Promise<UploadState> {
+  const url = String(formData.get("url") ?? "").trim();
+
+  if (!url || !URL_SHAPE_PATTERN.test(url)) {
+    return {
+      status: "error",
+      message: "Enter a valid http:// or https:// URL.",
+      correlationId: null,
+    };
+  }
+
+  const title = formData.get("title");
+  const description = formData.get("description");
+  const body: Record<string, unknown> = { url };
+  if (typeof title === "string" && title.trim()) body.title = title.trim();
+  if (typeof description === "string" && description.trim()) {
+    body.description = description.trim();
+  }
+
+  let response: Response;
+  try {
+    response = await adminApiFetch("/admin/ingestion/url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      return mapAddUrlError(err);
+    }
+    return {
+      status: "error",
+      message: GENERIC_NETWORK_ERROR,
+      correlationId: null,
+    };
+  }
+
+  const responseBody = (await response.json()) as AdminIngestUrlResponseBody;
+
+  if (responseBody.run_id !== null) {
+    revalidatePath("/knowledge");
+  }
+
+  return {
+    status: "uploaded",
+    docId: responseBody.doc_id,
+    runId: responseBody.run_id,
+    docStatus: responseBody.status,
+    idempotent: responseBody.run_id === null,
+  };
+}
+
+function mapAddUrlError(err: AdminApiError): UploadErrorState {
+  if (err.errorCode === "URL_NOT_ALLOWED") {
+    return {
+      status: "error",
+      message:
+        "That URL can't be used (it points to a private/internal address, or isn't reachable).",
+      correlationId: err.correlationId || null,
+    };
+  }
+
+  if (err.errorCode === "URL_FETCH_FAILED") {
+    return {
+      status: "error",
+      message: "Couldn't reach that website. Check the URL and try again.",
+      correlationId: err.correlationId || null,
+    };
+  }
+
+  if (err.errorCode === "URL_TOO_LARGE") {
+    return {
+      status: "error",
+      message: "That page is too large to ingest.",
+      correlationId: err.correlationId || null,
+    };
+  }
+
+  if (err.status === 403 || err.errorCode === "ROLE_NOT_PERMITTED") {
+    return {
+      status: "error",
+      message: "You do not have permission to add a website to the knowledge base.",
+      correlationId: err.correlationId || null,
+    };
+  }
+
+  if (err.status === 401) {
+    return {
+      status: "error",
+      message: "Your session has expired. Please sign in again.",
+      correlationId: err.correlationId || null,
+    };
+  }
+
+  return {
+    status: "error",
+    message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
+    correlationId: err.correlationId || null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // getDocStatus
 // ---------------------------------------------------------------------------
 

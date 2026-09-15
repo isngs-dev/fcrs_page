@@ -87,6 +87,7 @@ class _StubDatabase:
                 title,
                 description,
                 uploaded_by,
+                source_url,
             ) = args
             self._insert_seq += 1
             self._docs[(tenant_id, doc_id)] = {
@@ -100,6 +101,7 @@ class _StubDatabase:
                 "title": title,
                 "description": description,
                 "uploaded_by": uploaded_by,
+                "source_url": source_url,
                 "created_at": _NOW,
                 "updated_at": _NOW,
                 "tenant_id": tenant_id,
@@ -415,6 +417,60 @@ async def test_create_doc_title_description_uploaded_by_default_to_none() -> Non
     assert doc.title is None
     assert doc.description is None
     assert doc.uploaded_by is None
+    assert doc.source_url is None
+
+
+async def test_create_doc_persists_source_url_for_url_docs() -> None:
+    """create_doc stores and round-trips source_url (add-a-website feature)."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import create_doc
+
+        db = _StubDatabase()
+        claims = _admin_claims()
+        doc = await create_doc(
+            db,  # type: ignore[arg-type]
+            claims,
+            source="url",
+            filename="example.com-pricing.html",
+            content_type="text/html",
+            content_hash="urlhash123",
+            storage_key="tenant-alpha/doc1/example.com-pricing.html",
+            doc_id="doc1",
+            source_url="https://example.com/pricing",
+        )
+    assert doc.source == "url"
+    assert doc.source_url == "https://example.com/pricing"
+
+
+async def test_get_doc_and_find_doc_by_hash_include_source_url() -> None:
+    """source_url survives a get_doc/find_doc_by_hash round trip too, not
+    just the create_doc return value."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.ingestion.repository import create_doc, find_doc_by_hash, get_doc
+
+        db = _StubDatabase()
+        claims = _admin_claims()
+        await create_doc(
+            db,  # type: ignore[arg-type]
+            claims,
+            source="url",
+            filename="example.com.html",
+            content_type="text/html",
+            content_hash="urlhash456",
+            storage_key="tenant-alpha/doc1/example.com.html",
+            doc_id="doc1",
+            source_url="https://example.com/",
+        )
+
+        fetched = await get_doc(db, claims, "doc1")  # type: ignore[arg-type]
+        found = await find_doc_by_hash(db, claims, "urlhash456")  # type: ignore[arg-type]
+
+    assert fetched is not None
+    assert fetched.source_url == "https://example.com/"
+    assert found is not None
+    assert found.source_url == "https://example.com/"
 
 
 async def test_get_doc_and_find_doc_by_hash_include_new_fields() -> None:
