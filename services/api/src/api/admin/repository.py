@@ -33,9 +33,13 @@ from common.auth import AuthClaims, Role
 from common.crypto import hash_password
 from common.db import Database
 from common.errors import AuthorizationError, NotFoundError, ValidationError
+from common.logging import get_logger
 from common.tenancy import require_role
 
 from api.auth.repository import get_user_by_id
+from api.llm.config_repository import copy_most_recent_llm_config_to_tenant
+
+_log = get_logger(__name__)
 
 _CLIENT_KEY_PREFIX = "pk_"  # noqa: S105
 _CLIENT_KEY_RANDOM_BYTES = 24
@@ -298,6 +302,23 @@ async def create_tenant_for_own_account(
         client_key_hash,
         tenant_id,
     )
+
+    # Best-effort default: pre-fill the new chatbot's LLM/embedding config
+    # from the account's most-recently-updated sibling chatbot, if any (user
+    # request -- otherwise every new chatbot starts unconfigured and hits
+    # EMBEDDING_NOT_CONFIGURED until someone visits /admin/llm/config
+    # manually). Never blocks chatbot creation on failure -- this is a
+    # convenience default, not data integrity; the tenant + client key above
+    # are already durably created regardless of what happens here.
+    try:
+        await copy_most_recent_llm_config_to_tenant(
+            db, account_id=account_id, new_tenant_id=tenant_id
+        )
+    except Exception:
+        _log.warning(
+            "failed to copy sibling LLM config to new chatbot",
+            extra={"event": "llm_config_copy_failed", "tenant_id": tenant_id},
+        )
 
     return {
         "tenant_id": tenant_id,

@@ -138,6 +138,67 @@ async def get_llm_config_summary(db: Database, claims: AuthClaims) -> LLMConfigS
     )
 
 
+async def copy_most_recent_llm_config_to_tenant(
+    db: Database, *, account_id: str, new_tenant_id: str
+) -> bool:
+    """Best-effort default: when a new chatbot is created, copy the account's
+    most-recently-updated sibling chatbot's LLM config to it (provider,
+    model, both URLs, embedding fields, AND the encrypted key ciphertexts --
+    copied byte-for-byte, never decrypted/re-encrypted, since every tenant's
+    key is encrypted with the same platform-wide ``secret_encryption_key``,
+    not a per-tenant one).
+
+    Pre-fills a sensible starting point (editable via `/admin/llm/config`
+    immediately after) instead of leaving a brand-new chatbot with
+    ``EMBEDDING_NOT_CONFIGURED`` until someone manually sets it up --
+    accepted UX gap this closes, per the user's explicit request.
+
+    Scoped to ``account_id`` via a join on ``tenants.client_account_id`` --
+    can only ever copy from ANOTHER chatbot in the SAME account, never
+    across accounts. Returns ``True`` if a config was found and copied,
+    ``False`` if the account has no chatbot with a config yet (nothing to
+    copy -- not an error).
+
+    Not itself RBAC-checked (no ``AuthClaims`` param): this is an internal
+    helper called only from ``create_tenant_for_own_account`` right after
+    THAT function's own RBAC check and account resolution -- never exposed
+    as a route.
+    """
+    row = await db.fetchrow(
+        "SELECT c.provider, c.model, c.api_key_ciphertext, c.base_url, c.api_version, "
+        "c.embedding_model, c.embedding_base_url, c.embedding_api_key_ciphertext, "
+        "c.embedding_dimensions "
+        "FROM tenant_llm_configs c "
+        "JOIN tenants t ON t.id = c.tenant_id "
+        "WHERE t.client_account_id = $1 "
+        "ORDER BY c.updated_at DESC "
+        "LIMIT 1",
+        account_id,
+    )
+    if row is None:
+        return False
+
+    await db.execute(
+        "INSERT INTO tenant_llm_configs "
+        "(tenant_id, provider, model, api_key_ciphertext, base_url, api_version, "
+        "embedding_model, embedding_base_url, embedding_api_key_ciphertext, "
+        "embedding_dimensions) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) "
+        "ON CONFLICT (tenant_id) DO NOTHING",
+        new_tenant_id,
+        row["provider"],
+        row["model"],
+        row["api_key_ciphertext"],
+        row["base_url"],
+        row["api_version"],
+        row.get("embedding_model"),
+        row.get("embedding_base_url"),
+        row.get("embedding_api_key_ciphertext"),
+        row.get("embedding_dimensions"),
+    )
+    return True
+
+
 async def upsert_llm_config(
     db: Database,
     claims: AuthClaims,

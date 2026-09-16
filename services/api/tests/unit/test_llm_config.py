@@ -16,7 +16,12 @@ from common.crypto import SecretBox
 from common.errors import ValidationError
 
 from api.config import get_api_settings
-from api.llm.config_repository import get_llm_config, get_llm_config_summary, upsert_llm_config
+from api.llm.config_repository import (
+    copy_most_recent_llm_config_to_tenant,
+    get_llm_config,
+    get_llm_config_summary,
+    upsert_llm_config,
+)
 
 # -- Test doubles --------------------------------------------------------------
 
@@ -24,21 +29,31 @@ _TEST_ENCRYPTION_KEY = "x" * 48  # 48 chars, but SecretBox normalizes to 32 byte
 
 
 class _RecordingDatabase:
-    """Database double that records SQL + params."""
+    """Database double that records SQL + params.
+
+    ``calls`` keeps the FULL ordered call history (kind, query, params) --
+    ``last_sql``/``last_params`` (the original, pre-existing surface every
+    other test in this file uses) only reflect the MOST RECENT call, which
+    isn't enough once a function issues more than one statement (e.g.
+    ``copy_most_recent_llm_config_to_tenant``'s SELECT-then-INSERT).
+    """
 
     def __init__(self, *, rows: list[dict[str, Any]] | None = None) -> None:
         self.last_sql: str = ""
         self.last_params: tuple[Any, ...] = ()
+        self.calls: list[tuple[str, str, tuple[Any, ...]]] = []
         self._rows = rows or []
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         self.last_sql = query
         self.last_params = args
+        self.calls.append(("fetchrow", query, args))
         return self._rows[0] if self._rows else None
 
     async def execute(self, query: str, *args: Any) -> str:
         self.last_sql = query
         self.last_params = args
+        self.calls.append(("execute", query, args))
         return "INSERT 1"
 
     async def close(self) -> None:
@@ -816,3 +831,101 @@ async def test_get_llm_config_summary_rejects_platform_admin() -> None:
 
     with pytest.raises(ValidationError):
         await get_llm_config_summary(db, claims)
+
+
+# ==============================================================================
+# copy_most_recent_llm_config_to_tenant (default-copy-to-new-chatbot feature)
+# ==============================================================================
+
+
+def _sibling_config_row() -> dict[str, Any]:
+    box = SecretBox(get_api_settings().secret_encryption_key)
+    return {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "api_key_ciphertext": box.encrypt("sk-sibling-key"),
+        "base_url": "https://api.openai.com/v1",
+        "api_version": None,
+        "embedding_model": "text-embedding-3-small",
+        "embedding_base_url": None,
+        "embedding_api_key_ciphertext": box.encrypt("sk-sibling-embedding-key"),
+        "embedding_dimensions": 768,
+    }
+
+
+async def test_copy_llm_config_no_sibling_returns_false_no_insert() -> None:
+    """Account has no chatbot with a config yet -- a no-op, not an error."""
+    db = _RecordingDatabase(rows=[])
+
+    result = await copy_most_recent_llm_config_to_tenant(
+        db, account_id="account-a", new_tenant_id="tenant-new"
+    )
+
+    assert result is False
+    assert len(db.calls) == 1  # only the SELECT ran -- no INSERT
+    assert db.calls[0][0] == "fetchrow"
+
+
+async def test_copy_llm_config_found_copies_every_field_verbatim() -> None:
+    """Ciphertext columns copied byte-for-byte (never decrypted/re-encrypted
+    -- same platform-wide encryption key for every tenant)."""
+    row = _sibling_config_row()
+    db = _RecordingDatabase(rows=[row])
+
+    result = await copy_most_recent_llm_config_to_tenant(
+        db, account_id="account-a", new_tenant_id="tenant-new"
+    )
+
+    assert result is True
+    assert len(db.calls) == 2
+    assert db.calls[0][0] == "fetchrow"
+    insert_kind, insert_sql, insert_params = db.calls[1]
+    assert insert_kind == "execute"
+    assert "INSERT INTO tenant_llm_configs" in insert_sql
+    assert insert_params == (
+        "tenant-new",
+        row["provider"],
+        row["model"],
+        row["api_key_ciphertext"],
+        row["base_url"],
+        row["api_version"],
+        row["embedding_model"],
+        row["embedding_base_url"],
+        row["embedding_api_key_ciphertext"],
+        row["embedding_dimensions"],
+    )
+    # The ciphertext is the SAME string as the source -- not re-encrypted.
+    assert insert_params[3] == row["api_key_ciphertext"]
+    assert insert_params[8] == row["embedding_api_key_ciphertext"]
+
+
+async def test_copy_llm_config_select_scoped_to_account_id() -> None:
+    """The SELECT joins on tenants.client_account_id -- can only ever copy
+    from ANOTHER chatbot in the SAME account, never across accounts."""
+    row = _sibling_config_row()
+    db = _RecordingDatabase(rows=[row])
+
+    await copy_most_recent_llm_config_to_tenant(
+        db, account_id="account-a", new_tenant_id="tenant-new"
+    )
+
+    select_kind, select_sql, select_params = db.calls[0]
+    assert select_kind == "fetchrow"
+    assert "client_account_id" in select_sql
+    assert select_params == ("account-a",)
+
+
+async def test_copy_llm_config_never_overwrites_an_existing_row() -> None:
+    """ON CONFLICT (tenant_id) DO NOTHING -- defensive guard against ever
+    clobbering a config the new tenant might already have (e.g. a
+    theoretical double-call), never overwriting on copy."""
+    row = _sibling_config_row()
+    db = _RecordingDatabase(rows=[row])
+
+    await copy_most_recent_llm_config_to_tenant(
+        db, account_id="account-a", new_tenant_id="tenant-new"
+    )
+
+    _, insert_sql, _ = db.calls[1]
+    assert "ON CONFLICT" in insert_sql
+    assert "DO NOTHING" in insert_sql

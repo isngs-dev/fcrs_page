@@ -434,14 +434,18 @@ async def test_create_tenant_for_own_account_happy_path() -> None:
 
     result = await create_tenant_for_own_account(db, _CLIENT_ADMIN, name="Bot 2", slug="bot-2")
 
-    # Own-account resolution (fetchrow), tenant INSERT, client-key UPDATE.
-    assert len(db.calls) == 3
+    # Own-account resolution (fetchrow), tenant INSERT, client-key UPDATE,
+    # then copy_most_recent_llm_config_to_tenant's own-sibling-config SELECT
+    # (returns None here -- no sibling config seeded -- so no 5th INSERT).
+    assert len(db.calls) == 4
     assert db.calls[0].kind == "fetchrow"
     assert db.calls[1].kind == "execute"
     assert "INSERT INTO tenants" in db.calls[1].query
     assert db.calls[2].kind == "execute"
     assert "UPDATE tenants" in db.calls[2].query
     assert "client_key_hash" in db.calls[2].query
+    assert db.calls[3].kind == "fetchrow"
+    assert "tenant_llm_configs" in db.calls[3].query
 
     # The tenant is inserted under the CALLER'S OWN account, never a
     # caller-supplied one -- creates NO user (unlike create_tenant_with_admin).
@@ -453,6 +457,62 @@ async def test_create_tenant_for_own_account_happy_path() -> None:
     assert result["name"] == "Bot 2"
     assert result["slug"] == "bot-2"
     assert "admin_user_id" not in result
+
+
+# -- create_tenant_for_own_account: default-copy sibling LLM config --------------
+
+
+async def test_create_tenant_for_own_account_copies_sibling_llm_config_when_one_exists() -> None:
+    """When the account already has a chatbot with an LLM config, the new
+    chatbot's config is copied from it (user-requested default-copy
+    behavior) -- a 5th call, the copy's INSERT."""
+    db = _RecordingDB()
+    sibling_config_row = {
+        "provider": "anthropic",
+        "model": "claude-opus-4-8",
+        "api_key_ciphertext": "encrypted-blob",
+        "base_url": None,
+        "api_version": None,
+        "embedding_model": "text-embedding-3-small",
+        "embedding_base_url": None,
+        "embedding_api_key_ciphertext": None,
+        "embedding_dimensions": 768,
+    }
+    db.fetchrow_returns = [{"client_account_id": _ACCOUNT_ID}, sibling_config_row]
+
+    result = await create_tenant_for_own_account(db, _CLIENT_ADMIN, name="Bot 2", slug="bot-2")
+
+    assert len(db.calls) == 5
+    assert db.calls[4].kind == "execute"
+    assert "INSERT INTO tenant_llm_configs" in db.calls[4].query
+    copy_params = db.calls[4].params
+    assert result["tenant_id"] in copy_params
+    assert "anthropic" in copy_params
+    assert "encrypted-blob" in copy_params  # ciphertext copied verbatim
+
+
+async def test_create_tenant_for_own_account_succeeds_even_if_config_copy_fails() -> None:
+    """The copy is best-effort -- a failure copying the sibling config must
+    NEVER block chatbot creation (the tenant + client key are already
+    durably created by that point)."""
+    db = _RecordingDB()
+    db.fetchrow_returns = [
+        {"client_account_id": _ACCOUNT_ID},
+        {  # a sibling config row IS found...
+            "provider": "openai", "model": "gpt-4o", "api_key_ciphertext": "x",
+            "base_url": None, "api_version": None, "embedding_model": None,
+            "embedding_base_url": None, "embedding_api_key_ciphertext": None,
+            "embedding_dimensions": None,
+        },
+    ]
+    # ...but the copy's own INSERT (3rd execute call, index 2) raises.
+    db.execute_side_effects = [None, None, RuntimeError("db hiccup")]
+
+    result = await create_tenant_for_own_account(db, _CLIENT_ADMIN, name="Bot 2", slug="bot-2")
+
+    # Tenant creation still succeeds -- the exception never propagates.
+    assert result["tenant_id"]
+    assert result["client_key"].startswith("pk_")
 
 
 # -- create_tenant_for_own_account: slug collision --------------------------------
