@@ -45,10 +45,18 @@ SUSPICIOUS_FILENAMES = re.compile(
 
 
 def staged_files() -> list[str]:
+    # encoding="utf-8" is mandatory here, not cosmetic: without it,
+    # `text=True` alone decodes with the PLATFORM default (cp1252 on
+    # Windows), which raises UnicodeDecodeError on the em-dashes/curly
+    # quotes this codebase's comments use everywhere -- errors="replace"
+    # is a second layer of defense so a genuinely binary/non-UTF-8 file
+    # degrades to garbled text instead of crashing the hook outright.
     out = subprocess.run(
         ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
     )
     return [line for line in out.stdout.splitlines() if line]
@@ -59,6 +67,8 @@ def staged_content(path: str) -> str | None:
         ["git", "show", f":{path}"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0:
         return None
