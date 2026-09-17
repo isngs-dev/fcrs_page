@@ -510,6 +510,78 @@ export async function listKnowledgeDocs(tenantId?: string): Promise<ListKnowledg
 }
 
 // ---------------------------------------------------------------------------
+// Delete a knowledge doc
+// ---------------------------------------------------------------------------
+
+export interface DeleteKnowledgeDocOk {
+  status: "deleted";
+}
+
+export interface DeleteKnowledgeDocError {
+  status: "error";
+  message: string;
+  correlationId: string | null;
+}
+
+export type DeleteKnowledgeDocResult = DeleteKnowledgeDocOk | DeleteKnowledgeDocError;
+
+/**
+ * Permanently deletes an uploaded/scraped knowledge doc: `DELETE /admin/
+ * ingestion/docs/{doc_id}` (SR-4 -- pre-existing backend route, already
+ * hard-deleting chunks + runs + the doc row + its stored files; this is the
+ * first admin-web surface that calls it). CLIENT_ADMIN-only, own tenant --
+ * deliberately no `tenantId` bind, matching this app's established
+ * platform-admin-stays-read-only precedent (knowledge upload, chatbot
+ * deletion, add-a-website all made the same call): this is the client-facing
+ * `/knowledge` page's own action, never reachable from `/clients/[tenantId]/
+ * knowledge`.
+ */
+export async function deleteKnowledgeDocAction(docId: string): Promise<DeleteKnowledgeDocResult> {
+  try {
+    await adminApiFetch(`/admin/ingestion/docs/${encodeURIComponent(docId)}`, {
+      method: "DELETE",
+    });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      return mapDeleteDocError(err);
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: null };
+  }
+
+  revalidatePath("/knowledge");
+  return { status: "deleted" };
+}
+
+function mapDeleteDocError(err: AdminApiError): DeleteKnowledgeDocError {
+  if (err.status === 404 || err.errorCode === "DOC_NOT_FOUND") {
+    return {
+      status: "error",
+      message: "That document could not be found — it may have already been deleted.",
+      correlationId: err.correlationId || null,
+    };
+  }
+  if (err.status === 403 || err.errorCode === "ROLE_NOT_PERMITTED") {
+    return {
+      status: "error",
+      message: "You do not have permission to delete knowledge documents.",
+      correlationId: err.correlationId || null,
+    };
+  }
+  if (err.status === 401) {
+    return {
+      status: "error",
+      message: "Your session has expired. Please sign in again.",
+      correlationId: err.correlationId || null,
+    };
+  }
+  return {
+    status: "error",
+    message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
+    correlationId: err.correlationId || null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Train the Agent: previewChat, listCoverageGaps, submitTrainedAnswer
 // ---------------------------------------------------------------------------
 

@@ -25,6 +25,7 @@ const {
   submitTrainedAnswer,
   dismissGap,
   addKnowledgeUrl,
+  deleteKnowledgeDocAction,
 } = await import("@/app/(protected)/knowledge/actions");
 const { AdminApiError } = await import("@/lib/api");
 
@@ -1062,6 +1063,101 @@ describe("addKnowledgeUrl", () => {
     expect(state.status).toBe("error");
     if (state.status === "error") {
       expect(state.message).toMatch(/unable to reach the server/i);
+    }
+  });
+});
+
+describe("deleteKnowledgeDocAction", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+    revalidatePathMock.mockReset();
+  });
+
+  it("calls DELETE /admin/ingestion/docs/{doc_id} and revalidates /knowledge on success", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", deleted: true, chunks_deleted: 3, runs_deleted: 1 }, 200)
+    );
+
+    const result = await deleteKnowledgeDocAction("doc-1");
+
+    expect(result.status).toBe("deleted");
+    expect(adminApiFetchMock).toHaveBeenCalledWith(
+      "/admin/ingestion/docs/doc-1",
+      expect.objectContaining({ method: "DELETE" })
+    );
+    expect(revalidatePathMock).toHaveBeenCalledWith("/knowledge");
+  });
+
+  it("URL-encodes the doc id", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({}, 200));
+
+    await deleteKnowledgeDocAction("doc/with space");
+
+    const [path] = adminApiFetchMock.mock.calls[0] as [string];
+    expect(path).toBe("/admin/ingestion/docs/doc%2Fwith%20space");
+  });
+
+  it("maps a 404 to an honest 'already deleted' message, never revalidating", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(404, {
+        error_code: "DOC_NOT_FOUND",
+        message: "not found",
+        correlation_id: "corr-1",
+      })
+    );
+
+    const result = await deleteKnowledgeDocAction("doc-1");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/already been deleted/i);
+    }
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a 403 to a permission message", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(403, {
+        error_code: "ROLE_NOT_PERMITTED",
+        message: "nope",
+        correlation_id: "corr-2",
+      })
+    );
+
+    const result = await deleteKnowledgeDocAction("doc-1");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/permission/i);
+    }
+  });
+
+  it("maps a 401 to a session-expired message", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(401, {
+        error_code: "UNAUTHORIZED",
+        message: "x",
+        correlation_id: "corr-3",
+      })
+    );
+
+    const result = await deleteKnowledgeDocAction("doc-1");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/session/i);
+    }
+  });
+
+  it("maps a network throw to a generic error result", async () => {
+    adminApiFetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = await deleteKnowledgeDocAction("doc-1");
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/unable to reach the server/i);
     }
   });
 });

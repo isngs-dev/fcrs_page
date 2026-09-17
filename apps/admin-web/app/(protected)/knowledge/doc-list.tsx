@@ -14,14 +14,17 @@
  * renders via `<KnowledgeDocRow>` (a small `"use client"` component) instead
  * of the plain server-rendered card below, adding View/Export actions. Left
  * `undefined` (the client-facing `/knowledge` call site), this component
- * stays byte-for-byte its original pure-server-render self -- no extra
- * client JS ships to a client viewing their own knowledge base, which
- * doesn't need these actions.
+ * stays a server component -- the card itself is still server-rendered, but
+ * each row now embeds `<DeleteDocButton>` (delete-a-knowledge-doc feature),
+ * a small client child for the delete confirm/action only. Platform admins
+ * never get this control (deliberately -- matches this app's established
+ * "write capability into a client's tenant is CLIENT_ADMIN-only" precedent).
  */
 import { SoftCard } from "@/components/admin/soft-card";
 import { badgeToneClassName, statusBadge } from "@/lib/knowledge-constants";
 import { cn } from "@/lib/utils";
 import { KnowledgeDocRow } from "@/app/(protected)/knowledge/knowledge-doc-row";
+import { DeleteDocButton } from "@/app/(protected)/knowledge/delete-doc-button";
 import type { ListKnowledgeResult } from "@/app/(protected)/knowledge/actions";
 
 export function formatUploadedAt(iso: string): string {
@@ -102,6 +105,9 @@ export function KnowledgeDocList({
                 Uploaded {formatUploadedAt(doc.createdAt)}
                 {doc.uploadedByName ? ` by ${doc.uploadedByName}` : ""}
               </p>
+              <div className="mt-1">
+                <DeleteDocButton docId={doc.docId} label={doc.title || doc.filename} />
+              </div>
             </SoftCard>
           </li>
         );
