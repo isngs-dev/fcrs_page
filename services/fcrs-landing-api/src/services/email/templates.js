@@ -13,7 +13,7 @@
 // form (a locked design surface — see CLAUDE.md).
 
 const PHONE_DISPLAY = "(989) 843-4628";
-const COMPANY_NAME = "ISN Roofing Ltd";
+const COMPANY_NAME = "ISN Roofing";
 
 function splitName(fullName) {
   const trimmed = String(fullName ?? "").trim();

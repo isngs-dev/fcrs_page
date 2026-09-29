@@ -28,7 +28,7 @@ describe("email templates", () => {
     expect(email.templateId).toBe("confirmation-template");
     expect(email.params.to_email).toBe("jane@example.com");
     expect(email.params["First Name"]).toBe("Jane");
-    expect(email.params["Company Name"]).toBe("ISN Roofing Ltd");
+    expect(email.params["Company Name"]).toBe("ISN Roofing");
     expect(email.params["Phone Number"]).toBe("(989) 843-4628");
   });
 
