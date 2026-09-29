@@ -220,6 +220,26 @@ async def test_google_create_event_posts_and_maps_id(monkeypatch: pytest.MonkeyP
     assert "/calendars/primary/events" in str(transport.captured_request.url)
 
 
+async def test_google_create_event_maps_organizer_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The calendar owner Google reports is surfaced for the rep notification."""
+    transport = _StubTransport(
+        status_code=200,
+        json_body={"id": "g-1", "organizer": {"email": "rep@example.com", "self": True}},
+    )
+    await _post_via_stub(monkeypatch, transport)
+    provider = GoogleCalendarProvider(calendar_id="primary", access_token="tok", timeout=5.0)
+    event = CalendarEvent(
+        event_id="evt-1",
+        starts_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC),
+        ends_at=datetime(2026, 7, 15, 14, 30, tzinfo=UTC),
+        timezone="UTC",
+    )
+
+    ref = await provider.create_event(None, event)  # type: ignore[arg-type]
+
+    assert ref.organizer_email == "rep@example.com"
+
+
 async def test_google_create_event_requests_meet_conference_and_extracts_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -941,6 +941,52 @@ async def test_post_book_resolvable_recipient_enqueues_confirmation_and_delays_o
     assert delay_kwargs["job_id"] == "job-confirm-1"
 
 
+async def test_post_book_emails_calendar_organizer_a_rep_notice() -> None:
+    """Both the visitor AND the connected calendar's owner (the rep) get an email."""
+    from api.scheduling.calendar import CalendarRef
+
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    fake_provider = AsyncMock()
+    fake_provider.create_event.return_value = CalendarRef(
+        provider="google", external_id="g-1", meet_url="https://meet.google.com/abc",
+        organizer_email="rep@example.com",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await _configure_calendar(client, _admin_token())
+        with (
+            patch(
+                "api.scheduling.routes.calendar_provider_for_async",
+                new=AsyncMock(return_value=fake_provider),
+            ),
+            patch(
+                "api.scheduling.routes.resolve_event_recipient",
+                new=AsyncMock(return_value="lead@example.com"),
+            ),
+            patch(
+                "api.scheduling.routes.enqueue_notification",
+                new=AsyncMock(side_effect=["job-visitor", "job-rep"]),
+            ) as mock_enqueue,
+            patch("api.scheduling.routes.send_notification") as mock_task,
+        ):
+            response = await client.post(
+                "/public/schedule/book", json=_book_body(),
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert response.status_code == 201
+    event_id = response.json()["event_id"]
+    recipients = [c.kwargs["recipient"] for c in mock_enqueue.call_args_list]
+    assert recipients == ["lead@example.com", "rep@example.com"]
+    rep_call = mock_enqueue.call_args_list[1].kwargs
+    assert rep_call["dedupe_key"] == f"booking_rep_notify:{event_id}"
+    assert "https://meet.google.com/abc" in rep_call["body"]
+    assert [c.kwargs["job_id"] for c in mock_task.delay.call_args_list] == ["job-visitor", "job-rep"]
+
+
 async def test_post_book_calendly_link_configured_included_in_confirmation_body() -> None:
     """A Calendly row with `enabled=False` (native flow stays primary, no
     calendar-sync attempt) still surfaces its scheduling_url in the

@@ -57,6 +57,33 @@ def booking_confirmation_message(
     return subject, body
 
 
+def rep_booking_notification_message(
+    *,
+    starts_at: datetime,
+    timezone: str,
+    visitor_name: str | None,
+    visitor_email: str | None,
+    visitor_phone: str | None,
+    meet_url: str | None = None,
+) -> tuple[str, str]:
+    """Build the ``(subject, body)`` telling the calendar owner (the rep) a
+    visitor booked a call. Same omit-if-absent rule for every optional line.
+    """
+    when = _local_wall_clock(starts_at, timezone)
+    who = visitor_name or visitor_email or "A website visitor"
+    subject = f"New call booked: {who}"
+    lines = [f"{who} booked a call with you.", "", f"When: {when}"]
+    if visitor_name:
+        lines.append(f"Name: {visitor_name}")
+    if visitor_email:
+        lines.append(f"Email: {visitor_email}")
+    if visitor_phone:
+        lines.append(f"Phone: {visitor_phone}")
+    if meet_url:
+        lines += ["", f"Join the call: {meet_url}"]
+    return subject, "\n".join(lines)
+
+
 def reminder_message(
     *, offset: str, starts_at: datetime, timezone: str, meet_url: str | None = None
 ) -> tuple[str, str]:

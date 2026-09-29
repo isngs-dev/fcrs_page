@@ -63,11 +63,16 @@ class CalendarRef:
     given a fake one, any provider where conference creation wasn't
     requested or Google omitted ``conferenceData`` from the response).
     Never fabricated: only ever set from a real provider response.
+
+    ``organizer_email`` is the calendar owner Google reports on the created
+    event (the account that connected the calendar) -- the booking route
+    emails them a "new call booked" notice. ``None`` when not reported.
     """
 
     provider: str
     external_id: str
     meet_url: str | None = None
+    organizer_email: str | None = None
 
 
 @dataclass(frozen=True)
@@ -274,10 +279,13 @@ class GoogleCalendarProvider:
             )
 
         data = response.json()
+        organizer = data.get("organizer")
+        organizer_email = organizer.get("email") if isinstance(organizer, dict) else None
         return CalendarRef(
             provider="google",
             external_id=str(data["id"]),
             meet_url=_extract_meet_url(data),
+            organizer_email=str(organizer_email) if organizer_email else None,
         )
 
     async def update_event(

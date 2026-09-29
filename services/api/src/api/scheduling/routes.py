@@ -32,7 +32,10 @@ from api.notifications.emit import emit_event_safe
 from api.notifications.recipients import resolve_event_recipient
 from api.notifications.repository import enqueue_notification
 from api.notifications.tasks import send_notification
-from api.notifications.templates import booking_confirmation_message
+from api.notifications.templates import (
+    booking_confirmation_message,
+    rep_booking_notification_message,
+)
 from api.scheduling.calendar import CalendarEvent, calendar_provider_for_async
 from api.scheduling.calendar_config_repository import get_calendar_config
 from api.scheduling.handoff_intent_repository import create_handoff_intent
@@ -441,6 +444,8 @@ async def book_slot(
     # into the confirmation-email block further down regardless of whether
     # a calendar is even configured for this tenant.
     meet_url: str | None = None
+    # The connected calendar's owner (the rep), when the provider reports one.
+    organizer_email: str | None = None
 
     calendar_config = await get_calendar_config(db, claims)
     if calendar_config is not None and calendar_config.enabled:
@@ -486,6 +491,7 @@ async def book_slot(
 
         calendar_ref = f"{ref.provider}:{ref.external_id}"
         meet_url = ref.meet_url
+        organizer_email = ref.organizer_email
         await update_event_calendar_ref(db, claims, event.event_id, calendar_ref, meet_url)
 
     # Best-effort booking-lead autolink (SR-9.1 C1). Placed AFTER the
@@ -643,6 +649,47 @@ async def book_slot(
                 "tenant_id": claims.tenant_id,
             },
         )
+
+    # Best-effort "new call booked" notice to the rep (the connected calendar's
+    # owner). Its own try so it never depends on -- or blocks -- the visitor's
+    # confirmation above; same never-fail-the-booking rule.
+    if organizer_email:
+        try:
+            rep_subject, rep_body = rep_booking_notification_message(
+                starts_at=event.starts_at,
+                timezone=event.timezone,
+                visitor_name=body.name,
+                visitor_email=str(body.email) if body.email is not None else None,
+                visitor_phone=body.phone,
+                meet_url=meet_url,
+            )
+            rep_job_id = await enqueue_notification(
+                db,
+                claims,
+                channel="email",
+                recipient=organizer_email,
+                subject=rep_subject,
+                body=rep_body,
+                dedupe_key=f"booking_rep_notify:{event.event_id}",
+                payload={"kind": "booking_rep_notify", "event_id": event.event_id},
+            )
+            if rep_job_id is not None:
+                from common.logging import _correlation_id  # noqa: PLC0415, PLC2701
+
+                send_notification.delay(
+                    job_id=rep_job_id,
+                    tenant_id=claims.tenant_id,
+                    correlation_id=_correlation_id.get() or "",
+                )
+        except Exception:
+            _log.warning(
+                "booking_rep_notify_enqueue_degraded",
+                extra={
+                    "event": "booking_rep_notify_enqueue_degraded",
+                    "event_id": event.event_id,
+                    "tenant_id": claims.tenant_id,
+                },
+            )
 
     return BookResponse(
         event_id=event.event_id,
