@@ -5,7 +5,8 @@
  * `GET /admin/schedule/calendar/google/authorize` via `adminApiFetch`
  * (forwards the admin's own session cookie -- see `lib/api.ts`), then
  * `redirect()`s the admin's browser to the returned Google consent-screen
- * URL. Google eventually redirects back to
+ * URL. Google eventually redirects back to admin-web's
+ * `google-calendar/callback/route.ts`, which forwards to
  * `GET /admin/schedule/calendar/google/callback` on the API, which itself
  * redirects into `/workspace?calendar_connected=true` or
  * `?calendar_error=<reason>` (`admin_routes.py`) -- `workspace/page.tsx`

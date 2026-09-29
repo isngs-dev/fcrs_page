@@ -189,7 +189,9 @@ class ApiSettings(Settings):
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: str | None = None
     # Must exactly match a redirect URI registered on the Google Cloud OAuth
-    # client -- e.g. https://api.<domain>/admin/schedule/calendar/google/callback.
+    # client -- admin-web's proxy route, e.g.
+    # https://admin.<domain>/workspace/google-calendar/callback (the session
+    # cookie lives on admin-web's origin, so Google must land the browser there).
     google_oauth_redirect_uri: str | None = None
     # google_oauth_state_ttl_seconds: how long an issued OAuth `state` token
     # (google_oauth_state.py) stays valid -- long enough for an admin to
