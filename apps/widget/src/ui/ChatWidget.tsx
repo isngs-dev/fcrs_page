@@ -109,6 +109,12 @@ const SUPPORT_STAY_REPLY = "No problem, I'm right here. Can you tell me a bit mo
  * flipping this back to `true` re-enables both the feature and its tests. */
 export const VOICE_MODE_ENABLED = false;
 
+/** Persistent "Connect with a sales rep" CTA above the composer --
+ * temporarily hidden (user request). Scheduling stays reachable via the
+ * booking chip and the escalate "Book inspection" handoff. Exported so the
+ * CTA's tests skip off the same flag; flip back to `true` to restore both. */
+export const SALES_CTA_ENABLED = false;
+
 /** Max attempts for the bounded auto-retry of a transient turn failure (decision 1/2). */
 const TURN_RETRY_MAX_ATTEMPTS = 4;
 /** Max attempts for the bounded expired-session re-mint (decision 5) — small
@@ -1136,8 +1142,8 @@ export function ChatWidget({
       // "escalate"` turn that DOES land here is bot-initiated (low
       // confidence, off-topic, the turn-count cap, or a free-typed
       // scheduling request the classifier caught) -- those still get the
-      // one-step `<SupportHandoff>` confirm interstitial ("Talk to a rep" /
-      // "Stay here") before the calendar/lead-form opens, but the bubble
+      // one-step `<SupportHandoff>` confirm interstitial ("Book inspection" /
+      // "Continue Chat") before the calendar/lead-form opens, but the bubble
       // above it now always shows the server's real `reply` text -- never a
       // hardcoded client-side apology string.
       const offersHumanHandoff = result.turn.decision === "escalate"
@@ -1258,10 +1264,10 @@ export function ChatWidget({
     if (pending || schedulePending) return;
     setMessages((prev) => [
       ...prev,
-      { id: nextLocalId(), role: "user", text: `Stay with ${resolvedBotName}` },
+      { id: nextLocalId(), role: "user", text: "Continue Chat" },
       { id: nextLocalId(), role: "bot", text: SUPPORT_STAY_REPLY },
     ]);
-  }, [pending, schedulePending, resolvedBotName]);
+  }, [pending, schedulePending]);
 
   /** Manual Retry (decision 4/6): replay the last failed send without a new optimistic bubble. */
   const handleManualRetry = useCallback(async () => {
@@ -1429,7 +1435,7 @@ export function ChatWidget({
                     {...(suggestedQuestions ? { suggestions: suggestedQuestions } : {})}
                     onSuggestion={(message) => void handleSuggestion(message)}
                     onIdentityCaptured={handleIdentityCaptured}
-                    onHandoffTalk={() => void startScheduling("Talk to a rep")}
+                    onHandoffTalk={() => void startScheduling("Book inspection")}
                     onHandoffStay={stayWithRebecca}
                     onBooked={handleBooked}
                     onLeadSubmitted={handleLeadSubmitted}
@@ -1439,7 +1445,7 @@ export function ChatWidget({
                       We couldn&rsquo;t check appointment availability. <button type="button" className="cw-sched-retry" onClick={() => void startScheduling()}>Retry</button>
                     </div>
                   )}
-                  {!hasBooking && !schedulingUiActive && (
+                  {SALES_CTA_ENABLED && !hasBooking && !schedulingUiActive && (
                     <button
                       type="button"
                       className="cw-connect-sales-button"

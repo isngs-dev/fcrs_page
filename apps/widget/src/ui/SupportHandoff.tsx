@@ -49,7 +49,7 @@ export function SupportHandoff({ disabled = false, onTalk, onStay }: SupportHand
           aria-pressed={choice === "talk"}
           onClick={chooseTalk}
         >
-          Talk to a rep
+          Book inspection
         </button>
         <button
           type="button"
@@ -58,7 +58,7 @@ export function SupportHandoff({ disabled = false, onTalk, onStay }: SupportHand
           aria-pressed={choice === "stay"}
           onClick={chooseStay}
         >
-          Stay here
+          Continue Chat
         </button>
       </div>
     </section>

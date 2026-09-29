@@ -123,7 +123,7 @@ vi.mock("../lead", async () => {
   };
 });
 
-import { ChatWidget, VOICE_MODE_ENABLED } from "./ChatWidget";
+import { ChatWidget, SALES_CTA_ENABLED, VOICE_MODE_ENABLED } from "./ChatWidget";
 import { widgetCss } from "./widgetCss";
 
 const baseConfig: WidgetConfig = {
@@ -1156,7 +1156,7 @@ describe("ChatWidget", () => {
     expect(fetchSlotsMock).not.toHaveBeenCalled();
     expect(container.querySelector(".cw-sched-day-strip")).not.toBeNull();
     expect(container.querySelector("form.cw-lead-form")).toBeNull();
-    expect(container.querySelectorAll(".cw-bubble-row-user")[1]?.textContent).toBe("Talk to a rep");
+    expect(container.querySelectorAll(".cw-bubble-row-user")[1]?.textContent).toBe("Book inspection");
   });
 
   it("Stay here keeps the visitor with Rebecca and does not open scheduling or call availability", async () => {
@@ -1185,7 +1185,7 @@ describe("ChatWidget", () => {
     // "Stay here" itself must not trigger a second one.
     expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(1);
     expect(container.querySelector(".cw-sched")).toBeNull();
-    expect(container.textContent).toContain("Stay with Rebecca");
+    expect(container.textContent).toContain("Continue Chat");
     expect(container.textContent).toContain("Can you tell me a bit more about what stopped working?");
     expect(container.querySelector<HTMLButtonElement>(".cw-handoff-stay")?.getAttribute("aria-pressed")).toBe("true");
   });
@@ -3135,7 +3135,17 @@ describe("ChatWidget", () => {
     });
   });
 
-  describe("SR-5: persistent 'Connect with a sales rep' CTA", () => {
+  (SALES_CTA_ENABLED ? it.skip : it)("hides the persistent sales-rep CTA while SALES_CTA_ENABLED is off", () => {
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+
+    expect(container.querySelector(".cw-connect-sales-button")).toBeNull();
+  });
+
+  // Skipped (not deleted) while the CTA is hidden -- see SALES_CTA_ENABLED.
+  (SALES_CTA_ENABLED ? describe : describe.skip)("SR-5: persistent 'Connect with a sales rep' CTA", () => {
     function getConnectButton(): HTMLButtonElement {
       const button = container.querySelector<HTMLButtonElement>(".cw-connect-sales-button");
       if (!button) throw new Error("connect-sales button not found");
