@@ -3,11 +3,7 @@
 <header class="site-header">
   <div class="inner">
     <a href="#top" data-scroll class="logo-link">
-      <img
-        src="/images/logo.png"
-        alt="First Class Roofing & Solar"
-        class="logo"
-      />
+      <span class="logo">ISN Roofing Ltd</span>
     </a>
     <div class="cta-col">
       <a href="tel:+19898434628" class="call-btn">
@@ -48,9 +44,11 @@
   }
 
   .logo {
-    height: 68px;
-    width: 161px;
-    display: block;
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: clamp(1.3rem, 2.4vw, 1.75rem);
+    line-height: 68px;
+    white-space: nowrap;
   }
 
   .cta-col {

@@ -2,8 +2,8 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 ---
 <BaseLayout
-  title="Thank You | First Class Roofing & Solar"
-  description="Thanks for your request. A First Class Roofing & Solar specialist will get back to you within 24 hours."
+  title="Thank You | ISN Roofing Ltd"
+  description="Thanks for your request. A ISN Roofing Ltd specialist will get back to you within 24 hours."
 >
   <!-- Dedicated post-submit page. Single-viewport by contract: nothing here
        may cause the document to scroll. See the no-scroll budget in the
@@ -14,13 +14,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     <div class="ty-glow ty-glow-orange" aria-hidden="true"></div>
 
     <header class="ty-header">
-      <img
-        src="/images/logo.png"
-        alt="First Class Roofing & Solar"
-        class="ty-logo"
-        width="161"
-        height="68"
-      />
+      <span class="ty-logo">ISN Roofing Ltd</span>
       <a href="tel:+19898434628" class="ty-header-call">
         <i class="fa-solid fa-phone-volume" aria-hidden="true"></i> (989) 843-4628
       </a>
@@ -71,7 +65,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     </main>
 
     <footer class="ty-footer">
-      <span>&copy; 2026 First Class Roofing &amp; Solar. All rights reserved.</span>
+      <span>&copy; 2026 ISN Roofing Ltd. All rights reserved.</span>
       <span class="ty-website-by">&middot; Website by <img src="/assets/isn-logo.png" alt="iSN" /></span>
     </footer>
   </div>
@@ -148,9 +142,10 @@ import BaseLayout from "../layouts/BaseLayout.astro";
   }
 
   .ty-logo {
-    height: 42px;
-    width: auto;
-    filter: brightness(0) invert(1);
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: 1.5rem;
+    color: #fff;
   }
 
   .ty-header-call {
@@ -448,7 +443,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       padding: 18px clamp(22px, 6vw, 40px);
     }
     .ty-logo {
-      height: 36px;
+      font-size: 1.25rem;
     }
     .ty-h1 {
       font-size: clamp(2rem, 8vw, 2.6rem);
