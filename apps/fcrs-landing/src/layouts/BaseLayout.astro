@@ -63,13 +63,12 @@ const { title, description } = Astro.props;
       2147483000 -- isolated from this page's styles/scripts by construction,
       so this single script tag is the entire integration surface.
         - data-client-key: the tenant's PUBLIC client key (not a secret).
-        - data-api-base:   the chatbot platform's local API origin.
-      To update the bundle: `npm run build` in the widget's own repo, then
-      copy the resulting dist/widget.js over public/widget.js here.
+        - data-api-base:   the chatbot platform's API origin.
+      The bundle is served from chat.isngs.com, not this site's public/.
     -->
     <script
-      src="/widget.js"
-      data-client-key="pk_WKAo9hOjka-S7WtNEbwmlX3g8ZND7lhU"
+      src="https://chat.isngs.com/widget.js"
+      data-client-key="pk_NmQSFQMaO6dC0bggXq5Be2XH5_neJF07"
       data-api-base="https://159-89-230-107.nip.io"
     ></script>
   </body>
