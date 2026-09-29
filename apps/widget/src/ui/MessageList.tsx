@@ -35,6 +35,7 @@ export interface MessageListProps {
   onHandoffStay?: () => void;
   /** Threaded through to `<Bubble>`/`<ScheduleCta>` -- see Bubble.tsx's own doc. */
   onBooked?: () => void;
+  onLeadSubmitted?: () => void;
 }
 
 /** The "Book a call with sales" chip's message/label (exported so
@@ -100,7 +101,7 @@ function SuggestionGlyph({ name }: { name: (typeof SUGGESTIONS)[number]["icon"] 
   return <svg aria-hidden="true" {...common}><path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 9.7 9.7 0 0 1-4.1-.9L3 21l1.9-4.1A8.4 8.4 0 0 1 3 11.5a8.5 8.5 0 0 1 18 0Z" /></svg>;
 }
 
-export function MessageList({ messages, pending, config, botName, suggestions, onSuggestion, onIdentityCaptured, onHandoffTalk, onHandoffStay, onBooked }: MessageListProps) {
+export function MessageList({ messages, pending, config, botName, suggestions, onSuggestion, onIdentityCaptured, onHandoffTalk, onHandoffStay, onBooked, onLeadSubmitted }: MessageListProps) {
   const endRef = useRef<HTMLDivElement | null>(null);
   const effectiveSuggestions =
     suggestions && suggestions.length > 0
@@ -148,6 +149,7 @@ export function MessageList({ messages, pending, config, botName, suggestions, o
           {...(onHandoffTalk ? { onHandoffTalk } : {})}
           {...(onHandoffStay ? { onHandoffStay } : {})}
           {...(onBooked ? { onBooked } : {})}
+          {...(onLeadSubmitted ? { onLeadSubmitted } : {})}
         />
       ))}
       {pending && <TypingIndicator />}

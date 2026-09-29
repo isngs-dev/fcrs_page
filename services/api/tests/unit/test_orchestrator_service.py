@@ -42,6 +42,7 @@ from api.orchestrator.service import (
     _NO_ANSWER_SENTINEL,
     _OFF_TOPIC_REPLY,
     _REPEATED_LOW_CONFIDENCE_REPLY,
+    _SCHEDULING_REPLY,
     _TURN_CAP_REPLY,
     Source,
     StreamEvent,
@@ -777,7 +778,7 @@ async def test_scheduling_request_escalates_no_rag_no_generate() -> None:
     p.retrieve_hybrid.assert_not_awaited()
     p.provider.generate.assert_not_awaited()
     assert result.decision == "escalate"
-    assert result.reply == _ESCALATE_REPLY
+    assert result.reply == _SCHEDULING_REPLY
 
     assistant_call = p._append_calls[1]
     assert assistant_call["intent"] == "scheduling_request"

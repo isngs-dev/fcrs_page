@@ -385,6 +385,11 @@ export function ChatWidget({
   //      reopen/reload for either backend.
   const [hasBooking, setHasBooking] = useState(false);
   const handleBooked = useCallback(() => setHasBooking(true), []);
+  // The lead form's counterpart: once contact details are in, the
+  // persistent CTA stays visible but DISABLED (a second request would
+  // just duplicate the lead).
+  const [leadSubmitted, setLeadSubmitted] = useState(false);
+  const handleLeadSubmitted = useCallback(() => setLeadSubmitted(true), []);
   const bookingCheckedRef = useRef(false);
   // Hides the SAME persistent "Connect with a sales rep" CTA while the
   // native in-thread <ScheduleCta> calendar/grid picker is already showing
@@ -404,6 +409,9 @@ export function ChatWidget({
   // problem this fixes.
   const lastMessage = messages[messages.length - 1];
   const schedulingUiActive = lastMessage?.role === "bot" && lastMessage.action === "schedule_cta";
+  // Disables (not hides) the same CTA while the lead form is the active
+  // bottom bubble -- the visitor is already mid-request.
+  const leadFormActive = lastMessage?.role === "bot" && lastMessage.action === "lead_form";
   // In-memory only (S14.2 decision 4) — never persisted here (SR-3's
   // sessionStorage mirror, when opted in, lives in resume.ts, not this
   // ref). Seeded from resumeConversationId when a resume is in play (SR-3
@@ -1424,6 +1432,7 @@ export function ChatWidget({
                     onHandoffTalk={() => void startScheduling("Talk to a rep")}
                     onHandoffStay={stayWithRebecca}
                     onBooked={handleBooked}
+                    onLeadSubmitted={handleLeadSubmitted}
                   />
                   {scheduleError && (
                     <div className="cw-sched-error" role="alert">
@@ -1434,7 +1443,7 @@ export function ChatWidget({
                     <button
                       type="button"
                       className="cw-connect-sales-button"
-                      disabled={pending || schedulePending}
+                      disabled={pending || schedulePending || leadFormActive || leadSubmitted}
                       onClick={() => void startScheduling()}
                     >
                       {schedulePending ? "Connecting…" : "Connect with a sales rep"}

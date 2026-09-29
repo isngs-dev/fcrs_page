@@ -207,7 +207,8 @@ _INTENT_LABEL_DESCRIPTIONS: dict[str, str] = {
     ),
     "chitchat": "a greeting, pleasantry, or small talk that is not asking anything specific",
     "scheduling_request": (
-        "an explicit request to book a call, schedule a meeting, or talk to a person/sales rep"
+        "an explicit request to book or schedule a call, meeting, appointment, "
+        "visit, inspection, or consultation, or to talk to a person/sales rep"
     ),
     "off_topic": (
         "unrelated to this business -- general knowledge trivia, current "
@@ -281,6 +282,16 @@ _ESCALATE_REPLY = (
 # not-confident-enough one -- but the visitor-facing voice should be
 # consistent regardless of which internal reason triggered the fallback).
 _OFF_TOPIC_REPLY = _ESCALATE_REPLY
+
+# Fixed scheduling_request template -- the visitor explicitly ASKED to book
+# or talk to someone, so this is a warm yes, not _ESCALATE_REPLY's "I can't
+# answer that precisely" (which read as the bot lacking knowledge). Still
+# dual-purpose like the other escalate copy: the card beneath it may be
+# schedule_cta or lead_form (decision 5), so it never promises a calendar.
+_SCHEDULING_REPLY = (
+    "Happy to help you get that set up! Tap below to connect with one of "
+    "our reps and find a time that works for you."
+)
 
 # Fixed turn-cap template (S10.4 decision 7; retuned once the reply text
 # actually reaches the screen instead of being overwritten by the widget's
@@ -636,9 +647,9 @@ async def _resolve_turn(
         # onward, so close it before returning the fixed-template reply.
         await provider.aclose()
         # off_topic gets its own honest copy ("outside what I can help with")
-        # -- distinct from scheduling_request's _ESCALATE_REPLY, which fits a
+        # -- distinct from scheduling_request's _SCHEDULING_REPLY, which fits a
         # "wants to book/talk to someone" request, not a scope mismatch.
-        reply = _OFF_TOPIC_REPLY if intent == "off_topic" else _ESCALATE_REPLY
+        reply = _OFF_TOPIC_REPLY if intent == "off_topic" else _SCHEDULING_REPLY
         return _FixedOutcome(
             conversation_id=conversation_id,
             assistant_id=assistant_id,
@@ -1243,7 +1254,7 @@ async def preview_answer(db: Database, claims: AuthClaims, message: str) -> Prev
         )
 
         if intent in ("scheduling_request", "off_topic"):
-            reply = _OFF_TOPIC_REPLY if intent == "off_topic" else _ESCALATE_REPLY
+            reply = _OFF_TOPIC_REPLY if intent == "off_topic" else _SCHEDULING_REPLY
             return PreviewResult(reply=reply, decision="escalate", confidence=None, sources=[])
 
         if intent == "chitchat" or not config.embedding_model:

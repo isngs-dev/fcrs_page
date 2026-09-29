@@ -53,6 +53,7 @@ export function Bubble({
   onHandoffTalk,
   onHandoffStay,
   onBooked,
+  onLeadSubmitted,
 }: {
   message: ChatMessage;
   config: WidgetConfig;
@@ -67,6 +68,8 @@ export function Bubble({
    * "booking confirmed" signal to report (see ChatWidget.tsx's own
    * existingBooking re-check, the only honest signal for that path). */
   onBooked?: () => void;
+  /** Threaded to <LeadForm> -- see its `onSubmitted` doc. */
+  onLeadSubmitted?: () => void;
 }) {
   if (message.role === "system-error") {
     return (
@@ -83,7 +86,9 @@ export function Bubble({
         <span className="cw-bot-mark" aria-hidden="true" />
         <div className="cw-bot-stack">
           {message.text ? <div className="cw-bubble cw-bubble-bot"><Markdown text={message.text} /></div> : null}
-          {message.action === "lead_form" ? <LeadForm config={config} /> : null}
+          {message.action === "lead_form" ? (
+            <LeadForm config={config} {...(onLeadSubmitted ? { onSubmitted: onLeadSubmitted } : {})} />
+          ) : null}
           {message.action === "identity_form" ? (
             <IdentityForm config={config} {...(onIdentityCaptured ? { onCaptured: onIdentityCaptured } : {})} />
           ) : null}

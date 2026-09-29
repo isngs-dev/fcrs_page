@@ -3263,9 +3263,29 @@ describe("ChatWidget", () => {
 
       expect(container.querySelector("form.cw-lead-form")).not.toBeNull();
       expect(container.querySelector(".cw-sched-calendar")).toBeNull();
-      // action=lead_form is a different UI category from the scheduling
-      // picker -- it must not trigger the same hide-the-CTA logic.
-      expect(container.querySelector(".cw-connect-sales-button")).not.toBeNull();
+      // action=lead_form keeps the CTA visible (unlike the picker's hide),
+      // but DISABLED while the visitor is filling the form...
+      expect(getConnectButton().disabled).toBe(true);
+
+      act(() => {
+        const name = container.querySelector<HTMLInputElement>("#cw-lead-name")!;
+        const email = container.querySelector<HTMLInputElement>("#cw-lead-email")!;
+        setNativeInputValue(name, "Ada Lovelace");
+        name.dispatchEvent(new Event("input", { bubbles: true }));
+        setNativeInputValue(email, "ada@example.com");
+        email.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      act(() => {
+        container.querySelector<HTMLInputElement>("#cw-lead-consent")!.click();
+      });
+      act(() => {
+        container.querySelector<HTMLButtonElement>(".cw-lead-submit")!.click();
+      });
+      await flush();
+
+      // ...and stays disabled once the request is in.
+      expect(container.querySelector(".cw-lead-confirmation")).not.toBeNull();
+      expect(getConnectButton().disabled).toBe(true);
     });
 
     it("existingBooking non-null shows the keep-vs-book-another ask before the picker", async () => {

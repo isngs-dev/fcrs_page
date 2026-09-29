@@ -27,9 +27,12 @@ const LOG_PREFIX = "[chatbot-widget]";
 
 export interface LeadFormProps {
   config: WidgetConfig;
+  /** Fires once on a real `201` so the caller can disable the persistent
+   * "Connect with a sales rep" CTA (the request is already in). */
+  onSubmitted?: () => void;
 }
 
-export function LeadForm({ config }: LeadFormProps) {
+export function LeadForm({ config, onSubmitted }: LeadFormProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -85,6 +88,7 @@ export function LeadForm({ config }: LeadFormProps) {
 
     setSubmitting(false);
     setSucceeded(true);
+    onSubmitted?.();
   }
 
   if (succeeded) {
