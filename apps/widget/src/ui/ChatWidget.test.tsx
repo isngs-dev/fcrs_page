@@ -2033,57 +2033,24 @@ describe("ChatWidget", () => {
         expect(ttsCancelMock).toHaveBeenCalled();
       });
 
-      it("retries on the visitor's first interaction anywhere on the page after a blocked open-time attempt", async () => {
-        // Simulate Chrome's "no speak() without prior user activation"
-        // autoplay policy: onBlocked fires asynchronously (a microtask),
-        // matching the real utterance's async `onerror` (see tts.ts) --
-        // opening the panel is itself a real click, which also satisfies
-        // the document-level "first interaction" fallback below in the SAME
-        // tick, so onBlocked must not resolve until after that has already
-        // no-op'd (hasGreetedRef still true), or both would double-fire.
-        speakGreetingMock.mockImplementationOnce((_config, onBlocked) => {
-          queueMicrotask(() => onBlocked?.());
-        });
-
+      it("never greets on a click, keypress, or tap elsewhere on the page -- only when the widget is opened", () => {
         act(() => {
           root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
         });
-        openPanelNoModePicked();
-        await flush();
-        // Open-time attempt, blocked.
-        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
-
-        // The visitor's first interaction anywhere on the page -- not the
-        // widget itself -- grants the activation Chrome requires and should
-        // trigger a genuine retry.
-        act(() => {
-          document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
-        });
-        expect(speakGreetingMock).toHaveBeenCalledTimes(2);
-
-        // That retry succeeded (no onBlocked this time), so a further
-        // interaction must not speak a third time.
-        act(() => {
-          document.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true }));
-        });
-        expect(speakGreetingMock).toHaveBeenCalledTimes(2);
-      });
-
-      it("does not retry on interaction once the open-time attempt genuinely spoke", () => {
-        act(() => {
-          root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
-        });
-        openPanelNoModePicked();
-        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
         act(() => {
           document.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+          document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+          document.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true }));
         });
+        expect(speakGreetingMock).not.toHaveBeenCalled();
+
+        openPanelNoModePicked();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
 
-      it("a first-interaction retry does not fire once muted", async () => {
-        speakGreetingMock.mockImplementation((_config, onBlocked) => {
+      it("a blocked open-time greeting is not retried by page interaction", async () => {
+        speakGreetingMock.mockImplementationOnce((_config, onBlocked) => {
           queueMicrotask(() => onBlocked?.());
         });
         act(() => {
@@ -2093,20 +2060,11 @@ describe("ChatWidget", () => {
         await flush();
         expect(speakGreetingMock).toHaveBeenCalledTimes(1);
 
-        const muteToggle = container.querySelector<HTMLButtonElement>(".cw-mute-toggle")!;
-        act(() => {
-          muteToggle.click();
-        });
-        // The mute click itself is a real page interaction and may already
-        // trigger one more (still-blocked) attempt before the `muted` state
-        // update lands -- assert relative to that, not a fixed count, so this
-        // test is only about what happens AFTER muting has genuinely landed.
-        const callsAfterMuting = speakGreetingMock.mock.calls.length;
-
         act(() => {
           document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true }));
+          document.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
         });
-        expect(speakGreetingMock).toHaveBeenCalledTimes(callsAfterMuting);
+        expect(speakGreetingMock).toHaveBeenCalledTimes(1);
       });
     });
 

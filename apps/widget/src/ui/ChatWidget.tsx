@@ -561,14 +561,11 @@ export function ChatWidget({
   // load regardless of which mode (type/voice) the visitor ends up picking
   // -- unlike the "hear it back" reply-speaking effect below (still
   // voice-mode-only, unchanged), the greeting itself is not mode-gated.
-  // Attempted from three possible triggers, in order — as soon as the panel
-  // is open (the effect below, keyed on `[open]`), the visitor's first
-  // interaction ANYWHERE on the page after that (the document-level effect
-  // further below, in case the open-time attempt was blocked by the
-  // browser's autoplay policy), or a manual reopen. Whichever happens
-  // first; `hasGreetedRef` gates all three so only one genuinely fires;
+  // Plays ONLY when the visitor opens the widget (launcher click -- itself
+  // the user gesture browsers require for audio), never on a click elsewhere
+  // on the host page. `hasGreetedRef` makes it once per page load;
   // `tts.speakGreeting`'s `onBlocked` callback resets it when an attempt was
-  // silently blocked, so a later trigger still gets a real chance.
+  // silently blocked, so the next open still gets a real chance.
   const [muted, setMuted] = useState(false);
   const hasGreetedRef = useRef(false);
 
@@ -578,9 +575,8 @@ export function ChatWidget({
     void tts.speakGreeting(
       config,
       () => {
-        // Blocked (most commonly Chrome's "no speak() without prior user
-        // activation on this frame" policy) — allow the next trigger (the
-        // first-interaction listener below, or a manual open) to retry.
+        // Blocked (most commonly Chrome's autoplay policy) — allow the
+        // next open of the widget to retry.
         hasGreetedRef.current = false;
       },
       resolvedBotName,
@@ -612,27 +608,6 @@ export function ChatWidget({
       host.setAttribute("data-position", launcherPosition);
     }
   }, [accentColor, launcherPosition]);
-
-  // Fallback for browsers (Chrome) that block the "just picked voice mode"
-  // attempt above for lack of prior user activation: the visitor's first
-  // click, keypress, or tap anywhere on the page — not necessarily on the
-  // widget — grants that activation, so retry at that moment.
-  // `attemptGreeting` itself no-ops if a prior attempt already genuinely
-  // spoke, or if voice mode isn't active, so this is a harmless no-op the
-  // rest of the time. Capture phase so this fires even if some other
-  // handler stops bubble-phase propagation.
-  useEffect(() => {
-    const events: Array<keyof DocumentEventMap> = ["click", "keydown", "touchstart"];
-    const handleFirstInteraction = () => attemptGreeting();
-    events.forEach((type) =>
-      document.addEventListener(type, handleFirstInteraction, { once: true, capture: true }),
-    );
-    return () => {
-      events.forEach((type) =>
-        document.removeEventListener(type, handleFirstInteraction, { capture: true }),
-      );
-    };
-  }, [attemptGreeting]);
 
   // "Hear it back": speak each new bot reply once, gated on !muted AND on
   // voice mode -- typing a message never triggers spoken output, only
