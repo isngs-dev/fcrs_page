@@ -117,11 +117,6 @@ class _Patched:
             patch("api.orchestrator.service.append_message", self.append_message),
             patch("api.orchestrator.service.get_working_memory", self.get_working_memory),
             patch("api.orchestrator.service.count_messages", self.count_messages),
-            patch("api.orchestrator.service.get_last_assistant_decision", self.get_last_assistant_decision),
-            patch(
-                "api.orchestrator.service.get_recent_assistant_decisions",
-                self.get_recent_assistant_decisions,
-            ),
             patch("api.orchestrator.service.get_message", self.get_message),
         ]
         for p in self._patchers:
@@ -157,13 +152,13 @@ async def test_preview_answer_grounded_answer() -> None:
     p.assert_never_persisted()
 
 
-async def test_preview_answer_clarify_band() -> None:
-    with _Patched(hybrid_result=HybridResult(chunks=[], confidence=0.4)) as p:
+async def test_preview_answer_low_confidence_with_knowledge_still_answers() -> None:
+    """Preview mirrors the live rule: retrieved knowledge -> grounded answer."""
+    with _Patched(hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4)) as p:
         result = await preview_answer(object(), _claims(), "something vague")
 
-    assert result.decision == "clarify"
+    assert result.decision == "answer"
     assert result.confidence == 0.4
-    assert result.sources == []
     p.assert_never_persisted()
 
 

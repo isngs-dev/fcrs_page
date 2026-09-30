@@ -32,7 +32,6 @@ from api.orchestrator.guardrails import (
 )
 from api.orchestrator.service import (
     _CHITCHAT_SYSTEM_PROMPT,
-    _CLARIFY_REPLY,
     _ESCALATE_REPLY,
     _FORMATTING_RULES,
     _GROUNDING_SYSTEM_PROMPT,
@@ -41,7 +40,6 @@ from api.orchestrator.service import (
     _INTENT_LABEL_DESCRIPTIONS,
     _NO_ANSWER_SENTINEL,
     _OFF_TOPIC_REPLY,
-    _REPEATED_LOW_CONFIDENCE_REPLY,
     _SCHEDULING_REPLY,
     _TURN_CAP_REPLY,
     Source,
@@ -282,14 +280,6 @@ class _Patched:
             patch("api.orchestrator.service.retrieve_hybrid", self.retrieve_hybrid),
             patch("api.orchestrator.service.provider_for", lambda cfg: self.provider),
             patch("api.orchestrator.service.count_messages", self.count_messages),
-            patch(
-                "api.orchestrator.service.get_last_assistant_decision",
-                self.get_last_assistant_decision,
-            ),
-            patch(
-                "api.orchestrator.service.get_recent_assistant_decisions",
-                self.get_recent_assistant_decisions,
-            ),
             patch("api.orchestrator.service.get_availability", self.get_availability),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
             patch(
@@ -307,12 +297,7 @@ class _Patched:
             p.stop()
 
 
-def _generate_plan(
-    *,
-    grounded: bool = True,
-    turns: int = 3,
-    prev_decision: str | None = None,
-) -> _GeneratePlan:
+def _generate_plan(*, grounded: bool = True) -> _GeneratePlan:
     return _GeneratePlan(
         conversation_id="conv-1",
         assistant_id="bot-1",
@@ -324,8 +309,6 @@ def _generate_plan(
         intent="question" if grounded else "chitchat",
         model="test-model",
         provider=MagicMock(),
-        turns=turns,
-        prev_decision=prev_decision,
     )
 
 
@@ -386,213 +369,30 @@ async def test_question_high_confidence_answers_grounded() -> None:
 # -- question -> clarify -------------------------------------------------------------
 
 
-async def test_question_middle_confidence_clarifies_no_generate() -> None:
-    """confidence in the middle band -> NO generate; reply == _CLARIFY_REPLY;
-    stored decision="clarify", grounded=False, sources=[], real confidence."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    p.provider.generate.assert_not_awaited()
-
-    assert len(p._append_calls) == 2
-    assistant_call = p._append_calls[1]
-    assert assistant_call["content"] == _CLARIFY_REPLY
-    assert assistant_call["decision"] == "clarify"
-    assert assistant_call["grounded"] is False
-    assert assistant_call["confidence"] == 0.4
-    assert assistant_call["sources"] == []
-
-    assert result.decision == "clarify"
-    assert result.reply == _CLARIFY_REPLY
-    assert result.confidence == 0.4
-    assert result.sources == []
-
-    # Resource-leak fix: no _GeneratePlan carries the provider onward for
-    # the clarify branch, so _resolve_turn must close it itself.
-    p.provider.aclose.assert_awaited_once()
-
-
 # -- question -> clarify -> repeated-low-confidence early escalate -------------------
-
-
-async def test_clarify_escalates_early_when_streak_cap_reached() -> None:
-    """default low_confidence_streak_cap=3: 2 prior consecutive
-    clarify/escalate turns + this clarify == 3 in a row -> escalate early
-    with _REPEATED_LOW_CONFIDENCE_REPLY, not another _CLARIFY_REPLY."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        recent_decisions=["clarify", "escalate"],
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    p.provider.generate.assert_not_awaited()
-    p.get_recent_assistant_decisions.assert_awaited_once()
-
-    assert len(p._append_calls) == 2
-    assistant_call = p._append_calls[1]
-    assert assistant_call["content"] == _REPEATED_LOW_CONFIDENCE_REPLY
-    assert assistant_call["decision"] == "escalate"
-    assert assistant_call["grounded"] is False
-    assert assistant_call["confidence"] == 0.4
-    assert assistant_call["sources"] == []
-
-    assert result.decision == "escalate"
-    assert result.reply == _REPEATED_LOW_CONFIDENCE_REPLY
-    assert result.confidence == 0.4
-    p.provider.aclose.assert_awaited_once()
-
-
-async def test_clarify_stays_clarify_when_streak_below_cap() -> None:
-    """Only 1 prior clarify + this one == 2, below the default cap of 3 ->
-    normal _CLARIFY_REPLY, not an early escalate."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        recent_decisions=["clarify"],
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    assert result.decision == "clarify"
-    assert result.reply == _CLARIFY_REPLY
-
-
-async def test_clarify_streak_broken_by_prior_answer_stays_clarify() -> None:
-    """The most recent prior decision was a real "answer" -- the streak is
-    broken, so this clarify is treated as turn 1 of a new streak, not
-    escalated regardless of what came before the answer."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        recent_decisions=["answer", "clarify", "escalate"],
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    assert result.decision == "clarify"
-    assert result.reply == _CLARIFY_REPLY
-
-
-async def test_clarify_streak_broken_by_null_legacy_decision_stays_clarify() -> None:
-    """A legacy pre-0024 row with decision=None breaks the streak, same as
-    an "answer" would -- never treated as a wildcard match."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        recent_decisions=[None, "clarify", "escalate"],
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    assert result.decision == "clarify"
-    assert result.reply == _CLARIFY_REPLY
-
-
-async def test_clarify_escalates_early_with_lower_per_tenant_streak_cap() -> None:
-    """A tenant configured with low_confidence_streak_cap=2 escalates after
-    just 1 prior clarify + this one, instead of waiting for the default 3."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        recent_decisions=["clarify"],
-        orchestrator_config=_orch_cfg(low_confidence_streak_cap=2),
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    assert result.decision == "escalate"
-    assert result.reply == _REPEATED_LOW_CONFIDENCE_REPLY
-
-
-async def test_clarify_early_escalate_resolves_schedule_cta_action() -> None:
-    """The early escalate resolves `action` from tenant availability, same
-    as every other escalate branch (S10.4 decision 4/5)."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        recent_decisions=["clarify", "escalate"],
-        availability=_availability(available=True),
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    assert result.decision == "escalate"
-    assert result.action == "schedule_cta"
-
-
-async def test_clarify_early_escalate_resolves_lead_form_action_without_availability() -> None:
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        recent_decisions=["clarify", "escalate"],
-        availability=None,
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    assert result.decision == "escalate"
-    assert result.action == "lead_form"
-
-
-async def test_stream_clarify_escalates_early_when_streak_cap_reached() -> None:
-    """The streaming mirror of test_clarify_escalates_early_when_streak_cap_reached."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        recent_decisions=["clarify", "escalate"],
-    )
-    with p:
-        events = await _collect(
-            answer_turn_stream(db=object(), claims=_claims(), message="tell me about it")
-        )
-
-    done = next(e for e in events if e.type == "done")
-    assert done.data["decision"] == "escalate"
-    assert done.data["reply"] == _REPEATED_LOW_CONFIDENCE_REPLY
-    p.provider.generate.assert_not_awaited()
-    p.provider.stream.assert_not_called()
 
 
 # -- question -> escalate (sub-floor) -------------------------------------------------
 
 
-async def test_question_low_confidence_escalates_no_generate() -> None:
-    """confidence < escalate_threshold -> NO generate; reply ==
-    _ESCALATE_REPLY; decision="escalate", grounded=False, sources=[], real
-    (low) confidence. Replaces the retired _LOW_CONFIDENCE_REPLY short-circuit
-    test -- same "below-floor never calls generate" property, now via the
-    unified decision."""
+async def test_question_low_confidence_with_retrieved_knowledge_answers_grounded() -> None:
+    """Answer-directly rule: ANY retrieved chunk goes to the model grounded,
+    however low its confidence -- the grounding prompt + NO_ANSWER_FOUND
+    sentinel are the guard, not a threshold. Confidence is still recorded."""
     p = _Patched(
         classify_return="question",
         hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.1),
     )
     with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="what is the capital of France?")
+        result = await answer_turn(db=object(), claims=_claims(), message="do you do gutters?")
 
-    p.provider.generate.assert_not_awaited()
-
-    assert len(p._append_calls) == 2
+    p.provider.generate.assert_awaited_once()
     assistant_call = p._append_calls[1]
-    assert assistant_call["content"] == _ESCALATE_REPLY
-    assert assistant_call["decision"] == "escalate"
-    assert assistant_call["grounded"] is False
+    assert assistant_call["decision"] == "answer"
+    assert assistant_call["grounded"] is True
     assert assistant_call["confidence"] == 0.1
-    assert assistant_call["sources"] == []
-
-    assert result.decision == "escalate"
-    assert result.reply == _ESCALATE_REPLY
-    assert result.confidence == 0.1
-    assert result.sources == []
-
-    # Resource-leak fix: sub-floor escalate never reaches generate/stream,
-    # so _resolve_turn must close the provider itself.
-    p.provider.aclose.assert_awaited_once()
+    assert result.decision == "answer"
+    assert result.sources != []
 
 
 async def test_question_empty_retrieval_zero_confidence_escalates() -> None:
@@ -827,23 +627,6 @@ async def test_classify_llm_error_propagates_user_turn_preserved() -> None:
 # -- per-tenant thresholds honored ----------------------------------------------------
 
 
-async def test_per_tenant_threshold_honored() -> None:
-    """A stub get_orchestrator_config returning a HIGH answer_threshold (0.9)
-    -> a "question" at confidence 0.6 -> clarify (would be "answer" under
-    defaults) -- proves the decision reads the tenant config, not a
-    constant."""
-    p = _Patched(
-        classify_return="question",
-        orchestrator_config=_orch_cfg(answer_threshold=0.9, escalate_threshold=0.35),
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.6),
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="what can the ai agent do?")
-
-    assert result.decision == "clarify"
-    p.provider.generate.assert_not_awaited()
-
-
 # -- idempotent replay returns decision ------------------------------------------------
 
 
@@ -856,7 +639,7 @@ async def test_idempotent_replay_returns_decision_without_classify_rag_or_genera
     stored = Message(
         message_id="turn-2-a",
         role="bot",
-        content=_CLARIFY_REPLY,
+        content="Could you tell me a bit more?",
         intent="question",
         confidence=0.42,
         tokens=None,
@@ -877,7 +660,7 @@ async def test_idempotent_replay_returns_decision_without_classify_rag_or_genera
 
     p.get_message.assert_awaited_once()
     assert result.message_id == "turn-2-a"
-    assert result.reply == _CLARIFY_REPLY
+    assert result.reply == "Could you tell me a bit more?"
     assert result.decision == "clarify"
     assert result.confidence == 0.42
     assert result.sources == []
@@ -1119,6 +902,20 @@ async def test_grounded_no_answer_sentinel_uses_lead_form_without_availability()
     assert p._append_calls[1]["action"] == "lead_form"
 
 
+def test_finalize_generation_grounded_no_answer_always_escalates() -> None:
+    """No clarify step at all: an unanswerable grounded question goes straight
+    to the booking offer, so the visitor is never looped."""
+    finalized = _finalize_generation(_NO_ANSWER_SENTINEL, _generate_plan())
+    assert finalized.decision == "escalate"
+    assert finalized.reply == _ESCALATE_REPLY
+    assert finalized.resolve_escalate_action is True
+
+
+def test_prompts_carry_the_no_overpromising_tone_rules() -> None:
+    for prompt in (_GROUNDING_SYSTEM_PROMPT, _CHITCHAT_SYSTEM_PROMPT):
+        assert "Never overpromise or exaggerate" in prompt
+
+
 def test_finalize_generation_no_answer_protocol_only_applies_to_grounded_generation() -> None:
     exact = _finalize_generation(_NO_ANSWER_SENTINEL, _generate_plan())
     embedded = _finalize_generation(f"I'm sorry. {_NO_ANSWER_SENTINEL}", _generate_plan())
@@ -1158,75 +955,6 @@ def test_finalize_generation_guardrail_precedes_no_answer_protocol() -> None:
     assert outcome.guardrail_flag == RULE_INSTRUCTION_LEAK
 
 
-@pytest.mark.parametrize("turns", [1, 2])
-@pytest.mark.parametrize("prev_decision", [None, "answer", "escalate"])
-def test_finalize_generation_early_grounded_no_answer_clarifies_once(
-    turns: int,
-    prev_decision: str | None,
-) -> None:
-    outcome = _finalize_generation(
-        _NO_ANSWER_SENTINEL,
-        _generate_plan(turns=turns, prev_decision=prev_decision),
-    )
-
-    assert outcome.reply == _CLARIFY_REPLY
-    assert outcome.decision == "clarify"
-    assert outcome.sources == []
-    assert outcome.grounded is False
-    assert outcome.action is None
-    assert outcome.guardrail_flag is None
-    assert outcome.resolve_escalate_action is False
-
-
-@pytest.mark.parametrize(
-    ("turns", "prev_decision"),
-    [(3, None), (2, "clarify")],
-)
-def test_finalize_generation_no_answer_escalates_outside_clarify_gate(
-    turns: int,
-    prev_decision: str | None,
-) -> None:
-    outcome = _finalize_generation(
-        _NO_ANSWER_SENTINEL,
-        _generate_plan(turns=turns, prev_decision=prev_decision),
-    )
-
-    assert outcome.reply == _ESCALATE_REPLY
-    assert outcome.decision == "escalate"
-    assert outcome.resolve_escalate_action is True
-
-
-async def test_grounded_no_answer_turn_one_clarifies_without_scheduling_action() -> None:
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.557),
-        completion=Completion(
-            text=_NO_ANSWER_SENTINEL,
-            model="claude-opus-4-8",
-            input_tokens=10,
-            output_tokens=5,
-        ),
-        count_messages_return=1,
-        prev_decision=None,
-    )
-    db = object()
-    claims = _claims()
-    with p:
-        result = await answer_turn(db=db, claims=claims, message="I have a question about roofing")
-
-    assert result.reply == _CLARIFY_REPLY
-    assert result.decision == "clarify"
-    assert result.action is None
-    assert result.sources == []
-    assert result.confidence == 0.557
-    p.get_last_assistant_decision.assert_awaited_once_with(db, claims, "conv-new")
-    p.get_availability.assert_not_awaited()
-    assistant_call = p._append_calls[1]
-    assert assistant_call["decision"] == "clarify"
-    assert assistant_call["action"] is None
-    assert assistant_call["sources"] == []
-
-
 async def test_grounded_no_answer_turn_two_after_clarify_escalates() -> None:
     p = _Patched(
         classify_return="question",
@@ -1247,44 +975,6 @@ async def test_grounded_no_answer_turn_two_after_clarify_escalates() -> None:
     assert result.decision == "escalate"
     assert result.action == "schedule_cta"
     p.get_availability.assert_awaited_once()
-
-
-async def test_previous_assistant_decision_is_read_only_for_grounded_answer() -> None:
-    """The SR-13 read is paid only by the one branch that can use its result."""
-    grounded = _Patched()
-    with grounded:
-        await answer_turn(db=object(), claims=_claims(), message="A grounded question")
-    grounded.get_last_assistant_decision.assert_awaited_once()
-
-    chitchat = _Patched(classify_return="chitchat")
-    with chitchat:
-        await answer_turn(db=object(), claims=_claims(), message="hello")
-    chitchat.get_last_assistant_decision.assert_not_awaited()
-
-    turn_cap = _Patched(count_messages_return=7)
-    with turn_cap:
-        await answer_turn(db=object(), claims=_claims(), message="over the cap")
-    turn_cap.get_last_assistant_decision.assert_not_awaited()
-
-    for intent in ("off_topic", "scheduling_request"):
-        intent_escalate = _Patched(classify_return=intent)
-        with intent_escalate:
-            await answer_turn(db=object(), claims=_claims(), message="route elsewhere")
-        intent_escalate.get_last_assistant_decision.assert_not_awaited()
-
-    pre_generation_clarify = _Patched(
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-    )
-    with pre_generation_clarify:
-        await answer_turn(db=object(), claims=_claims(), message="need more context")
-    pre_generation_clarify.get_last_assistant_decision.assert_not_awaited()
-
-    sub_floor_escalate = _Patched(
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.2),
-    )
-    with sub_floor_escalate:
-        await answer_turn(db=object(), claims=_claims(), message="out of scope")
-    sub_floor_escalate.get_last_assistant_decision.assert_not_awaited()
 
 
 def test_prompts_require_renderable_formatting_and_grounded_sentinel_only() -> None:
@@ -1406,22 +1096,6 @@ async def test_clean_chitchat_generation_passes_through_unflagged() -> None:
 # -- S10.3: fixed-template branches are NOT scanned --------------------------------------
 
 
-async def test_clarify_branch_action_none_guardrail_flag_none() -> None:
-    """clarify (fixed template, never scanned) -> action is None,
-    guardrail_flag is None."""
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    assert result.decision == "clarify"
-    assert result.action is None
-    assert result.guardrail_flag is None
-    p.provider.generate.assert_not_awaited()
-
-
 async def test_off_topic_escalate_sets_action_lead_form_guardrail_flag_none() -> None:
     """A genuine off_topic escalate (fixed template, never scanned) ->
     action=="lead_form", guardrail_flag is None."""
@@ -1466,20 +1140,6 @@ async def test_sub_floor_escalate_sets_action_lead_form() -> None:
     assert result.action == "lead_form"
     assert result.guardrail_flag is None
     p.provider.generate.assert_not_awaited()
-
-
-async def test_scan_output_not_consulted_on_clarify_branch() -> None:
-    """A spy on scan_output confirms it is NOT called on the fixed-template
-    clarify branch."""
-    with patch("api.orchestrator.service.scan_output") as spy_scan:
-        p = _Patched(
-            classify_return="question",
-            hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-        )
-        with p:
-            await answer_turn(db=object(), claims=_claims(), message="tell me about it")
-
-    spy_scan.assert_not_called()
 
 
 async def test_scan_output_not_consulted_on_escalate_branch() -> None:
@@ -1980,7 +1640,7 @@ async def test_blocked_never_calls_get_availability_always_lead_form() -> None:
 # -- answer/clarify emit no action -----------------------------------------------------
 
 
-async def test_answer_and_clarify_emit_no_action_regardless_of_availability() -> None:
+async def test_answers_emit_no_action_regardless_of_availability_or_confidence() -> None:
     p = _Patched(
         classify_return="question",
         hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
@@ -1997,9 +1657,9 @@ async def test_answer_and_clarify_emit_no_action_regardless_of_availability() ->
         availability=_availability(True),
     )
     with p2:
-        clarify_result = await answer_turn(db=object(), claims=_claims(), message="tell me more")
-    assert clarify_result.decision == "clarify"
-    assert clarify_result.action is None
+        low_result = await answer_turn(db=object(), claims=_claims(), message="tell me more")
+    assert low_result.decision == "answer"
+    assert low_result.action is None
 
 
 # -- reply copy is scheduling- + consent-forward ---------------------------------------
@@ -2181,42 +1841,31 @@ async def test_stream_guardrail_block_after_stream_ends_deltas_and_done(caplog: 
 # -- stream: no-answer protocol after the stream ends -------------------------------------
 
 
-async def test_stream_split_no_answer_sentinel_clarifies_at_done_without_schedule_action() -> None:
+async def test_stream_split_no_answer_sentinel_escalates_at_done() -> None:
     """The complete streamed text, not individual chunks, controls the
-    no-answer override. Deltas carry the raw protocol token, while the done
-    event and stored turn contain the authoritative early-turn clarify."""
+    no-answer override: the done event and stored turn carry the booking
+    offer (escalate), never a "tell me more" clarify -- even on turn 1."""
     sentinel_parts = ["NO_ANSWER", "_FOUND"]
     p = _Patched(
         classify_return="question",
         hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
         stream_chunks=sentinel_parts,
         count_messages_return=1,
-        prev_decision=None,
     )
     with p:
         events = await _collect(
             answer_turn_stream(db=object(), claims=_claims(), message="What is your pricing?"),
         )
 
-    deltas = [event for event in events if event.type == "delta"]
-    assert [event.data["text"] for event in deltas] == sentinel_parts
-
     done = events[-1]
     assert done.type == "done"
-    assert done.data["reply"] == _CLARIFY_REPLY
-    assert done.data["decision"] == "clarify"
+    assert done.data["reply"] == _ESCALATE_REPLY
+    assert done.data["decision"] == "escalate"
     assert done.data["sources"] == []
-    assert done.data["action"] is None
-    assert done.data["reply"] != "".join(sentinel_parts)
-
     assistant_call = p._append_calls[1]
-    assert assistant_call["content"] == _CLARIFY_REPLY
-    assert assistant_call["decision"] == "clarify"
+    assert assistant_call["content"] == _ESCALATE_REPLY
+    assert assistant_call["decision"] == "escalate"
     assert assistant_call["grounded"] is False
-    assert assistant_call["sources"] == []
-    assert assistant_call["action"] is None
-    assert assistant_call["tokens"] is None
-    p.get_availability.assert_not_awaited()
 
 
 # -- stream: empty generation -> empty_output block --------------------------------------
@@ -2332,22 +1981,6 @@ async def test_stream_sub_floor_escalate_emits_no_deltas() -> None:
     p.provider.stream.assert_not_called()
     assert [e.type for e in events] == ["done"]
     assert events[0].data["decision"] == "escalate"
-
-
-async def test_stream_clarify_emits_no_deltas() -> None:
-    p = _Patched(
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.4),
-    )
-    with p:
-        events = await _collect(
-            answer_turn_stream(db=object(), claims=_claims(), message="tell me about it"),
-        )
-
-    p.provider.stream.assert_not_called()
-    assert [e.type for e in events] == ["done"]
-    assert events[0].data["decision"] == "clarify"
-    assert events[0].data["reply"] == _CLARIFY_REPLY
 
 
 # -- stream: idempotent replay = single done, no deltas, no store, no LLM ----------------

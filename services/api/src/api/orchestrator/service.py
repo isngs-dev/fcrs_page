@@ -2,10 +2,10 @@
 
 ``answer_turn`` composes the modules S2-S6 already shipped, plus S10.2's own
 intent gate + 3-way decision, into one turn: resolve the tenant's LLM config,
-resolve the tenant's orchestrator thresholds, get-or-create the conversation,
+resolve the tenant's orchestrator config, get-or-create the conversation,
 store the user turn, classify intent, branch on intent (chit-chat -> direct
 answer, scheduling_request/off_topic -> escalate, question/other -> grounded
-RAG + confidence-band decision), store the assistant turn, and return the
+RAG answer), store the assistant turn, and return the
 answer + decision + sources. No new RAG/LLM/store *mechanisms* -- this module
 only composes their existing public functions, always with the caller's own
 VISITOR ``claims``.
@@ -13,12 +13,10 @@ VISITOR ``claims``.
 No silent fallback (CLAUDE.md §3): a misconfigured tenant fails before any
 store write (decision 9); a runtime classify/RAG/LLM failure fails loud AFTER
 the user turn is durably stored -- never a fabricated answer, never data
-loss. The 3-way decision (``answer``/``clarify``/``escalate``) is a PURE
-function of the closed-set intent label + the numeric confidence vs the
-tenant's two thresholds -- no fuzzy LLM-decided branch selection. This
-SUPERSEDES the S10.1 amendment's standalone ``orchestrator_confidence_floor``
-short-circuit and ``_LOW_CONFIDENCE_REPLY`` -- "below floor" is now simply
-``confidence < cfg.escalate_threshold`` inside the unified decision.
+loss. Branch selection is a PURE function of the closed-set intent label
+and whether retrieval found anything -- no fuzzy LLM-decided branching. The
+retrieval confidence is still recorded on every grounded turn (analytics),
+but no longer gates answering (see "Grounded path" below).
 
 S10.5 splits the pipeline at the LLM call (decision 1): ``_resolve_turn``
 runs everything BEFORE a ``generate``/``stream`` call and returns a
@@ -28,12 +26,11 @@ scan + degrade logic, shared by both the non-streaming ``answer_turn`` and
 the streaming ``answer_turn_stream``. This keeps the two delivery modes from
 ever drifting -- a turn-cap or guardrail fix is made once, not twice.
 
-Post-generation no-answer override: a grounded generation carrying the
-``_NO_ANSWER_SENTINEL`` clarifies only on turns 1-2 when the prior assistant
-decision was not ``"clarify"``; every other no-answer escalates at this same
-seam. The pre-generation ``_decide()`` confidence band remains pure and
-untouched; this is a second deterministic post-generation check alongside
-guardrails, not a revival of the S10.1 free-text confidence floor.
+Grounded path (answer-directly): any retrieved knowledge goes to the model
+with the grounding prompt, whatever its confidence score -- no pre-generation
+confidence band. A generation carrying ``_NO_ANSWER_SENTINEL`` escalates to
+the booking offer at the post-generation seam; there is no "tell me more"
+clarify step, so an unanswerable question never loops the visitor.
 """
 from __future__ import annotations
 
@@ -52,16 +49,14 @@ from api.conversation_store.repository import (
     append_message,
     count_messages,
     create_conversation,
-    get_last_assistant_decision,
     get_message,
-    get_recent_assistant_decisions,
     get_working_memory,
 )
 from api.leads.repository import get_lead, get_lead_id_by_visitor_id
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, LLMError, LLMProvider
-from api.orchestrator.config_repository import OrchestratorConfig, get_orchestrator_config
+from api.orchestrator.config_repository import get_orchestrator_config
 from api.orchestrator.guardrails import scan_output
 from api.rag.service import HybridMatch, retrieve_hybrid
 from api.scheduling.repository import get_availability
@@ -168,8 +163,6 @@ class _GeneratePlan:
     intent: str | None
     model: str
     provider: LLMProvider
-    turns: int
-    prev_decision: str | None
 
 
 @dataclass(frozen=True)
@@ -219,8 +212,6 @@ _INTENT_LABEL_DESCRIPTIONS: dict[str, str] = {
 }
 
 _NO_ANSWER_SENTINEL = "NO_ANSWER_FOUND"
-# SR-13 decision 3: an early no-answer clarifies at most once.
-_NO_ANSWER_CLARIFY_MAX_TURNS = 2
 
 _FORMATTING_RULES = (
     " Formatting rules: write short plain paragraphs. You may use **bold**, "
@@ -232,6 +223,11 @@ _FORMATTING_RULES = (
     "directly answers the question; do not restate the question, pad with "
     "filler, or add generic caveats. Still give a specific, useful answer -- "
     "do not cut real substance just to hit a shorter length."
+    " Tone rules: be factual and measured, like a knowledgeable staff member. "
+    "Never overpromise or exaggerate -- no guarantees, superlatives (best, "
+    "fastest, #1, unbeatable), hype, urgency, or exclamation-heavy sales talk "
+    "unless the context states it verbatim. If something depends on an "
+    "inspection, quote, or the customer's situation, say so plainly."
 )
 
 _GROUNDING_SYSTEM_PROMPT = (
@@ -252,14 +248,6 @@ _CHITCHAT_SYSTEM_PROMPT = (
     "invent facts, prices, or commitments; if asked something specific, "
     "invite them to ask about the business."
     + _FORMATTING_RULES
-)
-
-# Fixed clarify template (decision 6) -- deterministic, cheap, no generate
-# call; sidesteps the weak-model self-censor gap that motivated the S10.1
-# amendment (we do not re-trust the model to gracefully decline).
-_CLARIFY_REPLY = (
-    "Could you tell me a bit more about what you're looking for? A few "
-    "extra details will help me find the right answer."
 )
 
 # Fixed escalate template (S10.4 decision 7) -- scheduling-forward AND
@@ -310,22 +298,6 @@ _TURN_CAP_REPLY = (
     "out."
 )
 
-# Fixed repeated-low-confidence template -- distinct from _ESCALATE_REPLY:
-# fires when the last `cfg.low_confidence_streak_cap` assistant turns in a
-# row already landed in clarify/escalate (never a real "answer"), so another
-# _CLARIFY_REPLY would just repeat the same non-answer a third+ time. Warm,
-# not apologetic-to-the-point-of-unhelpful, and explicitly invites the
-# visitor to keep asking about anything else -- this is a per-topic
-# escalation, not a conversation-ending one; the very next turn still runs
-# the full pipeline normally and can answer confidently if it's a different,
-# well-covered question. Same dual-purpose schedule_cta/lead_form phrasing.
-_REPEATED_LOW_CONFIDENCE_REPLY = (
-    "I don't want to keep guessing on this one -- let's get you a proper "
-    "answer from someone on the team. Book a call if that's available, or "
-    "share your name and email below and I'll make sure it gets to the "
-    "right person. Happy to help with anything else in the meantime, too."
-)
-
 # Fixed identity-gate template (SR-14 D1/D4) -- the trusted-constant reply
 # shown on a gated tenant's first bot reply (and every subsequent reply,
 # D2's absolute gate) when the visitor has no captured identity yet. The
@@ -352,22 +324,6 @@ _GUARDRAIL_SAFE_REPLY = (
 # expected chat role ('user'|'assistant'|'system') -- the store never sends
 # role="bot" to a provider (S4.1 decision 5 vs S10.1 decision 4).
 _ROLE_MAP: dict[str, str] = {"user": "user", "bot": "assistant", "system": "system"}
-
-
-def _decide(confidence: float, cfg: OrchestratorConfig) -> Decision:
-    """The pure confidence-band function (decision 2) for the grounded path.
-
-    ``confidence >= cfg.answer_threshold`` -> ``answer``;
-    ``cfg.escalate_threshold <= confidence < cfg.answer_threshold`` ->
-    ``clarify``; ``confidence < cfg.escalate_threshold`` -> ``escalate``.
-    When ``cfg.escalate_threshold == cfg.answer_threshold`` the clarify band
-    collapses -- only ``answer``/``escalate`` are ever returned.
-    """
-    if confidence >= cfg.answer_threshold:
-        return "answer"
-    if confidence >= cfg.escalate_threshold:
-        return "clarify"
-    return "escalate"
 
 
 async def _has_captured_identity(db: Database, claims: AuthClaims) -> bool:
@@ -632,8 +588,6 @@ async def _resolve_turn(
             intent=intent,
             model=config.model,
             provider=provider,
-            turns=turns,
-            prev_decision=None,
         )
 
     if intent in ("scheduling_request", "off_topic"):
@@ -682,7 +636,6 @@ async def _resolve_turn(
     # general-knowledge answer needs. Mirrors chitchat's outcome shape too:
     # grounded=False, confidence=None, sources=[].
     if not config.embedding_model:
-        prev_decision = await get_last_assistant_decision(db, claims, conversation_id)
         wm = await get_working_memory(
             db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
         )
@@ -698,16 +651,19 @@ async def _resolve_turn(
             intent=intent,
             model=config.model,
             provider=provider,
-            turns=turns,
-            prev_decision=prev_decision,
         )
 
     result = await retrieve_hybrid(db, claims, message, k=settings.orchestrator_rag_k)
     confidence = result.confidence
-    decision = _decide(confidence, cfg)
 
-    if decision == "answer":
-        prev_decision = await get_last_assistant_decision(db, claims, conversation_id)
+    # Any retrieved knowledge -> let the model answer directly, grounded on it
+    # (what "Suggest a reply" drafts), whatever the confidence score: the
+    # grounding prompt's ONLY-the-context rule + NO_ANSWER_FOUND sentinel
+    # (_finalize_generation) are the guard against invented answers, not a
+    # pre-generation threshold. No fixed "tell me more" clarify step -- a
+    # question the model can't answer goes straight to the booking offer,
+    # so the visitor is never looped.
+    if result.chunks:
         wm = await get_working_memory(
             db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
         )
@@ -724,61 +680,10 @@ async def _resolve_turn(
             intent=intent,
             model=config.model,
             provider=provider,
-            turns=turns,
-            prev_decision=prev_decision,
         )
 
-    if decision == "clarify":
-        # Repeated-low-confidence early escalate: if the preceding assistant
-        # turns already ran up a streak of non-"answer" decisions (clarify
-        # or escalate) reaching cfg.low_confidence_streak_cap - 1, this
-        # clarify would be the Nth non-answer in a row on (very likely) the
-        # same topic -- escalate now instead of asking to clarify again.
-        # `None` decisions (legacy rows, or a "blocked"/"identity_gate" turn
-        # in between) break the streak, same as an "answer" would -- only a
-        # contiguous run of literal "clarify"/"escalate" counts.
-        recent_decisions = await get_recent_assistant_decisions(
-            db, claims, conversation_id, limit=cfg.low_confidence_streak_cap
-        )
-        streak = 0
-        for prior in recent_decisions:
-            if prior in ("clarify", "escalate"):
-                streak += 1
-            else:
-                break
-        if streak + 1 >= cfg.low_confidence_streak_cap:
-            action = await _schedule_action(db, claims)
-            await provider.aclose()
-            return _FixedOutcome(
-                conversation_id=conversation_id,
-                assistant_id=assistant_id,
-                reply=_REPEATED_LOW_CONFIDENCE_REPLY,
-                decision="escalate",
-                confidence=confidence,
-                sources=[],
-                intent=intent,
-                action=action,
-                grounded=False,
-                tokens=None,
-            )
-
-        # Fixed-template branch -- our own trusted constant, never scanned.
-        # No _GeneratePlan will carry `provider` onward, so close it here.
-        await provider.aclose()
-        return _FixedOutcome(
-            conversation_id=conversation_id,
-            assistant_id=assistant_id,
-            reply=_CLARIFY_REPLY,
-            decision="clarify",
-            confidence=confidence,
-            sources=[],
-            intent=intent,
-            action=None,
-            grounded=False,
-            tokens=None,
-        )
-
-    # escalate (sub-floor confidence) -- fixed-template, never scanned.
+    # Nothing retrieved at all -- offer the booking call directly (fixed
+    # template, never scanned; no point paying for a generate call).
     action = await _schedule_action(db, claims)
     await provider.aclose()
     return _FixedOutcome(
@@ -802,9 +707,9 @@ def _finalize_generation(text: str, plan: _GeneratePlan) -> _FinalizedGeneration
     violation, returns the safe reply + ``decision="blocked"`` +
     ``action="lead_form"`` + ``grounded=False`` + ``sources=[]`` +
     ``guardrail_flag=<rule>``. A clean grounded response containing the
-    no-answer protocol sentinel becomes ``decision="clarify"`` only within
-    the early-turn, never-twice gate; every other sentinel gets the regular
-    escalation reply and the caller lazily resolves its CTA action.
+    no-answer protocol sentinel gets the escalation reply (the booking offer)
+    and the caller lazily resolves its CTA action -- never a "tell me more"
+    clarify, so an unanswerable question can't loop the visitor.
     Otherwise returns the clean text + the plan's own decision/sources/
     grounded, ``action=None``, ``guardrail_flag=None``.
     Shared verbatim by ``answer_turn`` (non-streaming) and
@@ -823,18 +728,6 @@ def _finalize_generation(text: str, plan: _GeneratePlan) -> _FinalizedGeneration
             guardrail_flag=guardrail.rule,
         )
     if plan.grounded and _NO_ANSWER_SENTINEL in text:
-        if (
-            plan.turns <= _NO_ANSWER_CLARIFY_MAX_TURNS
-            and plan.prev_decision != "clarify"
-        ):
-            return _FinalizedGeneration(
-                reply=_CLARIFY_REPLY,
-                decision="clarify",
-                sources=[],
-                grounded=False,
-                action=None,
-                guardrail_flag=None,
-            )
         return _FinalizedGeneration(
             reply=_ESCALATE_REPLY,
             decision="escalate",
@@ -1240,7 +1133,6 @@ async def preview_answer(db: Database, claims: AuthClaims, message: str) -> Prev
             "LLM is not configured for this tenant.",
             code="LLM_NOT_CONFIGURED",
         )
-    cfg = await get_orchestrator_config(db, claims)
     settings = get_api_settings()
     empty_wm: dict[str, Any] = {"summary": None, "summary_message_count": 0, "messages": []}
 
@@ -1269,16 +1161,14 @@ async def preview_answer(db: Database, claims: AuthClaims, message: str) -> Prev
                 intent=intent,
                 model=config.model,
                 provider=provider,
-                turns=1,
-                prev_decision=None,
-            )
+                )
         else:
             result = await retrieve_hybrid(db, claims, message, k=settings.orchestrator_rag_k)
-            decision = _decide(result.confidence, cfg)
-            if decision != "answer":
-                reply = _CLARIFY_REPLY if decision == "clarify" else _ESCALATE_REPLY
+            # Same rule as a live turn: answer from whatever was retrieved.
+            if not result.chunks:
                 return PreviewResult(
-                    reply=reply, decision=decision, confidence=result.confidence, sources=[],
+                    reply=_ESCALATE_REPLY, decision="escalate",
+                    confidence=result.confidence, sources=[],
                 )
             plan = _GeneratePlan(
                 conversation_id="",
@@ -1291,9 +1181,7 @@ async def preview_answer(db: Database, claims: AuthClaims, message: str) -> Prev
                 intent=intent,
                 model=config.model,
                 provider=provider,
-                turns=1,
-                prev_decision=None,
-            )
+                )
 
         completion = await provider.generate(
             plan.prompt, model=plan.model, max_tokens=settings.llm_max_tokens,

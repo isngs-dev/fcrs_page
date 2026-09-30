@@ -54,7 +54,7 @@ def _config() -> LLMConfig:
 async def test_every_downstream_call_carries_tenant_a_claims() -> None:
     """A visitor of tenant A drives a turn -- every downstream call receives
     claims with tenant_id == tenant A, including get_orchestrator_config,
-    count_messages, get_last_assistant_decision, and provider.classify
+    count_messages, and provider.classify
     (called with tenant A's own model)."""
     get_llm_config = AsyncMock(return_value=_config())
     get_orchestrator_config = AsyncMock(
@@ -65,7 +65,6 @@ async def test_every_downstream_call_carries_tenant_a_claims() -> None:
     append_message = AsyncMock(return_value="msg-1")
     get_working_memory = AsyncMock(return_value={"summary": None, "summary_message_count": 0, "messages": []})
     count_messages = AsyncMock(return_value=1)
-    get_last_assistant_decision = AsyncMock(return_value=None)
     get_availability = AsyncMock(return_value=None)
     retrieve_hybrid = AsyncMock(
         return_value=HybridResult(
@@ -98,7 +97,6 @@ async def test_every_downstream_call_carries_tenant_a_claims() -> None:
         patch("api.orchestrator.service.append_message", append_message),
         patch("api.orchestrator.service.get_working_memory", get_working_memory),
         patch("api.orchestrator.service.count_messages", count_messages),
-        patch("api.orchestrator.service.get_last_assistant_decision", get_last_assistant_decision),
         patch("api.orchestrator.service.get_availability", get_availability),
         patch("api.orchestrator.service.retrieve_hybrid", retrieve_hybrid),
         patch("api.orchestrator.service.provider_for", provider_for),
@@ -112,7 +110,6 @@ async def test_every_downstream_call_carries_tenant_a_claims() -> None:
         append_message,
         get_working_memory,
         count_messages,
-        get_last_assistant_decision,
         get_availability,
         retrieve_hybrid,
     ):
@@ -128,11 +125,10 @@ async def test_every_downstream_call_carries_tenant_a_claims() -> None:
     # role="user" turn count, once for role="bot" decision="identity_gate" to
     # net out gate turns from the turn-cap budget.
     assert count_messages.await_count == 2
-    get_last_assistant_decision.assert_awaited_once()
-    get_availability.assert_not_awaited()
+    get_availability.assert_awaited_once()
 
-    # The clarify outcome exposes/stores no tenant or visitor identifier.
-    assert result.decision == "clarify"
+    # The no-answer booking offer exposes/stores no tenant or visitor identifier.
+    assert result.decision == "escalate"
     assert _TENANT_A not in result.reply
     assert "visitor-a" not in result.reply
     assistant_kwargs = append_message.await_args_list[1].kwargs
@@ -153,7 +149,6 @@ async def test_guardrail_block_still_carries_tenant_a_claims_scan_output_tenant_
     append_message = AsyncMock(return_value="msg-1")
     get_working_memory = AsyncMock(return_value={"summary": None, "summary_message_count": 0, "messages": []})
     count_messages = AsyncMock(return_value=1)
-    get_last_assistant_decision = AsyncMock(return_value=None)
     get_availability = AsyncMock(return_value=None)
     retrieve_hybrid = AsyncMock(
         return_value=HybridResult(
@@ -185,7 +180,6 @@ async def test_guardrail_block_still_carries_tenant_a_claims_scan_output_tenant_
         patch("api.orchestrator.service.append_message", append_message),
         patch("api.orchestrator.service.get_working_memory", get_working_memory),
         patch("api.orchestrator.service.count_messages", count_messages),
-        patch("api.orchestrator.service.get_last_assistant_decision", get_last_assistant_decision),
         patch("api.orchestrator.service.get_availability", get_availability),
         patch("api.orchestrator.service.retrieve_hybrid", retrieve_hybrid),
         patch("api.orchestrator.service.provider_for", provider_for),
@@ -281,7 +275,6 @@ async def test_stream_every_downstream_call_carries_tenant_a_claims() -> None:
     append_message = AsyncMock(return_value="msg-1")
     get_working_memory = AsyncMock(return_value={"summary": None, "summary_message_count": 0, "messages": []})
     count_messages = AsyncMock(return_value=1)
-    get_last_assistant_decision = AsyncMock(return_value=None)
     get_availability = AsyncMock(return_value=None)
     retrieve_hybrid = AsyncMock(
         return_value=HybridResult(
@@ -307,7 +300,6 @@ async def test_stream_every_downstream_call_carries_tenant_a_claims() -> None:
         patch("api.orchestrator.service.append_message", append_message),
         patch("api.orchestrator.service.get_working_memory", get_working_memory),
         patch("api.orchestrator.service.count_messages", count_messages),
-        patch("api.orchestrator.service.get_last_assistant_decision", get_last_assistant_decision),
         patch("api.orchestrator.service.get_availability", get_availability),
         patch("api.orchestrator.service.retrieve_hybrid", retrieve_hybrid),
         patch("api.orchestrator.service.provider_for", provider_for),
@@ -329,7 +321,6 @@ async def test_stream_every_downstream_call_carries_tenant_a_claims() -> None:
         append_message,
         get_working_memory,
         count_messages,
-        get_last_assistant_decision,
         get_availability,
         retrieve_hybrid,
     ):
@@ -346,11 +337,10 @@ async def test_stream_every_downstream_call_carries_tenant_a_claims() -> None:
     # count_messages is called twice per turn (SR-14 D10) -- see the
     # non-streaming twin above.
     assert count_messages.await_count == 2
-    get_last_assistant_decision.assert_awaited_once()
-    get_availability.assert_not_awaited()  # answer branch never checks availability
+    get_availability.assert_awaited_once()  # no-answer -> booking offer resolves availability
 
     done = events[-1]
-    assert done.data["decision"] == "clarify"
+    assert done.data["decision"] == "escalate"
     assert "tenant_id" not in done.data
     assert "visitor_id" not in done.data
     assert _TENANT_A not in done.data["reply"]
