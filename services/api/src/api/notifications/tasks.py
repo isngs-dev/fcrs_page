@@ -49,7 +49,7 @@ from common.db import Database
 from common.errors import ValidationError
 from common.logging import get_logger
 
-from api.notifications.config_repository import get_notification_config
+from api.notifications.config_repository import NotificationConfig, get_notification_config
 from api.notifications.providers import Notification, notification_provider_for
 from api.notifications.repository import get_notification_job, mark_notification
 from api.tasks.celery_app import _CorrelationTask, celery_app
@@ -105,6 +105,30 @@ async def _run(job_id: str, tenant_id: str) -> dict[str, object]:
         await db.close()
 
 
+def _platform_email_config() -> NotificationConfig | None:
+    """The platform-wide SMTP sender (``platform_smtp_*`` settings), or ``None``
+    when it isn't configured -- see the settings' own comment for when it applies."""
+    from api.config import get_api_settings  # noqa: PLC0415
+
+    s = get_api_settings()
+    if not s.platform_smtp_host or not s.platform_smtp_from_address:
+        return None
+    return NotificationConfig(
+        provider="smtp",
+        channel="email",
+        from_address=s.platform_smtp_from_address,
+        from_name=s.platform_smtp_from_name,
+        smtp_host=s.platform_smtp_host,
+        smtp_port=s.platform_smtp_port,
+        smtp_use_tls=s.platform_smtp_use_tls,
+        smtp_username=s.platform_smtp_username,
+        twilio_account_sid=None,
+        twilio_from=None,
+        credentials=s.platform_smtp_password or "",
+        enabled=True,
+    )
+
+
 async def _execute(
     db: Database,
     *,
@@ -132,6 +156,17 @@ async def _execute(
         return {"job_id": job_id, "status": "no_op"}
 
     config = await get_notification_config(db, claims, job.channel)
+    if config is None and job.channel == "email":
+        config = _platform_email_config()
+        if config is not None:
+            _log.info(
+                "notification_platform_default_used",
+                extra={
+                    "event": "notification_platform_default_used",
+                    "job_id": job_id,
+                    "tenant_id": tenant_id,
+                },
+            )
     if config is None or not config.enabled:
         await mark_notification(
             db,

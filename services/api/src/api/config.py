@@ -264,10 +264,22 @@ class ApiSettings(Settings):
 
     # Notifications (S9.1).
     # notification_smtp_timeout_seconds: the smtplib.SMTP connect/send timeout
-    #   used by SmtpEmailProvider. No default provider setting -- provider is
-    #   per-tenant, exactly like calendar (a tenant with no config is a
-    #   deterministic NOTIFICATION_NOT_CONFIGURED, not a silent fallback).
+    #   used by SmtpEmailProvider.
     notification_smtp_timeout_seconds: float = 10.0
+    # platform_smtp_*: the platform's own outbound email sender, used for the
+    #   "email" channel ONLY when a tenant has no email config row at all -- so
+    #   every chatbot sends booking confirmations/reminders from day one. An
+    #   explicit, logged infrastructure default (notification_platform_default_used),
+    #   not a silent one: a tenant row that exists but is disabled still wins
+    #   (NOTIFICATION_NOT_CONFIGURED), and with host/from_address unset there is
+    #   no default at all. A tenant's own row always takes precedence.
+    platform_smtp_host: str | None = None
+    platform_smtp_port: int = 587
+    platform_smtp_use_tls: bool = True
+    platform_smtp_username: str | None = None
+    platform_smtp_password: str | None = None
+    platform_smtp_from_address: str | None = None
+    platform_smtp_from_name: str | None = None
 
     # Notifications (S9.3).
     # notification_twilio_timeout_seconds: the httpx.AsyncClient timeout used

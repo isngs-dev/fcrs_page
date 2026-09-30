@@ -225,6 +225,57 @@ async def test_no_config_marks_failed_not_raised() -> None:
     assert job["last_error"] is not None
 
 
+@pytest.fixture
+def platform_smtp(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Configure the platform-wide SMTP default for one test, then reset."""
+    from api.config import get_api_settings
+
+    for key, value in {
+        "PLATFORM_SMTP_HOST": "smtp.platform.test",
+        "PLATFORM_SMTP_PORT": "2525",
+        "PLATFORM_SMTP_USERNAME": "apikey",
+        "PLATFORM_SMTP_PASSWORD": "platform-secret",
+        "PLATFORM_SMTP_FROM_ADDRESS": "noreply@platform.test",
+        "PLATFORM_SMTP_FROM_NAME": "Bookings",
+    }.items():
+        monkeypatch.setenv(key, value)
+    get_api_settings.cache_clear()
+    yield
+    get_api_settings.cache_clear()
+
+
+async def test_no_tenant_config_uses_platform_smtp_default(platform_smtp: Any) -> None:
+    """A tenant with no email config row still sends -- via the platform sender."""
+    job = _job_row(status="pending")
+    db = _StubDatabase(job=job, config=None)
+    fake_provider = AsyncMock()
+    fake_provider.send.return_value = DeliveryRef(provider="smtp", ref="<m@x>")
+
+    with patch(
+        "api.notifications.tasks.notification_provider_for", return_value=fake_provider
+    ) as mock_for:
+        result = await _execute(db, job_id="job-1", tenant_id=_TENANT_A, smtp_timeout=5.0)
+
+    assert result["status"] == "sent"
+    used = mock_for.call_args.args[0]
+    assert (used.provider, used.smtp_host, used.smtp_port) == ("smtp", "smtp.platform.test", 2525)
+    assert (used.from_address, used.from_name) == ("noreply@platform.test", "Bookings")
+    assert (used.smtp_username, used.credentials) == ("apikey", "platform-secret")
+
+
+async def test_disabled_tenant_config_is_not_overridden_by_platform_default(
+    platform_smtp: Any,
+) -> None:
+    """A tenant that explicitly disabled email stays off -- no platform fallback."""
+    job = _job_row(status="pending")
+    db = _StubDatabase(job=job, config=_log_config_row(enabled=False))
+
+    result = await _execute(db, job_id="job-1", tenant_id=_TENANT_A, smtp_timeout=5.0)
+
+    assert result["status"] == "failed"
+    assert job["last_error"] == "NOTIFICATION_NOT_CONFIGURED"
+
+
 async def test_disabled_config_marks_failed_not_raised() -> None:
     job = _job_row(status="pending")
     db = _StubDatabase(job=job, config=_log_config_row(enabled=False))
