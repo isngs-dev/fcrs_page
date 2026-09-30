@@ -374,14 +374,42 @@ async def get_recent_assistant_decisions(
 ) -> list[str | None]:
     """Return the last ``limit`` assistant turns' ``decision`` values, newest first.
 
-    Same tenant/VISITOR scoping as ``get_last_assistant_decision`` (this is
-    its multi-row sibling) -- used by the orchestrator's low-confidence
-    streak check (``api.orchestrator.service``) to detect N consecutive
-    non-"answer" turns without a second query per turn. A ``None`` entry
-    means that turn's ``decision`` column was legacy-NULL (a pre-0024 row);
-    callers must treat it the same as a non-"clarify"/"escalate" value (i.e.
-    it breaks the streak), never as a wildcard match.
+    A ``None`` entry means that turn's ``decision`` column was legacy-NULL (a
+    pre-0024 row); callers must treat it as breaking any streak, never as a
+    wildcard match.
     """
+    return await _recent_assistant_column(db, claims, conversation_id, "decision", limit)
+
+
+async def get_recent_assistant_intents(
+    db: Database,
+    claims: AuthClaims,
+    conversation_id: str,
+    *,
+    limit: int,
+) -> list[str | None]:
+    """Return the last ``limit`` assistant turns' stored ``intent``, newest first.
+
+    Used by the orchestrator to count consecutive off-topic questions. Same
+    tenant/VISITOR scoping as ``get_recent_assistant_decisions``.
+    """
+    return await _recent_assistant_column(db, claims, conversation_id, "intent", limit)
+
+
+async def _recent_assistant_column(
+    db: Database,
+    claims: AuthClaims,
+    conversation_id: str,
+    column: str,
+    limit: int,
+) -> list[str | None]:
+    """Last ``limit`` assistant turns' ``column`` values, newest first.
+
+    Same tenant/VISITOR scoping as ``get_last_assistant_decision``.
+    ``column`` is one of a fixed allow-list, never caller data.
+    """
+    if column not in ("decision", "intent"):
+        raise ValueError(f"unsupported column: {column!r}")
     _reject_global(claims)
 
     params: list[Any] = [claims.tenant_id, conversation_id, "bot"]
@@ -402,12 +430,12 @@ async def get_recent_assistant_decisions(
     # Parameterized SQL; `where` is a safe constant clause built above.
     # ruff: noqa: S608
     sql = (
-        "SELECT decision FROM messages "
+        f"SELECT {column} FROM messages "
         + where
         + f" ORDER BY created_at DESC, message_id DESC LIMIT ${len(params)}"
     )
     rows = await db.fetch(sql, *params)
-    return [None if row["decision"] is None else str(row["decision"]) for row in rows]
+    return [None if row[column] is None else str(row[column]) for row in rows]
 
 
 async def get_conversation(

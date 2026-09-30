@@ -185,7 +185,8 @@ async def test_preview_answer_off_topic_fixed_reply_no_generate() -> None:
     with _Patched(classify_return="off_topic") as p:
         result = await preview_answer(object(), _claims(), "what's the capital of France?")
 
-    assert result.decision == "escalate"
+    # Single-turn preview: always the polite decline, never the booking offer.
+    assert result.decision == "clarify"
     p.provider.generate.assert_not_called()
     p.retrieve_hybrid.assert_not_called()
     p.assert_never_persisted()

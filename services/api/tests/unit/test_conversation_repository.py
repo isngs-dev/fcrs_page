@@ -29,6 +29,7 @@ from api.conversation_store.repository import (
     get_message,
     get_messages,
     get_recent_assistant_decisions,
+    get_recent_assistant_intents,
     get_window,
     get_working_memory,
     list_low_confidence_messages,
@@ -1543,6 +1544,18 @@ async def test_get_recent_assistant_decisions_returns_newest_first_tenant_scoped
     assert "ORDER BY created_at DESC, message_id DESC" in db.last_sql
     assert "LIMIT $4" in db.last_sql
     assert db.last_params == ("tenant-a", "conv-1", "bot", 3)
+
+
+async def test_get_recent_assistant_intents_returns_newest_first_tenant_scoped() -> None:
+    db = _RecordingDatabase(rows=[{"intent": "off_topic"}, {"intent": None}])
+    claims = _claims("tenant-a", Role.CLIENT_ADMIN)
+
+    intents = await get_recent_assistant_intents(db, claims, "conv-1", limit=2)
+
+    assert intents == ["off_topic", None]
+    assert db.last_sql.startswith("SELECT intent FROM messages")
+    assert "WHERE tenant_id = $1 AND conversation_id = $2" in db.last_sql
+    assert db.last_params == ("tenant-a", "conv-1", "bot", 2)
 
 
 async def test_get_recent_assistant_decisions_maps_null_decision_to_none() -> None:

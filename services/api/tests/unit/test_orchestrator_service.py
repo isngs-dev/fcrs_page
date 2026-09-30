@@ -39,6 +39,7 @@ from api.orchestrator.service import (
     _IDENTITY_GATE_REPLY,
     _INTENT_LABEL_DESCRIPTIONS,
     _NO_ANSWER_SENTINEL,
+    _OFF_TOPIC_BOOKING_REPLY,
     _OFF_TOPIC_REPLY,
     _SCHEDULING_REPLY,
     _TURN_CAP_REPLY,
@@ -174,8 +175,7 @@ class _Patched:
         classify_error: Exception | None = None,
         count_messages_return: int = 1,
         gate_turns_return: int = 0,
-        prev_decision: str | None = None,
-        recent_decisions: list[str | None] | None = None,
+        recent_intents: list[str | None] | None = None,
         availability: Availability | None = ...,  # type: ignore[assignment]
         stream_chunks: list[str] | None = None,
         stream_error: Exception | None = None,
@@ -202,9 +202,8 @@ class _Patched:
             return self.count_messages_return
 
         self.count_messages = AsyncMock(side_effect=_count_messages_side_effect)
-        self.get_last_assistant_decision = AsyncMock(return_value=prev_decision)
-        self.get_recent_assistant_decisions = AsyncMock(
-            return_value=recent_decisions if recent_decisions is not None else []
+        self.get_recent_assistant_intents = AsyncMock(
+            return_value=recent_intents if recent_intents is not None else []
         )
         self.lead_id = None if lead_id is ... else lead_id
         self.lead = None if lead is ... else lead
@@ -281,6 +280,10 @@ class _Patched:
             patch("api.orchestrator.service.provider_for", lambda cfg: self.provider),
             patch("api.orchestrator.service.count_messages", self.count_messages),
             patch("api.orchestrator.service.get_availability", self.get_availability),
+            patch(
+                "api.orchestrator.service.get_recent_assistant_intents",
+                self.get_recent_assistant_intents,
+            ),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
             patch(
                 "api.orchestrator.service.get_lead_id_by_visitor_id",
@@ -506,47 +509,72 @@ async def test_chitchat_answers_without_rag() -> None:
 # -- off_topic -> escalate (no RAG, no generate) -----------------------------------
 
 
-async def test_off_topic_escalates_no_rag_no_generate() -> None:
-    """classify -> "off_topic" -> neither retrieve_hybrid nor generate called;
-    reply == _OFF_TOPIC_REPLY, which is now the SAME wording as _ESCALATE_REPLY
-    (explicit user request: one consistent visitor-facing voice regardless of
-    which internal reason triggered the fallback -- see _OFF_TOPIC_REPLY's own
-    comment); decision="escalate", confidence=None."""
-    p = _Patched(classify_return="off_topic")
+async def test_off_topic_declines_without_offering_a_call() -> None:
+    """First off-topic question: say it's out of scope and steer back -- no
+    booking card, no RAG, no generate. Stored as "clarify" (not "escalate"),
+    so analytics' escalation counts aren't inflated by polite declines."""
+    p = _Patched(classify_return="off_topic", availability=_availability())
     with p:
         result = await answer_turn(db=object(), claims=_claims(), message="what is the capital of France?")
 
     p.retrieve_hybrid.assert_not_awaited()
     p.provider.generate.assert_not_awaited()
+    p.get_availability.assert_not_awaited()
 
-    assert len(p._append_calls) == 2
     assistant_call = p._append_calls[1]
     assert assistant_call["intent"] == "off_topic"
-    assert assistant_call["decision"] == "escalate"
-    assert assistant_call["grounded"] is False
-    assert assistant_call["confidence"] is None
-    assert assistant_call["sources"] == []
+    assert assistant_call["decision"] == "clarify"
+    assert assistant_call["action"] is None
 
-    assert result.decision == "escalate"
     assert result.reply == _OFF_TOPIC_REPLY
-    assert result.reply == _ESCALATE_REPLY
-    assert result.confidence is None
-
-    # Resource-leak fix: classify ran on `provider` but no _GeneratePlan
-    # carries it onward for off_topic -- _resolve_turn must close it itself.
+    assert result.decision == "clarify"
+    assert result.action is None
     p.provider.aclose.assert_awaited_once()
 
 
-def test_off_topic_reply_is_scheduling_forward_and_matches_escalate_reply() -> None:
-    """_OFF_TOPIC_REPLY is still consent/scheduling-forward like the other
-    fixed escalate templates, so the widget's schedule_cta/lead_form
-    rendering keeps working -- and is now identical to _ESCALATE_REPLY by
-    explicit user request (previously it carried its own scope-mismatch
-    wording; that distinction was dropped in favor of one consistent voice)."""
-    lowered = _OFF_TOPIC_REPLY.lower()
-    assert "book" in lowered
-    assert "email" in lowered or "contact" in lowered or "name" in lowered
-    assert _OFF_TOPIC_REPLY == _ESCALATE_REPLY
+async def test_second_off_topic_in_a_row_still_declines() -> None:
+    p = _Patched(classify_return="off_topic", recent_intents=["off_topic"], availability=_availability())
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="and who won the world cup?")
+
+    assert result.reply == _OFF_TOPIC_REPLY
+    assert result.action is None
+
+
+async def test_third_off_topic_in_a_row_offers_a_call() -> None:
+    p = _Patched(
+        classify_return="off_topic",
+        recent_intents=["off_topic", "off_topic"],
+        availability=_availability(),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="what is python?")
+
+    assert result.reply == _OFF_TOPIC_BOOKING_REPLY
+    assert result.decision == "escalate"
+    assert result.action == "schedule_cta"
+    p.get_recent_assistant_intents.assert_awaited_once()
+    assert p.get_recent_assistant_intents.await_args.kwargs["limit"] == 2
+
+
+async def test_on_topic_turn_in_between_resets_the_off_topic_count() -> None:
+    """Newest first: the last reply was a real answer, so the older off-topic
+    turns don't count -- this is only the 1st off-topic in a row."""
+    p = _Patched(
+        classify_return="off_topic",
+        recent_intents=["question", "off_topic"],
+        availability=_availability(),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="what is python?")
+
+    assert result.reply == _OFF_TOPIC_REPLY
+    assert result.action is None
+
+
+def test_off_topic_replies_only_the_repeat_one_mentions_booking() -> None:
+    assert "book" not in _OFF_TOPIC_REPLY.lower()
+    assert "book a call" in _OFF_TOPIC_BOOKING_REPLY.lower()
 
 
 async def test_classify_is_called_with_intent_label_descriptions() -> None:
@@ -965,7 +993,6 @@ async def test_grounded_no_answer_turn_two_after_clarify_escalates() -> None:
             output_tokens=5,
         ),
         count_messages_return=2,
-        prev_decision="clarify",
         availability=_availability(),
     )
     with p:
@@ -1029,7 +1056,7 @@ async def test_blocked_and_escalate_are_distinguishable() -> None:
     """A genuine off-topic escalate -> decision=="escalate",
     guardrail_flag is None; a guardrail hit -> decision=="blocked",
     guardrail_flag=<rule>. Both carry action=="lead_form"."""
-    p_escalate = _Patched(classify_return="off_topic")
+    p_escalate = _Patched(classify_return="off_topic", recent_intents=["off_topic", "off_topic"])
     with p_escalate:
         escalate_result = await answer_turn(
             db=object(), claims=_claims(), message="what is the capital of France?",
@@ -1097,9 +1124,9 @@ async def test_clean_chitchat_generation_passes_through_unflagged() -> None:
 
 
 async def test_off_topic_escalate_sets_action_lead_form_guardrail_flag_none() -> None:
-    """A genuine off_topic escalate (fixed template, never scanned) ->
+    """A 3rd-in-a-row off_topic escalate (fixed template, never scanned) ->
     action=="lead_form", guardrail_flag is None."""
-    p = _Patched(classify_return="off_topic")
+    p = _Patched(classify_return="off_topic", recent_intents=["off_topic", "off_topic"])
     with p:
         result = await answer_turn(
             db=object(), claims=_claims(), message="what is the capital of France?",
@@ -1568,7 +1595,11 @@ async def test_identity_gate_reply_is_the_trusted_constant() -> None:
 async def test_escalate_intent_action_conditional_on_availability(classify_label: str) -> None:
     """off_topic/scheduling_request escalate -> schedule_cta when available,
     lead_form otherwise; get_availability called with the turn's own claims."""
-    p_avail = _Patched(classify_return=classify_label, availability=_availability(True))
+    p_avail = _Patched(
+        classify_return=classify_label,
+        availability=_availability(True),
+        recent_intents=["off_topic", "off_topic"],
+    )
     with p_avail:
         result_avail = await answer_turn(db=object(), claims=_claims(), message="msg")
     assert result_avail.decision == "escalate"
@@ -1578,7 +1609,11 @@ async def test_escalate_intent_action_conditional_on_availability(classify_label
     claims_arg = avail_call.args[-1] if avail_call.args else avail_call.kwargs.get("claims")
     assert claims_arg.tenant_id == "tenant-a"
 
-    p_none = _Patched(classify_return=classify_label, availability=_availability(False))
+    p_none = _Patched(
+        classify_return=classify_label,
+        availability=_availability(False),
+        recent_intents=["off_topic", "off_topic"],
+    )
     with p_none:
         result_none = await answer_turn(db=object(), claims=_claims(), message="msg")
     assert result_none.decision == "escalate"
@@ -1959,7 +1994,7 @@ async def test_stream_turn_cap_emits_no_deltas() -> None:
 
 @pytest.mark.parametrize("classify_label", ["off_topic", "scheduling_request"])
 async def test_stream_escalate_branches_emit_no_deltas(classify_label: str) -> None:
-    p = _Patched(classify_return=classify_label)
+    p = _Patched(classify_return=classify_label, recent_intents=["off_topic", "off_topic"])
     with p:
         events = await _collect(
             answer_turn_stream(db=object(), claims=_claims(), message="msg"),
@@ -2177,6 +2212,7 @@ class _RealStorePatched:
         self.get_orchestrator_config = AsyncMock(return_value=self.orchestrator_config)
         self.get_working_memory = AsyncMock(return_value=_wm())
         self.get_availability = AsyncMock(return_value=None)
+        self.get_recent_assistant_intents = AsyncMock(return_value=[])
         self.retrieve_hybrid = AsyncMock(
             return_value=HybridResult(chunks=[_chunk()], confidence=0.8)
         )
@@ -2200,6 +2236,10 @@ class _RealStorePatched:
             patch("api.orchestrator.service.retrieve_hybrid", self.retrieve_hybrid),
             patch("api.orchestrator.service.provider_for", lambda cfg: self.provider),
             patch("api.orchestrator.service.get_availability", self.get_availability),
+            patch(
+                "api.orchestrator.service.get_recent_assistant_intents",
+                self.get_recent_assistant_intents,
+            ),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
         ]
         for p in self._patchers:

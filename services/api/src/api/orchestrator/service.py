@@ -4,7 +4,8 @@
 intent gate + 3-way decision, into one turn: resolve the tenant's LLM config,
 resolve the tenant's orchestrator config, get-or-create the conversation,
 store the user turn, classify intent, branch on intent (chit-chat -> direct
-answer, scheduling_request/off_topic -> escalate, question/other -> grounded
+answer, scheduling_request -> escalate, off_topic -> decline (a call is
+offered on the 3rd in a row), question/other -> grounded
 RAG answer), store the assistant turn, and return the
 answer + decision + sources. No new RAG/LLM/store *mechanisms* -- this module
 only composes their existing public functions, always with the caller's own
@@ -52,6 +53,7 @@ from api.conversation_store.repository import (
     count_messages,
     create_conversation,
     get_message,
+    get_recent_assistant_intents,
     get_working_memory,
 )
 from api.leads.repository import get_lead, get_lead_id_by_visitor_id
@@ -272,13 +274,21 @@ _ESCALATE_REPLY = (
     "person. Happy to help with anything else in the meantime, too."
 )
 
-# Fixed off-topic template. Kept as its own constant so a future divergence
-# from _ESCALATE_REPLY stays a one-line change, but currently set to the
-# SAME wording on explicit user request (both used to read differently --
-# off_topic as a scope-mismatch message, scheduling_request/sub-floor as a
-# not-confident-enough one -- but the visitor-facing voice should be
-# consistent regardless of which internal reason triggered the fallback).
-_OFF_TOPIC_REPLY = _ESCALATE_REPLY
+# Off-topic questions (general knowledge, other companies, ...): say so
+# plainly and steer back -- no booking push for a question the business
+# never offered to answer. Only a visitor who keeps going off-topic
+# (_OFF_TOPIC_BOOKING_AFTER in a row) is offered a call instead.
+_OFF_TOPIC_REPLY = (
+    "That's outside what I can help with here -- I'm set up to answer "
+    "questions about our services. Is there anything about those I can help "
+    "you with?"
+)
+_OFF_TOPIC_BOOKING_REPLY = (
+    "It looks like these questions are outside what I can help with here. "
+    "If it would help, you can book a call with our team below -- they'll be "
+    "happy to talk through what you need."
+)
+_OFF_TOPIC_BOOKING_AFTER = 3  # the Nth off-topic question in a row offers the call
 
 # Fixed scheduling_request template -- the visitor explicitly ASKED to book
 # or talk to someone, so this is a warm yes, not _ESCALATE_REPLY's "I can't
@@ -695,7 +705,50 @@ async def _resolve_turn(
             provider=provider,
         )
 
-    if intent in ("scheduling_request", "off_topic"):
+    if intent == "off_topic":
+        # Fixed templates, never scanned; classify already ran, nothing will
+        # generate, so close the provider here. Stored intent="off_topic" on
+        # each reply is what the streak counts; any other kind of turn in
+        # between (a real question, chitchat, booking) resets it.
+        await provider.aclose()
+        recent = await get_recent_assistant_intents(
+            db, claims, conversation_id, limit=_OFF_TOPIC_BOOKING_AFTER - 1,
+        )
+        streak = 0
+        for prior in recent:
+            if prior != "off_topic":
+                break
+            streak += 1
+        if streak + 1 >= _OFF_TOPIC_BOOKING_AFTER:
+            action = await _schedule_action(db, claims)
+            return _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=_OFF_TOPIC_BOOKING_REPLY,
+                decision="escalate",
+                confidence=None,
+                sources=[],
+                intent=intent,
+                action=action,
+                grounded=False,
+                tokens=None,
+            )
+        # "clarify" (steer back), not "escalate": nothing is handed to a
+        # human, so analytics' escalation counts stay honest.
+        return _FixedOutcome(
+            conversation_id=conversation_id,
+            assistant_id=assistant_id,
+            reply=_OFF_TOPIC_REPLY,
+            decision="clarify",
+            confidence=None,
+            sources=[],
+            intent=intent,
+            action=None,
+            grounded=False,
+            tokens=None,
+        )
+
+    if intent == "scheduling_request":
         # No RAG, no generate -- a fixed, honest, trusted-constant reply.
         # Fixed-template branches are never scanned (decision 4).
         # S10.4 decision 4/5: escalate -> schedule_cta when the tenant
@@ -705,14 +758,10 @@ async def _resolve_turn(
         # classify already ran on `provider`; no _GeneratePlan will carry it
         # onward, so close it before returning the fixed-template reply.
         await provider.aclose()
-        # off_topic gets its own honest copy ("outside what I can help with")
-        # -- distinct from scheduling_request's _SCHEDULING_REPLY, which fits a
-        # "wants to book/talk to someone" request, not a scope mismatch.
-        reply = _OFF_TOPIC_REPLY if intent == "off_topic" else _SCHEDULING_REPLY
         return _FixedOutcome(
             conversation_id=conversation_id,
             assistant_id=assistant_id,
-            reply=reply,
+            reply=_SCHEDULING_REPLY,
             decision="escalate",
             confidence=None,
             sources=[],
@@ -1254,9 +1303,14 @@ async def preview_answer(db: Database, claims: AuthClaims, message: str) -> Prev
             label_descriptions=_INTENT_LABEL_DESCRIPTIONS,
         )
 
-        if intent in ("scheduling_request", "off_topic"):
-            reply = _OFF_TOPIC_REPLY if intent == "off_topic" else _SCHEDULING_REPLY
-            return PreviewResult(reply=reply, decision="escalate", confidence=None, sources=[])
+        if intent == "off_topic":
+            return PreviewResult(
+                reply=_OFF_TOPIC_REPLY, decision="clarify", confidence=None, sources=[],
+            )
+        if intent == "scheduling_request":
+            return PreviewResult(
+                reply=_SCHEDULING_REPLY, decision="escalate", confidence=None, sources=[],
+            )
 
         if intent == "chitchat" or not config.embedding_model:
             plan = _GeneratePlan(
