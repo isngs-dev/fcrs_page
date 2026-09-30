@@ -35,8 +35,10 @@ clarify step, so an unanswerable question never loops the visitor.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 from common.auth import AuthClaims
@@ -96,6 +98,9 @@ class TurnResult:
     intent: str | None = None
     action: str | None = None
     guardrail_flag: str | None = None
+    # Booking details read from the visitor's message (name/email/date) --
+    # pre-fills the booking card/lead form; never stored, response-only.
+    prefill: dict[str, str] | None = None
 
 
 # -- S10.5 decision 1: the discriminated plan returned by ``_resolve_turn`` --
@@ -141,6 +146,7 @@ class _FixedOutcome:
     action: str | None
     grounded: bool
     tokens: int | None
+    prefill: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -228,6 +234,9 @@ _FORMATTING_RULES = (
     "fastest, #1, unbeatable), hype, urgency, or exclamation-heavy sales talk "
     "unless the context states it verbatim. If something depends on an "
     "inspection, quote, or the customer's situation, say so plainly."
+    " If the visitor wants to book an inspection, estimate, or call, ask only "
+    "for their name, email, and preferred date -- never an address, phone "
+    "number, or other personal details."
 )
 
 _GROUNDING_SYSTEM_PROMPT = (
@@ -304,6 +313,75 @@ _TURN_CAP_REPLY = (
 # widget renders the consent-gated <IdentityForm> inline in the thread on
 # action="identity_form"; the visitor's real question is already durable
 # (step 5 ran before this branch, C2) and is auto-answered on capture (D3).
+# Booking details typed into the chat (the reply above asks for name, email,
+# preferred date). An email address is the trigger: it's the one detail the
+# booking can't happen without, and a regex finds it deterministically.
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+_BOOKING_EXTRACT_PROMPT = (
+    "Extract call-booking details from the visitor's message. Today is {today}. "
+    "Reply with ONLY a JSON object with the keys name, email and date. date is "
+    "YYYY-MM-DD, resolving words like 'tomorrow' or 'next Monday' against today. "
+    "Use null for anything the message does not state -- never guess."
+)
+
+_BOOKING_DETAILS_REPLY = (
+    "Thanks! I've filled in your details below -- pick a time that works for "
+    "you and confirm to book your call."
+)
+_BOOKING_DETAILS_LEAD_REPLY = (
+    "Thanks! I've filled in your details below -- confirm them and our team "
+    "will reach out to schedule your call."
+)
+
+
+async def _extract_booking_prefill(
+    provider: LLMProvider, model: str, message: str, today: date,
+) -> dict[str, str]:
+    """Name/email/date from a visitor message, for pre-filling the booking card.
+
+    The email comes from the regex, never the model. The model's name is kept
+    only if it literally appears in the message and its date only if it's a
+    real date not in the past -- nothing it could invent survives. A model
+    failure degrades to the email alone (a convenience pre-fill, not data).
+    """
+    prefill: dict[str, str] = {}
+    match = _EMAIL_RE.search(message)
+    if match:
+        prefill["email"] = match.group(0).rstrip(".")
+    try:
+        completion = await provider.generate(
+            [
+                ChatMessage(
+                    role="system",
+                    content=_BOOKING_EXTRACT_PROMPT.format(today=today.strftime("%A, %Y-%m-%d")),
+                ),
+                ChatMessage(role="user", content=message),
+            ],
+            model=model,
+            max_tokens=120,
+        )
+        text = completion.text
+        data = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    except (LLMError, ValueError):
+        return prefill
+    if not isinstance(data, dict):
+        return prefill
+    name = data.get("name")
+    name = name.strip() if isinstance(name, str) else ""
+    if 0 < len(name) <= 80 and name.lower() in message.lower():
+        prefill["name"] = name
+    raw_date = data.get("date")
+    if isinstance(raw_date, str):
+        try:
+            parsed = date.fromisoformat(raw_date)
+        except ValueError:
+            parsed = None
+        if parsed is not None and parsed >= today:
+            prefill["date"] = parsed.isoformat()
+    return prefill
+
+
 _IDENTITY_GATE_REPLY = (
     "Before I answer, could you share your name and email? I'll use it to "
     "follow up on this conversation -- once you've confirmed, I'll answer "
@@ -522,6 +600,33 @@ async def _resolve_turn(
             action="identity_form",
             grounded=False,
             tokens=None,
+        )
+
+    # Step 5.6: booking details typed into the chat (name/email/date, as the
+    # grounded prompt asks for). Pre-empts the turn cap -- a visitor handing
+    # over their details must always get the booking card. The card itself is
+    # the existing consent-gated booking flow, pre-filled: nothing is booked
+    # or stored from the chat text alone.
+    if _EMAIL_RE.search(message):
+        prefill = await _extract_booking_prefill(
+            provider, config.model, message, datetime.now(UTC).date(),
+        )
+        action = await _schedule_action(db, claims)
+        await provider.aclose()
+        return _FixedOutcome(
+            conversation_id=conversation_id,
+            assistant_id=assistant_id,
+            reply=(
+                _BOOKING_DETAILS_REPLY if action == "schedule_cta" else _BOOKING_DETAILS_LEAD_REPLY
+            ),
+            decision="answer",
+            confidence=None,
+            sources=[],
+            intent="scheduling_request",
+            action=action,
+            grounded=False,
+            tokens=None,
+            prefill=prefill or None,
         )
 
     # Step 6 (S10.4 decision 1): the turn-count cap -- an INDEPENDENT,
@@ -824,6 +929,7 @@ async def answer_turn(
             intent=plan.intent,
             action=plan.action,
             guardrail_flag=None,
+            prefill=plan.prefill,
         )
 
     # _GeneratePlan -- the two generate branches (grounded answer, chitchat).
@@ -910,6 +1016,7 @@ class StreamEvent:
         action: str | None,
         intent: str | None = None,
         guardrail_flag: str | None = None,
+        prefill: dict[str, str] | None = None,
     ) -> StreamEvent:
         return StreamEvent(
             type="done",
@@ -921,6 +1028,7 @@ class StreamEvent:
                 "confidence": confidence,
                 "sources": sources,
                 "action": action,
+                "prefill": prefill,
             },
             log_fields={
                 "decision": decision,
@@ -1014,6 +1122,7 @@ async def answer_turn_stream(
             action=plan.action,
             intent=plan.intent,
             guardrail_flag=None,
+            prefill=plan.prefill,
         )
         return
 

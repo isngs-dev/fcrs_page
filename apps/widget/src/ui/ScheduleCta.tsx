@@ -39,6 +39,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { WidgetConfig } from "../config";
 import { SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT, bookSlot, fetchSlots, type AvailabilitySummary, type Slot } from "../schedule";
+import type { BookingPrefill } from "../turn";
 import { formatUsPhoneInput } from "../phoneFormat";
 
 const LOG_PREFIX = "[chatbot-widget]";
@@ -86,6 +87,9 @@ export interface ScheduleCtaProps {
    * sales rep" CTA immediately instead of waiting for a future page-open's
    * existingBooking re-check. */
   onBooked?: () => void;
+  /** Name/email/date the visitor already typed in chat: fills the fields
+   * and opens the time list on that date when it has openings. */
+  prefill?: BookingPrefill;
 }
 
 type Step =
@@ -252,11 +256,11 @@ function buildCalendarMonths(days: AvailabilitySummary["days"]): CalendarMonth[]
   return months;
 }
 
-export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaProps) {
+export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: ScheduleCtaProps) {
   const [step, setStep] = useState<Step>({ name: "loading" });
   const [consentChecked, setConsentChecked] = useState(false);
-  const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
+  const [email, setEmail] = useState(prefill?.email ?? "");
+  const [name, setName] = useState(prefill?.name ?? "");
   const [phone, setPhone] = useState("");
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
@@ -305,7 +309,24 @@ export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaPr
   }
 
   useEffect(() => {
-    if (!summary) void loadSlots();
+    if (summary) return;
+    const preferredDay = prefill?.date;
+    if (!preferredDay) {
+      void loadSlots();
+      return;
+    }
+    // The visitor named a day in chat: open on that day's times if it has
+    // any, otherwise fall back to the next available times.
+    void (async () => {
+      const result = await fetchSlots(config, { dateFrom: preferredDay, dateTo: preferredDay });
+      if (result.ok && result.slots.length > 0) {
+        setSelectedDay(preferredDay);
+        setLastLoadedSlots(result.slots);
+        setStep({ name: "list", slots: result.slots });
+        return;
+      }
+      await loadSlots();
+    })();
     // Load slots exactly once on mount; loadSlots is intentionally
     // re-invoked imperatively (not via effect deps) on SLOT_UNAVAILABLE.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -642,6 +663,14 @@ export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaPr
 
         <p>{label}</p>
 
+        {prefill && (
+          <>
+            {/* Details the visitor typed in chat -- shown so they can check or fix them. */}
+            <input className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
+            <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} aria-label="Name" placeholder="Name" autoComplete="name" />
+          </>
+        )}
+
         <div className="cw-sched-consent-row">
           <input
             id="cw-sched-consent"
@@ -666,7 +695,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked }: ScheduleCtaPr
           <button
             type="button"
             className="cw-sched-confirm-button"
-            disabled={!consentChecked || (summary !== undefined && !email.trim()) || submitting}
+            disabled={!consentChecked || ((summary !== undefined || prefill !== undefined) && !email.trim()) || submitting}
             onClick={() => void confirmBooking(step.slot)}
           >
             {submitting ? "Booking…" : "Confirm"}

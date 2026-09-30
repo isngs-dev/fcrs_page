@@ -178,6 +178,22 @@ describe("sendTurn", () => {
     expect(result.turn.action).toBe("identity_form");
   });
 
+  it("parses the booking prefill, dropping null fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        ...sampleResponseBody,
+        action: "schedule_cta",
+        prefill: { name: null, email: "jane@example.com", date: "2099-01-15" },
+      }),
+    );
+    const { sendTurn } = await import("./turn");
+
+    const result = await sendTurn(baseConfig, { message: "jane@example.com", conversationId: null });
+
+    if (!result.ok) throw new Error("expected ok result");
+    expect(result.turn.prefill).toEqual({ email: "jane@example.com", date: "2099-01-15" });
+  });
+
   it("returns a typed NETWORK_ERROR (no throw) when fetch rejects", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const { sendTurn } = await import("./turn");

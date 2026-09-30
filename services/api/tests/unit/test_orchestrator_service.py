@@ -2283,3 +2283,67 @@ async def test_sr3_same_visitor_resume_appends_to_existing_conversation_real_sto
         if t == tenant and c == conv_a and role == "user"
     ]
     assert len(a_user_messages) == 2  # both turns landed in the same thread
+
+
+# -- booking details typed into the chat -> pre-filled booking card -----------------
+
+
+def _json_completion(text: str) -> Completion:
+    return Completion(text=text, model="claude-opus-4-8", input_tokens=5, output_tokens=5)
+
+
+async def test_booking_details_in_chat_prefill_the_booking_card() -> None:
+    """A message with an email skips classify/RAG and returns the booking card
+    pre-filled with what the visitor typed -- nothing is booked from chat."""
+    p = _Patched(
+        completion=_json_completion(
+            '{"name": "Jane Smith", "email": "jane@example.com", "date": "2099-01-15"}'
+        ),
+        availability=_availability(),
+    )
+    with p:
+        result = await answer_turn(
+            db=object(), claims=_claims(),
+            message="Jane Smith, jane@example.com, 15 January 2099 please",
+        )
+
+    p.provider.classify.assert_not_awaited()
+    p.retrieve_hybrid.assert_not_awaited()
+    assert result.decision == "answer"
+    assert result.action == "schedule_cta"
+    assert result.prefill == {"name": "Jane Smith", "email": "jane@example.com", "date": "2099-01-15"}
+    assert p._append_calls[1]["action"] == "schedule_cta"
+
+
+async def test_booking_details_without_availability_prefill_the_lead_form() -> None:
+    p = _Patched(completion=_json_completion('{"name": null, "email": null, "date": null}'),
+                 availability=None)
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="reach me at a@b.co")
+
+    assert result.action == "lead_form"
+    assert result.prefill == {"email": "a@b.co"}
+
+
+async def test_booking_prefill_drops_anything_the_model_invented() -> None:
+    """Name not in the message, a past date, and a model-made email are all
+    discarded; the email always comes from the message text itself."""
+    p = _Patched(
+        completion=_json_completion(
+            '{"name": "Robert Paulson", "email": "made@up.com", "date": "2001-01-01"}'
+        ),
+        availability=_availability(),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="it's me, bob@example.com")
+
+    assert result.prefill == {"email": "bob@example.com"}
+
+
+async def test_booking_prefill_survives_unparseable_model_output() -> None:
+    p = _Patched(completion=_json_completion("sorry, no JSON here"), availability=_availability())
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="x@y.io tomorrow")
+
+    assert result.prefill == {"email": "x@y.io"}
+    assert result.action == "schedule_cta"

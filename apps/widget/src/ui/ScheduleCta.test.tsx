@@ -937,3 +937,55 @@ describe("ScheduleCta", () => {
     });
   });
 });
+
+describe("ScheduleCta pre-filled from chat", () => {
+  const PREFILL = { name: "Jane Smith", email: "jane@example.com", date: "2026-07-20" };
+
+  it("opens on the date the visitor typed and books with their name and email", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A, SLOT_B] });
+    bookSlotMock.mockResolvedValueOnce({
+      ok: true,
+      booking: { eventId: "evt-1", startsAt: SLOT_A.startsAt, endsAt: SLOT_A.endsAt, status: "booked" },
+    });
+
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={PREFILL} />);
+    });
+    await flush();
+
+    expect(fetchSlotsMock).toHaveBeenCalledWith(baseConfig, { dateFrom: "2026-07-20", dateTo: "2026-07-20" });
+    act(() => {
+      getSlotButton(0).click();
+    });
+    const emailInput = container.querySelector<HTMLInputElement>(".cw-sched-email-input")!;
+    const nameInput = container.querySelector<HTMLInputElement>(".cw-sched-name-input")!;
+    expect(emailInput.value).toBe("jane@example.com");
+    expect(nameInput.value).toBe("Jane Smith");
+
+    act(() => {
+      getConsentCheckbox().click();
+    });
+    act(() => {
+      getConfirmButton().click();
+    });
+    await flush();
+
+    expect(bookSlotMock).toHaveBeenCalledTimes(1);
+    const [, input] = bookSlotMock.mock.calls[0]!;
+    expect(input).toMatchObject({ startsAt: SLOT_A.startsAt, email: "jane@example.com", name: "Jane Smith" });
+  });
+
+  it("falls back to the next available times when the typed date has no openings", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [] });
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={PREFILL} />);
+    });
+    await flush();
+
+    expect(fetchSlotsMock).toHaveBeenCalledTimes(2);
+    expect(fetchSlotsMock.mock.calls[1]![1]).toEqual({});
+    expect(getSlotButtons()).toHaveLength(1);
+  });
+});

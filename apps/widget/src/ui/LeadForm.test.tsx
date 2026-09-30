@@ -359,3 +359,14 @@ describe("LeadForm", () => {
     });
   });
 });
+
+describe("LeadForm pre-filled from chat", () => {
+  it("starts with the name and email the visitor typed", () => {
+    act(() => {
+      root.render(<LeadForm config={baseConfig} prefill={{ name: "Jane Smith", email: "jane@example.com" }} />);
+    });
+
+    expect(getNameInput().value).toBe("Jane Smith");
+    expect(getEmailInput().value).toBe("jane@example.com");
+  });
+});

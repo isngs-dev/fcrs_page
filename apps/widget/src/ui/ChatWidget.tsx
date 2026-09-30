@@ -1130,6 +1130,7 @@ export function ChatWidget({
           role: "bot",
           text: result.turn.reply,
           action: offersHumanHandoff ? "handoff_choice" : result.turn.action,
+          ...(result.turn.prefill ? { prefill: result.turn.prefill } : {}),
         },
       ]);
     },

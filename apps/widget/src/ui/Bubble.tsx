@@ -29,6 +29,7 @@ import { CalendlyHandoff } from "./CalendlyHandoff";
 import { SupportHandoff } from "./SupportHandoff";
 import type { WidgetConfig } from "../config";
 import type { AvailabilitySummary } from "../schedule";
+import type { BookingPrefill } from "../turn";
 
 export interface ChatMessage {
   id: string;
@@ -44,6 +45,8 @@ export interface ChatMessage {
    * "calendly_handoff" that originated from the persistent CTA (SR-5
    * decision 5), never from an orchestrator turn. */
   scheduleSummary?: AvailabilitySummary;
+  /** Booking details the visitor typed in chat -- pre-fills the card/form. */
+  prefill?: BookingPrefill;
 }
 
 export function Bubble({
@@ -87,7 +90,11 @@ export function Bubble({
         <div className="cw-bot-stack">
           {message.text ? <div className="cw-bubble cw-bubble-bot"><Markdown text={message.text} /></div> : null}
           {message.action === "lead_form" ? (
-            <LeadForm config={config} {...(onLeadSubmitted ? { onSubmitted: onLeadSubmitted } : {})} />
+            <LeadForm
+              config={config}
+              {...(onLeadSubmitted ? { onSubmitted: onLeadSubmitted } : {})}
+              {...(message.prefill ? { prefill: message.prefill } : {})}
+            />
           ) : null}
           {message.action === "identity_form" ? (
             <IdentityForm config={config} {...(onIdentityCaptured ? { onCaptured: onIdentityCaptured } : {})} />
@@ -100,6 +107,7 @@ export function Bubble({
               config={config}
               {...(message.scheduleSummary ? { summary: message.scheduleSummary } : {})}
               {...(onBooked ? { onBooked } : {})}
+              {...(message.prefill ? { prefill: message.prefill } : {})}
             />
           ) : null}
           {message.action === "calendly_handoff" && message.scheduleSummary ? (

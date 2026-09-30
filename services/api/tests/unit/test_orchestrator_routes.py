@@ -546,6 +546,7 @@ async def test_post_chat_message_stream_happy_grounded_turn_sse_frames() -> None
     assert done_data is not None
     assert set(done_data.keys()) == {
         "conversation_id", "message_id", "reply", "decision", "confidence", "sources", "action",
+        "prefill",
     }
     assert done_data["decision"] == "answer"
     assert "tenant_id" not in done_data
@@ -787,3 +788,24 @@ async def test_post_chat_message_still_200_when_feed_emit_raises() -> None:
 
     assert resp.status_code == 200
     assert resp.json()["decision"] == "escalate"
+
+
+async def test_post_chat_message_surfaces_booking_prefill() -> None:
+    app = _build_app()
+    from dataclasses import replace
+
+    result = replace(
+        _turn_result(action="schedule_cta", sources=[], confidence=None),
+        prefill={"name": "Jane", "email": "jane@example.com", "date": "2099-01-15"},
+    )
+
+    with patch("api.orchestrator.routes.answer_turn", new=AsyncMock(return_value=result)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.post(
+                "/public/chat/message",
+                json={"message": "Jane, jane@example.com, 15 Jan 2099"},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json()["prefill"] == {"name": "Jane", "email": "jane@example.com", "date": "2099-01-15"}

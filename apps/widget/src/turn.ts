@@ -30,6 +30,14 @@ const ChatMessageResponseSchema = z.object({
   confidence: z.number().nullable(),
   sources: z.array(ChatSourceSchema),
   action: z.enum(["lead_form", "schedule_cta", "identity_form"]).nullable().optional(),
+  prefill: z
+    .object({
+      name: z.string().nullable().optional(),
+      email: z.string().nullable().optional(),
+      date: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export interface ChatSource {
@@ -37,6 +45,15 @@ export interface ChatSource {
   chunkId: string;
   score: number | null;
   matchedBy: string[];
+}
+
+/** Booking details the server read from the visitor's own chat message --
+ * pre-fills the booking card / lead form (the visitor still confirms). */
+export interface BookingPrefill {
+  name?: string;
+  email?: string;
+  /** YYYY-MM-DD */
+  date?: string;
 }
 
 export interface Turn {
@@ -47,6 +64,7 @@ export interface Turn {
   confidence: number | null;
   sources: ChatSource[];
   action: "lead_form" | "schedule_cta" | "identity_form" | null;
+  prefill?: BookingPrefill | null;
 }
 
 /** The typed shape of the backend's central error envelope, mirroring AdmissionError. */
@@ -209,6 +227,19 @@ export async function sendTurn(config: WidgetConfig, input: SendTurnInput): Prom
         matchedBy: s.matched_by,
       })),
       action: data.action ?? null,
+      prefill: data.prefill ? toBookingPrefill(data.prefill) : null,
     },
   };
+}
+
+function toBookingPrefill(raw: {
+  name?: string | null | undefined;
+  email?: string | null | undefined;
+  date?: string | null | undefined;
+}): BookingPrefill {
+  const prefill: BookingPrefill = {};
+  if (raw.name) prefill.name = raw.name;
+  if (raw.email) prefill.email = raw.email;
+  if (raw.date) prefill.date = raw.date;
+  return prefill;
 }

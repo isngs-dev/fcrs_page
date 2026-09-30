@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from "react";
 import type { WidgetConfig } from "../config";
 import { CONSENT_PURPOSE, CONSENT_TEXT, submitLead } from "../lead";
 import { formatUsPhoneInput } from "../phoneFormat";
+import type { BookingPrefill } from "../turn";
 
 const LOG_PREFIX = "[chatbot-widget]";
 
@@ -30,11 +31,13 @@ export interface LeadFormProps {
   /** Fires once on a real `201` so the caller can disable the persistent
    * "Connect with a sales rep" CTA (the request is already in). */
   onSubmitted?: () => void;
+  /** Name/email the visitor already typed in chat. */
+  prefill?: BookingPrefill;
 }
 
-export function LeadForm({ config, onSubmitted }: LeadFormProps) {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+export function LeadForm({ config, onSubmitted, prefill }: LeadFormProps) {
+  const [name, setName] = useState(prefill?.name ?? "");
+  const [email, setEmail] = useState(prefill?.email ?? "");
   const [phone, setPhone] = useState("");
   const [consentChecked, setConsentChecked] = useState(false);
   const [submitting, setSubmitting] = useState(false);

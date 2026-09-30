@@ -49,6 +49,15 @@ class ChatSource(BaseModel):
     matched_by: list[str]
 
 
+class BookingPrefill(BaseModel):
+    """Booking details read from the visitor's own message -- pre-fills the
+    widget's booking card / lead form. Echoes only what the visitor typed."""
+
+    name: str | None = None
+    email: str | None = None
+    date: str | None = None
+
+
 class ChatMessageResponse(BaseModel):
     """Leak-free response body for POST /public/chat/message.
 
@@ -71,6 +80,7 @@ class ChatMessageResponse(BaseModel):
     confidence: float | None
     sources: list[ChatSource]
     action: Literal["lead_form", "schedule_cta", "identity_form"] | None = None
+    prefill: BookingPrefill | None = None
 
 
 @router.post("/message")
@@ -142,6 +152,7 @@ async def post_message(
             for s in result.sources
         ],
         action=result.action,  # type: ignore[arg-type]
+        prefill=BookingPrefill(**result.prefill) if result.prefill else None,
     )
 
 
