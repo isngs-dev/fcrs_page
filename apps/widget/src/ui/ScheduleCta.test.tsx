@@ -975,7 +975,7 @@ describe("ScheduleCta pre-filled from chat", () => {
     expect(input).toMatchObject({ startsAt: SLOT_A.startsAt, email: "jane@example.com", name: "Jane Smith" });
   });
 
-  it("falls back to the next available times when the typed date has no openings", async () => {
+  it("keeps the typed day when it has no openings, and only shows other days on request", async () => {
     fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [] });
     fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
 
@@ -984,8 +984,34 @@ describe("ScheduleCta pre-filled from chat", () => {
     });
     await flush();
 
+    // Only the typed day was asked for -- no silent switch to another day.
+    expect(fetchSlotsMock).toHaveBeenCalledTimes(1);
+    expect(getSlotButtons()).toHaveLength(0);
+    expect(container.querySelector(".cw-sched-empty")?.textContent).toMatch(/no openings on Monday, July 20/i);
+
+    const showOthers = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === "See other available times",
+    )!;
+    act(() => {
+      showOthers.click();
+    });
+    await flush();
+
     expect(fetchSlotsMock).toHaveBeenCalledTimes(2);
     expect(fetchSlotsMock.mock.calls[1]![1]).toEqual({});
     expect(getSlotButtons()).toHaveLength(1);
+  });
+
+  it("shows times in Eastern Time with an EDT/EST header, not the visitor's machine zone", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={PREFILL} />);
+    });
+    await flush();
+
+    // SLOT_A is 09:00 UTC on 20 July = 5:00 AM Eastern Daylight Time.
+    expect(getSlotButton(0).textContent).toContain("5:00 AM");
+    expect(container.querySelector(".cw-sched-list-label")?.textContent).toMatch(/[(](EDT|EST)[)]/);
   });
 });

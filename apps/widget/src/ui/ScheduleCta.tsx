@@ -112,7 +112,21 @@ type Step =
  */
 const DEFAULT_TIME_ZONE = "America/New_York";
 
-function formatLocalSlotLabel(startsAtIso: string): string {
+/** Short zone name for a header, e.g. "EST"/"EDT" for America/New_York. */
+function formatZoneName(timeZone: string): string {
+  try {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
+      .formatToParts(new Date())
+      .find((p) => p.type === "timeZoneName");
+    return part?.value ?? timeZone;
+  } catch {
+    return timeZone;
+  }
+}
+
+/** "Sun 4 Oct, 2:30 PM" in `timeZone` -- the card's selected zone, never the
+ * visitor's machine zone, so labels always match the zone shown in the header. */
+function formatLocalSlotLabel(startsAtIso: string, timeZone?: string): string {
   const date = new Date(startsAtIso);
   if (Number.isNaN(date.getTime())) return startsAtIso;
   try {
@@ -122,6 +136,7 @@ function formatLocalSlotLabel(startsAtIso: string): string {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      ...(timeZone ? { timeZone } : {}),
     }).format(date);
   } catch {
     return date.toISOString();
@@ -274,7 +289,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
    * the calendar. */
   const [dismissed, setDismissed] = useState(false);
   const resolvedZone = useRef(DEFAULT_TIME_ZONE).current;
-  const [timeZone, setTimeZone] = useState(() => summary?.timezone ?? resolvedZone);
+  const [timeZone, setTimeZone] = useState(resolvedZone);
   const firstSlotButtonRef = useRef<HTMLButtonElement | null>(null);
   const confirmHeadingRef = useRef<HTMLDivElement | null>(null);
   const confirmationRef = useRef<HTMLDivElement | null>(null);
@@ -319,7 +334,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
     // any, otherwise fall back to the next available times.
     void (async () => {
       const result = await fetchSlots(config, { dateFrom: preferredDay, dateTo: preferredDay });
-      if (result.ok && result.slots.length > 0) {
+      if (result.ok) {
         setSelectedDay(preferredDay);
         setLastLoadedSlots(result.slots);
         setStep({ name: "list", slots: result.slots });
@@ -402,7 +417,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
     return (
       <div className="cw-sched" role="status">
         <p ref={existingBookingHeadingRef} tabIndex={-1}>
-          You&rsquo;re already booked for {formatLocalSlotLabel(summary.existingBooking.startsAt)}. Keep it, or book an additional call?
+          You&rsquo;re already booked for {formatLocalSlotLabel(summary.existingBooking.startsAt, timeZone)} ({formatZoneName(timeZone)}). Keep it, or book an additional call?
         </p>
         <div className="cw-sched-confirm-actions">
           <button type="button" className="cw-sched-back-button" onClick={() => { setExistingDecisionPending(false); setDismissed(true); }}>Keep it</button>
@@ -502,11 +517,19 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
 
   if (step.name === "list") {
     if (step.slots.length === 0) {
+      const typedDayEmpty = !summary && prefill?.date !== undefined && selectedDay === prefill.date;
       return (
         <ScheduleCard onClose={() => setClosed(true)}>
           <div className="cw-sched-empty" role="status">
-            No times are currently available.
+            {typedDayEmpty && selectedDay
+              ? `There are no openings on ${formatSelectedDayLabel(selectedDay)}.`
+              : "No times are currently available."}
           </div>
+          {typedDayEmpty && (
+            <button type="button" className="cw-sched-back-button" onClick={() => { setSelectedDay(null); void loadSlots(); }}>
+              See other available times
+            </button>
+          )}
           {summary && (
             <button type="button" className="cw-sched-back-button" onClick={() => setCalendarVisible(true)}>
               Back to calendar
@@ -572,7 +595,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
     return (
       <div className="cw-sched">
         <div className="cw-sched-list-label" id="cw-sched-list-label">
-          Choose a time ({timeZone})
+          {selectedDay ? `Choose a time on ${formatSelectedDayLabel(selectedDay)}` : "Choose a time"} ({formatZoneName(timeZone)})
         </div>
         <ul className="cw-sched-list" aria-labelledby="cw-sched-list-label">
           {step.slots.map((slot, index) => (
@@ -583,7 +606,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
                 ref={index === 0 ? firstSlotButtonRef : undefined}
                 onClick={() => selectSlot(slot)}
               >
-                {formatLocalSlotLabel(slot.startsAt)}
+                {formatLocalSlotLabel(slot.startsAt, timeZone)}
               </button>
             </li>
           ))}
@@ -594,7 +617,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
 
   if (step.name === "confirm" || step.name === "booking" || step.name === "book-error") {
     const submitting = step.name === "booking";
-    const label = formatLocalSlotLabel(step.slot.startsAt);
+    const label = `${formatLocalSlotLabel(step.slot.startsAt, timeZone)} (${formatZoneName(timeZone)})`;
     if (summary) {
       return (
         <ScheduleCard onClose={() => setClosed(true)}>
@@ -714,7 +737,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   }
 
   // step.name === "booked"
-  const label = formatLocalSlotLabel(step.slot.startsAt);
+  const label = `${formatLocalSlotLabel(step.slot.startsAt, timeZone)} (${formatZoneName(timeZone)})`;
   if (summary) {
     return (
       <div className="cw-sched-booked-stack" role="status" tabIndex={-1} ref={confirmationRef}>
