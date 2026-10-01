@@ -1015,3 +1015,38 @@ describe("ScheduleCta pre-filled from chat", () => {
     expect(container.querySelector(".cw-sched-list-label")?.textContent).toMatch(/[(](EDT|EST)[)]/);
   });
 });
+
+describe("ScheduleCta pre-filled with a time typed in chat", () => {
+  it("goes straight to confirming the slot at that time, with the phone filled in", async () => {
+    // SLOT_A is 09:00 UTC on 20 July = 05:00 Eastern (the card's timezone).
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A, SLOT_B] });
+
+    act(() => {
+      root.render(
+        <ScheduleCta
+          config={baseConfig}
+          prefill={{ name: "John", email: "john@example.com", phone: "(555) 123-4567", date: "2026-07-20", time: "05:00" }}
+        />,
+      );
+    });
+    await flush();
+
+    expect(getSlotButtons()).toHaveLength(0);
+    expect(container.querySelector(".cw-sched-confirm-heading")?.textContent).toContain("Confirm");
+    expect(container.textContent).toContain("5:00");
+    expect(container.querySelector<HTMLInputElement>(".cw-sched-phone-input")?.value).toBe("(555) 123-4567");
+  });
+
+  it("shows that day's times when the typed time isn't open", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A, SLOT_B] });
+
+    act(() => {
+      root.render(
+        <ScheduleCta config={baseConfig} prefill={{ email: "john@example.com", date: "2026-07-20", time: "16:00" }} />,
+      );
+    });
+    await flush();
+
+    expect(getSlotButtons()).toHaveLength(2);
+  });
+});

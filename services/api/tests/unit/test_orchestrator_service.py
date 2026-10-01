@@ -1141,15 +1141,20 @@ async def test_off_topic_escalate_sets_action_lead_form_guardrail_flag_none() ->
     assert assistant_call["guardrail_flag"] is None
 
 
-async def test_scheduling_request_escalate_sets_action_lead_form() -> None:
-    p = _Patched(classify_return="scheduling_request")
+async def test_scheduling_request_asks_for_details_in_chat_without_a_card() -> None:
+    """A booking request gets a reply asking for name/email/phone -- no card
+    yet; the visitor's reply opens the pre-filled card (Step 5.6)."""
+    p = _Patched(classify_return="scheduling_request", availability=_availability())
     with p:
         result = await answer_turn(
-            db=object(), claims=_claims(), message="can I book a call?",
+            db=object(), claims=_claims(), message="please schedule for tomorrow at 10 AM",
         )
 
     assert result.decision == "escalate"
-    assert result.action == "lead_form"
+    assert result.action is None
+    assert result.reply == _SCHEDULING_REPLY
+    for detail in ("name", "email", "phone"):
+        assert detail in _SCHEDULING_REPLY
     assert result.guardrail_flag is None
 
 
@@ -1591,7 +1596,7 @@ async def test_identity_gate_reply_is_the_trusted_constant() -> None:
 # -- escalate action conditional on availability (all causes) ------------------------
 
 
-@pytest.mark.parametrize("classify_label", ["off_topic", "scheduling_request"])
+@pytest.mark.parametrize("classify_label", ["off_topic"])
 async def test_escalate_intent_action_conditional_on_availability(classify_label: str) -> None:
     """off_topic/scheduling_request escalate -> schedule_cta when available,
     lead_form otherwise; get_availability called with the turn's own claims."""
@@ -2387,3 +2392,52 @@ async def test_booking_prefill_survives_unparseable_model_output() -> None:
 
     assert result.prefill == {"email": "x@y.io"}
     assert result.action == "schedule_cta"
+
+
+async def test_phone_right_after_the_details_ask_opens_the_prefilled_card() -> None:
+    """A phone number counts as booking details when the bot just asked for
+    them; the date/time said earlier in the chat carries over."""
+    p = _Patched(
+        completion=_json_completion('{"name": "John Smith", "date": "2099-01-15", "time": "10:00"}'),
+        availability=_availability(),
+        recent_intents=["scheduling_request"],
+        working_memory=_wm(messages=[
+            _msg("user", "please schedule for 15 January 2099 at 10 AM", "m1"),
+            _msg("bot", "Happy to help you book that!", "m2"),
+            _msg("user", "John Smith, (555) 123-4567", "m3"),
+        ]),
+    )
+    with p:
+        result = await answer_turn(
+            db=object(), claims=_claims(), message="John Smith, (555) 123-4567",
+        )
+
+    p.provider.classify.assert_not_awaited()
+    assert result.action == "schedule_cta"
+    assert result.prefill == {
+        "name": "John Smith", "phone": "(555) 123-4567", "date": "2099-01-15", "time": "10:00",
+    }
+    extract_prompt = p.provider.generate.await_args.args[0]
+    assert "15 January 2099 at 10 AM" in extract_prompt[1].content
+
+
+async def test_a_phone_number_out_of_the_blue_is_not_treated_as_booking_details() -> None:
+    p = _Patched(classify_return="question", recent_intents=["question"])
+    with p:
+        result = await answer_turn(
+            db=object(), claims=_claims(), message="my old number was 555 123 4567, does that matter?",
+        )
+
+    p.provider.classify.assert_awaited_once()
+    assert result.prefill is None
+
+
+async def test_booking_prefill_rejects_an_invalid_time() -> None:
+    p = _Patched(
+        completion=_json_completion('{"name": null, "date": null, "time": "25:99"}'),
+        availability=_availability(),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="me@x.io at noonish")
+
+    assert result.prefill == {"email": "me@x.io"}

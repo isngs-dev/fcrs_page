@@ -55,7 +55,9 @@ class BookingPrefill(BaseModel):
 
     name: str | None = None
     email: str | None = None
+    phone: str | None = None
     date: str | None = None
+    time: str | None = None  # 24-hour HH:MM
 
 
 class ChatMessageResponse(BaseModel):

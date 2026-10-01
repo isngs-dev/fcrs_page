@@ -112,6 +112,17 @@ type Step =
  */
 const DEFAULT_TIME_ZONE = "America/New_York";
 
+/** "14:30" -- a slot's start as 24-hour HH:MM in `timeZone`, to match a time typed in chat. */
+function slotClock(startsAtIso: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone }).format(
+      new Date(startsAtIso),
+    );
+  } catch {
+    return "";
+  }
+}
+
 /** Short zone name for a header, e.g. "EST"/"EDT" for America/New_York. */
 function formatZoneName(timeZone: string): string {
   try {
@@ -276,7 +287,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   const [consentChecked, setConsentChecked] = useState(false);
   const [email, setEmail] = useState(prefill?.email ?? "");
   const [name, setName] = useState(prefill?.name ?? "");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(prefill?.phone ?? "");
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [lastLoadedSlots, setLastLoadedSlots] = useState<Slot[]>([]);
@@ -337,7 +348,12 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
       if (result.ok) {
         setSelectedDay(preferredDay);
         setLastLoadedSlots(result.slots);
-        setStep({ name: "list", slots: result.slots });
+        // A time named in chat that's open on that day: go straight to the
+        // confirm step for it (details pre-filled; the visitor still confirms).
+        const wanted = prefill?.time
+          ? result.slots.find((slot) => slotClock(slot.startsAt, timeZone) === prefill.time)
+          : undefined;
+        setStep(wanted ? { name: "confirm", slot: wanted } : { name: "list", slots: result.slots });
         return;
       }
       await loadSlots();
@@ -691,6 +707,9 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             {/* Details the visitor typed in chat -- shown so they can check or fix them. */}
             <input className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
             <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} aria-label="Name" placeholder="Name" autoComplete="name" />
+            {prefill?.phone && (
+              <input className="cw-input cw-sched-phone-input" type="tel" inputMode="numeric" value={phone} onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))} disabled={submitting} aria-label="Phone, optional" placeholder="(555) 123-4567" autoComplete="tel" />
+            )}
           </>
         )}
 
@@ -727,7 +746,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             type="button"
             className="cw-sched-back-button"
             disabled={submitting}
-            onClick={() => summary ? setCalendarVisible(true) : void loadSlots()}
+            onClick={() => summary ? setCalendarVisible(true) : void loadSlots(selectedDay ?? undefined)}
           >
             Back
           </button>

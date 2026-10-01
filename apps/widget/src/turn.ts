@@ -34,7 +34,9 @@ const ChatMessageResponseSchema = z.object({
     .object({
       name: z.string().nullable().optional(),
       email: z.string().nullable().optional(),
+      phone: z.string().nullable().optional(),
       date: z.string().nullable().optional(),
+      time: z.string().nullable().optional(),
     })
     .nullable()
     .optional(),
@@ -52,8 +54,11 @@ export interface ChatSource {
 export interface BookingPrefill {
   name?: string;
   email?: string;
+  phone?: string;
   /** YYYY-MM-DD */
   date?: string;
+  /** 24-hour HH:MM the visitor asked for (read in the card's timezone). */
+  time?: string;
 }
 
 export interface Turn {
@@ -235,11 +240,15 @@ export async function sendTurn(config: WidgetConfig, input: SendTurnInput): Prom
 function toBookingPrefill(raw: {
   name?: string | null | undefined;
   email?: string | null | undefined;
+  phone?: string | null | undefined;
   date?: string | null | undefined;
+  time?: string | null | undefined;
 }): BookingPrefill {
   const prefill: BookingPrefill = {};
   if (raw.name) prefill.name = raw.name;
   if (raw.email) prefill.email = raw.email;
+  if (raw.phone) prefill.phone = raw.phone;
   if (raw.date) prefill.date = raw.date;
+  if (raw.time) prefill.time = raw.time;
   return prefill;
 }

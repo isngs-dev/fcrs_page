@@ -236,9 +236,11 @@ _FORMATTING_RULES = (
     "fastest, #1, unbeatable), hype, urgency, or exclamation-heavy sales talk "
     "unless the context states it verbatim. If something depends on an "
     "inspection, quote, or the customer's situation, say so plainly."
-    " If the visitor wants to book an inspection, estimate, or call, ask only "
-    "for their name, email, and preferred date -- never an address, phone "
-    "number, or other personal details."
+    " If the visitor wants to book an inspection, estimate, or call, ask for "
+    "their name, email, and phone number (and their preferred date and time if "
+    "they haven't said) -- never an address or other personal details. Never "
+    "say a time is available or that anything is booked or confirmed: the "
+    "booking form checks availability and the visitor confirms there."
 )
 
 _GROUNDING_SYSTEM_PROMPT = (
@@ -290,14 +292,13 @@ _OFF_TOPIC_BOOKING_REPLY = (
 )
 _OFF_TOPIC_BOOKING_AFTER = 3  # the Nth off-topic question in a row offers the call
 
-# Fixed scheduling_request template -- the visitor explicitly ASKED to book
-# or talk to someone, so this is a warm yes, not _ESCALATE_REPLY's "I can't
-# answer that precisely" (which read as the bot lacking knowledge). Still
-# dual-purpose like the other escalate copy: the card beneath it may be
-# schedule_cta or lead_form (decision 5), so it never promises a calendar.
+# Fixed scheduling_request template -- the visitor explicitly ASKED to book,
+# so ask for the details in the chat (no card yet). Their reply triggers the
+# booking-details step (Step 5.6), which opens the booking card pre-filled --
+# including any date/time they already gave here. Never promises a slot.
 _SCHEDULING_REPLY = (
-    "Happy to help you get that set up! Tap below to connect with one of "
-    "our reps and find a time that works for you."
+    "Happy to help you book that! Please share your name, email and phone "
+    "number, and I'll bring up the available times for you to confirm."
 )
 
 # Fixed turn-cap template (S10.4 decision 7; retuned once the reply text
@@ -317,23 +318,33 @@ _TURN_CAP_REPLY = (
     "out."
 )
 
-# Fixed identity-gate template (SR-14 D1/D4) -- the trusted-constant reply
-# shown on a gated tenant's first bot reply (and every subsequent reply,
-# D2's absolute gate) when the visitor has no captured identity yet. The
-# widget renders the consent-gated <IdentityForm> inline in the thread on
-# action="identity_form"; the visitor's real question is already durable
-# (step 5 ran before this branch, C2) and is auto-answered on capture (D3).
-# Booking details typed into the chat (the reply above asks for name, email,
-# preferred date). An email address is the trigger: it's the one detail the
-# booking can't happen without, and a regex finds it deterministically.
+# Booking details typed into the chat (the scheduling reply asks for name,
+# email, phone). An email address triggers the booking-details step; so does a
+# phone number right after the bot asked for details. Both are found by regex
+# in the visitor's own words, never taken from the model.
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_PHONE_RE = re.compile(r"\+?\(?\d[\d\s().-]{8,}\d")
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_BOOKING_CONTEXT_MESSAGES = 6  # recent visitor messages the extractor reads
 
 _BOOKING_EXTRACT_PROMPT = (
-    "Extract call-booking details from the visitor's message. Today is {today}. "
-    "Reply with ONLY a JSON object with the keys name, email and date. date is "
-    "YYYY-MM-DD, resolving words like 'tomorrow' or 'next Monday' against today. "
-    "Use null for anything the message does not state -- never guess."
+    "Extract call-booking details from what the visitor has said in this chat "
+    "(their messages, oldest first). Today is {today}. Reply with ONLY a JSON "
+    "object with the keys name, date and time. date is YYYY-MM-DD, resolving "
+    "words like 'tomorrow' or 'next Monday' against today; time is 24-hour "
+    "HH:MM (10 AM -> 10:00, 2:30 pm -> 14:30). If something was said more than "
+    "once, use the latest. Use null for anything not stated -- never guess."
 )
+
+
+def _find_phone(text: str) -> str | None:
+    """The latest phone-number-looking run of 10-15 digits in ``text``."""
+    for candidate in reversed(_PHONE_RE.findall(text)):
+        digits = re.sub(r"\D", "", candidate)
+        if 10 <= len(digits) <= 15:
+            return str(candidate).strip()
+    return None
+
 
 _BOOKING_DETAILS_REPLY = (
     "Thanks! I've filled in your details below -- pick a time that works for "
@@ -346,19 +357,24 @@ _BOOKING_DETAILS_LEAD_REPLY = (
 
 
 async def _extract_booking_prefill(
-    provider: LLMProvider, model: str, message: str, today: date,
+    provider: LLMProvider, model: str, visitor_text: str, today: date,
 ) -> dict[str, str]:
-    """Name/email/date from a visitor message, for pre-filling the booking card.
+    """Name/email/phone/date/time from the visitor's recent messages, for
+    pre-filling the booking card (``visitor_text``: their messages, newest last).
 
-    The email comes from the regex, never the model. The model's name is kept
-    only if it literally appears in the message and its date only if it's a
-    real date not in the past -- nothing it could invent survives. A model
-    failure degrades to the email alone (a convenience pre-fill, not data).
+    Email and phone come from regexes over the visitor's own words, never the
+    model. The model's name is kept only if it literally appears in what they
+    wrote, its date only if real and not past, its time only if a valid HH:MM
+    -- nothing it could invent survives. A model failure degrades to the
+    regex-found details (a convenience pre-fill, not data).
     """
     prefill: dict[str, str] = {}
-    match = _EMAIL_RE.search(message)
-    if match:
-        prefill["email"] = match.group(0).rstrip(".")
+    emails = _EMAIL_RE.findall(visitor_text)
+    if emails:
+        prefill["email"] = emails[-1].rstrip(".")
+    phone = _find_phone(_EMAIL_RE.sub(" ", visitor_text))
+    if phone:
+        prefill["phone"] = phone
     try:
         completion = await provider.generate(
             [
@@ -366,7 +382,7 @@ async def _extract_booking_prefill(
                     role="system",
                     content=_BOOKING_EXTRACT_PROMPT.format(today=today.strftime("%A, %Y-%m-%d")),
                 ),
-                ChatMessage(role="user", content=message),
+                ChatMessage(role="user", content=visitor_text),
             ],
             model=model,
             max_tokens=120,
@@ -379,7 +395,7 @@ async def _extract_booking_prefill(
         return prefill
     name = data.get("name")
     name = name.strip() if isinstance(name, str) else ""
-    if 0 < len(name) <= 80 and name.lower() in message.lower():
+    if 0 < len(name) <= 80 and name.lower() in visitor_text.lower():
         prefill["name"] = name
     raw_date = data.get("date")
     if isinstance(raw_date, str):
@@ -389,9 +405,18 @@ async def _extract_booking_prefill(
             parsed = None
         if parsed is not None and parsed >= today:
             prefill["date"] = parsed.isoformat()
+    raw_time = data.get("time")
+    if isinstance(raw_time, str) and _TIME_RE.match(raw_time.strip()):
+        prefill["time"] = raw_time.strip()
     return prefill
 
 
+# Fixed identity-gate template (SR-14 D1/D4) -- the trusted-constant reply
+# shown on a gated tenant's first bot reply (and every subsequent reply,
+# D2's absolute gate) when the visitor has no captured identity yet. The
+# widget renders the consent-gated <IdentityForm> inline in the thread on
+# action="identity_form"; the visitor's real question is already durable
+# (step 5 ran before this branch, C2) and is auto-answered on capture (D3).
 _IDENTITY_GATE_REPLY = (
     "Before I answer, could you share your name and email? I'll use it to "
     "follow up on this conversation -- once you've confirmed, I'll answer "
@@ -612,14 +637,29 @@ async def _resolve_turn(
             tokens=None,
         )
 
-    # Step 5.6: booking details typed into the chat (name/email/date, as the
-    # grounded prompt asks for). Pre-empts the turn cap -- a visitor handing
-    # over their details must always get the booking card. The card itself is
-    # the existing consent-gated booking flow, pre-filled: nothing is booked
-    # or stored from the chat text alone.
-    if _EMAIL_RE.search(message):
+    # Step 5.6: booking details typed into the chat (name/email/phone, as the
+    # scheduling reply asks for). Triggered by an email address, or by a phone
+    # number right after the bot asked for details. Reads the visitor's recent
+    # messages too, so a date/time said earlier ("tomorrow at 10 AM") carries
+    # over. Pre-empts the turn cap -- a visitor handing over their details
+    # must always get the booking card. The card is the existing consent-gated
+    # booking flow, pre-filled: nothing is booked or stored from chat text.
+    booking_details = _EMAIL_RE.search(message) is not None
+    if not booking_details and _find_phone(message):
+        last_intents = await get_recent_assistant_intents(db, claims, conversation_id, limit=1)
+        booking_details = last_intents[:1] == ["scheduling_request"]
+    if booking_details:
+        wm = await get_working_memory(
+            db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
+        )
+        visitor_messages = [m.content for m in wm["messages"] if m.role == "user"]
+        if not visitor_messages or visitor_messages[-1] != message:
+            visitor_messages.append(message)
         prefill = await _extract_booking_prefill(
-            provider, config.model, message, datetime.now(UTC).date(),
+            provider,
+            config.model,
+            "\n".join(visitor_messages[-_BOOKING_CONTEXT_MESSAGES:]),
+            datetime.now(UTC).date(),
         )
         action = await _schedule_action(db, claims)
         await provider.aclose()
@@ -749,14 +789,9 @@ async def _resolve_turn(
         )
 
     if intent == "scheduling_request":
-        # No RAG, no generate -- a fixed, honest, trusted-constant reply.
-        # Fixed-template branches are never scanned (decision 4).
-        # S10.4 decision 4/5: escalate -> schedule_cta when the tenant
-        # has availability configured, else lead_form (the ONE read-only
-        # api/scheduling/** check the orchestrator ever makes).
-        action = await _schedule_action(db, claims)
-        # classify already ran on `provider`; no _GeneratePlan will carry it
-        # onward, so close it before returning the fixed-template reply.
+        # No RAG, no generate -- a fixed, trusted-constant reply that asks for
+        # the visitor's details in the chat; no card yet (their reply opens the
+        # pre-filled booking card via Step 5.6). Never scanned (decision 4).
         await provider.aclose()
         return _FixedOutcome(
             conversation_id=conversation_id,
@@ -766,7 +801,7 @@ async def _resolve_turn(
             confidence=None,
             sources=[],
             intent=intent,
-            action=action,
+            action=None,
             grounded=False,
             tokens=None,
         )

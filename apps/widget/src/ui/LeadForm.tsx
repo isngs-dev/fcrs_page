@@ -38,7 +38,7 @@ export interface LeadFormProps {
 export function LeadForm({ config, onSubmitted, prefill }: LeadFormProps) {
   const [name, setName] = useState(prefill?.name ?? "");
   const [email, setEmail] = useState(prefill?.email ?? "");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(prefill?.phone ?? "");
   const [consentChecked, setConsentChecked] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
