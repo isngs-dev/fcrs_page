@@ -88,7 +88,7 @@ import { sendTurn, type TurnResult } from "../turn";
 import { clearResumeRecord, touchResumeRecord } from "../resume";
 import { isResumeEnabled, isVoiceAsrEnabled, mintVisitorSession } from "../session";
 import { withRetry } from "../retry";
-import { fetchAvailabilitySummary } from "../schedule";
+import { fetchAvailabilitySummary, type AvailabilitySummary } from "../schedule";
 import { transcribeAudio } from "../voice";
 import * as tts from "../tts";
 import type { ChatMessage } from "./Bubble";
@@ -1024,6 +1024,14 @@ export function ChatWidget({
       );
 
       if (unmountedRef.current || controller.signal.aborted) return;
+      // A booking card opened from chat gets the same day strip + time grid as
+      // "Book inspection", so fetch the day map first (no map -> flat list).
+      let scheduleSummary: AvailabilitySummary | undefined;
+      if (result.ok && result.turn.action === "schedule_cta" && result.turn.decision !== "escalate") {
+        const summaryResult = await fetchAvailabilitySummary(config);
+        if (unmountedRef.current || controller.signal.aborted) return;
+        if (summaryResult.ok && summaryResult.summary.action === "schedule_cta") scheduleSummary = summaryResult.summary;
+      }
       if (turnAbortRef.current === controller) turnAbortRef.current = null;
       setPending(false);
 
@@ -1142,6 +1150,7 @@ export function ChatWidget({
           text: result.turn.reply,
           action: offersHumanHandoff ? "handoff_choice" : result.turn.action,
           ...(result.turn.prefill ? { prefill: result.turn.prefill } : {}),
+          ...(scheduleSummary ? { scheduleSummary } : {}),
         },
       ]);
     },

@@ -64,6 +64,7 @@ vi.mock("../session", () => ({
   mintVisitorSession: (config: WidgetConfig) => mintVisitorSessionMock(config),
   isResumeEnabled: () => isResumeEnabledMock(),
   isVoiceAsrEnabled: () => isVoiceAsrEnabledMock(),
+  isVoiceCallEnabled: () => false,
 }));
 
 // SR-3: mock resume.ts's write-side helpers so ChatWidget's touch/clear
@@ -3812,5 +3813,45 @@ describe("ChatWidget", () => {
         expect(container.querySelector(".cw-connect-sales-button")).not.toBeNull();
       });
     });
+  });
+});
+
+describe("booking card opened from a chat turn", () => {
+  it("fetches the day map so the card shows the day strip, not a long list of times", async () => {
+    sendTurnMock.mockResolvedValueOnce({
+      ok: true,
+      turn: {
+        conversationId: "conv-book-1",
+        messageId: "msg-book-1",
+        reply: "Pick a time below.",
+        decision: "answer",
+        confidence: 1,
+        sources: [],
+        action: "schedule_cta",
+        prefill: { name: "Jane", email: "jane@example.com" },
+      },
+    });
+    fetchAvailabilitySummaryMock.mockResolvedValueOnce(NO_EXISTING_BOOKING_RESULT);
+    fetchAvailabilitySummaryMock.mockResolvedValueOnce({
+      ok: true,
+      summary: {
+        action: "schedule_cta",
+        timezone: "UTC",
+        days: [{ date: "2026-07-22", hasAvailability: true }],
+        transitionMessage: "",
+        existingBooking: null,
+      },
+    });
+
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+    typeAndSend("Jane, jane@example.com, 555 123 4567");
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".cw-bubble-row-bot .cw-sched-day-strip")).not.toBeNull();
+    expect(fetchSlotsMock).not.toHaveBeenCalled();
   });
 });

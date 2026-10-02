@@ -1084,3 +1084,40 @@ describe("ScheduleCta in reschedule mode", () => {
     expect(container.textContent).toContain("Rescheduled to");
   });
 });
+
+describe("ScheduleCta opened from chat with a day map", () => {
+  const CHAT_SUMMARY: AvailabilitySummary = {
+    action: "schedule_cta",
+    timezone: "America/New_York",
+    days: [
+      { date: "2026-07-20", hasAvailability: true },
+      { date: "2026-07-21", hasAvailability: true },
+    ],
+    transitionMessage: "",
+    existingBooking: { startsAt: "2026-07-19T14:00:00+00:00", endsAt: "2026-07-19T14:30:00+00:00", timezone: "America/New_York" },
+  };
+
+  it("shows the day strip (not a long list) when no day was typed, and never asks keep-or-book-another", async () => {
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} summary={CHAT_SUMMARY} prefill={{ email: "h@example.com", reschedule: true }} />);
+    });
+    await flush();
+
+    expect(container.querySelector(".cw-sched-day-strip")).not.toBeNull();
+    expect(container.textContent).not.toContain("Keep it");
+    expect(fetchSlotsMock).not.toHaveBeenCalled();
+  });
+
+  it("opens the typed day's time grid when that day is open", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A, SLOT_B] });
+
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} summary={CHAT_SUMMARY} prefill={{ email: "h@example.com", date: "2026-07-20" }} />);
+    });
+    await flush();
+
+    expect(fetchSlotsMock.mock.calls[0]![1]).toEqual({ dateFrom: "2026-07-20", dateTo: "2026-07-20" });
+    expect(container.querySelector(".cw-sched-day-strip")).toBeNull();
+    expect(container.querySelectorAll(".cw-sched-time-slot")).toHaveLength(2);
+  });
+});

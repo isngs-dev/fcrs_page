@@ -292,8 +292,13 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [lastLoadedSlots, setLastLoadedSlots] = useState<Slot[]>([]);
   const [closed, setClosed] = useState(false);
-  const hasExistingBooking = summary?.existingBooking !== null && summary?.existingBooking !== undefined;
-  const [calendarVisible, setCalendarVisible] = useState(summary !== undefined && !hasExistingBooking);
+  // Opened from chat (prefill): the bot already handled any existing booking
+  // (reschedule offer), so never ask "keep it or book another" here.
+  const hasExistingBooking = !prefill && summary?.existingBooking !== null && summary?.existingBooking !== undefined;
+  // A day typed in chat that the day map shows open: skip the day strip and
+  // open straight on that day's times.
+  const prefillDayOpen = summary?.days.some((d) => d.date === prefill?.date && d.hasAvailability) ?? false;
+  const [calendarVisible, setCalendarVisible] = useState(summary !== undefined && !hasExistingBooking && !prefillDayOpen);
   const [existingDecisionPending, setExistingDecisionPending] = useState(hasExistingBooking);
   /** "Keep it" (decision 7a): dismiss without ever showing the picker or
    * booking anything new — a pure no-op end state, not a fall-through into
@@ -335,7 +340,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   }
 
   useEffect(() => {
-    if (summary) return;
+    if (summary && !prefillDayOpen) return;
     const preferredDay = prefill?.date;
     if (!preferredDay) {
       void loadSlots();
@@ -354,6 +359,10 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
           ? result.slots.find((slot) => slotClock(slot.startsAt, timeZone) === prefill.time)
           : undefined;
         setStep(wanted ? { name: "confirm", slot: wanted } : { name: "list", slots: result.slots });
+        return;
+      }
+      if (summary) {
+        setCalendarVisible(true);
         return;
       }
       await loadSlots();
@@ -642,6 +651,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             <div><span className="cw-sched-recap-label">Time</span><strong>{formatSlotTime(step.slot.startsAt, timeZone)}</strong></div>
             <div><span className="cw-sched-recap-label">Date</span><strong>{formatSlotDate(step.slot.startsAt, timeZone)}</strong></div>
           </div>
+          {prefill?.reschedule && <p className="cw-sched-reschedule-note">This replaces your current booking.</p>}
 
           <label className="cw-sched-email-label" htmlFor="cw-sched-email">Where should we send the invite?</label>
           <input id="cw-sched-email" className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
@@ -765,7 +775,10 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
         <div className="cw-sched-booked-message">Meeting invite sent to {email.trim()}.</div>
         <div className="cw-sched-confirmation cw-sched-success-card">
           <span className="cw-sched-success-icon"><CheckGlyph /></span>
-          <strong>You&rsquo;re all set to meet the {SALES_TEAM_LABEL} on {formatSlotDate(step.slot.startsAt, timeZone)} at {formatSlotTime(step.slot.startsAt, timeZone)}.</strong>
+          <strong>
+            {prefill?.reschedule ? "Rescheduled! " : ""}You&rsquo;re all set to meet the {SALES_TEAM_LABEL} on {formatSlotDate(step.slot.startsAt, timeZone)} at {formatSlotTime(step.slot.startsAt, timeZone)}.
+            {prefill?.reschedule ? " Your previous booking has been cancelled." : ""}
+          </strong>
         </div>
       </div>
     );
