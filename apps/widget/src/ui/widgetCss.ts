@@ -408,6 +408,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-composer-voice-only .cw-voice-button svg { width: 22px; height: 22px; }
 .cw-send-button svg { width: 16px; height: 16px; }
 .cw-send-button:hover:not(:disabled) { background: #1d4ed8; }
+.cw-stop-button { background: #111827; }
+.cw-stop-button:hover:not(:disabled) { background: #374151; }
 .cw-send-button:active:not(:disabled) { transform: scale(.95); }
 .cw-send-button:disabled { background: #bfdbfe; color: var(--cw-paper); cursor: not-allowed; }
 .cw-disclaimer { margin: 8px 0 0; color: var(--cw-muted); font-size: 11px; line-height: 1.3; text-align: center; }

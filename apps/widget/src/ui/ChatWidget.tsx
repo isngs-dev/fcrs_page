@@ -123,10 +123,13 @@ const TURN_RETRY_MAX_ATTEMPTS = 4;
 const REMINT_MAX_ATTEMPTS = 2;
 
 /** Small inline SVGs keep the embed self-contained without adding an icon package. */
-function ChatGlyph({ name }: { name: "chat" | "close" | "sound" | "muted" | "send" | "reset" | "mic" }) {
+function ChatGlyph({ name }: { name: "chat" | "close" | "sound" | "muted" | "send" | "reset" | "mic" | "stop" }) {
   const common = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.9 };
   if (name === "close") {
     return <svg aria-hidden="true" {...common}><path d="m6 6 12 12M18 6 6 18" /></svg>;
+  }
+  if (name === "stop") {
+    return <svg aria-hidden="true" {...common}><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" /></svg>;
   }
   if (name === "send") {
     return <svg aria-hidden="true" {...common}><path d="M5 12h14M13 6l6 6-6 6" /></svg>;
@@ -988,8 +991,15 @@ export function ChatWidget({
   // forward-reference entirely.
   const sendMessageRef = useRef<(message: string) => Promise<void>>(async () => {});
 
+  // The in-flight turn's cancel handle (see runSend / stopReply).
+  const turnAbortRef = useRef<AbortController | null>(null);
+
   const runSend = useCallback(
     async (trimmed: string, conversationId: string | null) => {
+      // One cancel handle per send: the Stop button aborts the request, and
+      // a stopped send must never touch the thread afterwards.
+      const controller = new AbortController();
+      turnAbortRef.current = controller;
       setPending(true);
       lastFailedSendRef.current = null;
 
@@ -997,11 +1007,11 @@ export function ChatWidget({
       const result = await withRetry<TurnResult>(
         () => {
           attemptCount += 1;
-          return sendTurn(config, { message: trimmed, conversationId });
+          return sendTurn(config, { message: trimmed, conversationId, signal: controller.signal });
         },
         {
           maxAttempts: TURN_RETRY_MAX_ATTEMPTS,
-          shouldAbort: () => unmountedRef.current,
+          shouldAbort: () => unmountedRef.current || controller.signal.aborted,
           onRetry: ({ error }) => {
             if (unmountedRef.current) return;
             if (error.errorCode === "RATE_LIMITED") {
@@ -1013,7 +1023,8 @@ export function ChatWidget({
         },
       );
 
-      if (unmountedRef.current) return;
+      if (unmountedRef.current || controller.signal.aborted) return;
+      if (turnAbortRef.current === controller) turnAbortRef.current = null;
       setPending(false);
 
       if (!result.ok) {
@@ -1154,12 +1165,27 @@ export function ChatWidget({
     sendMessageRef.current = sendMessage;
   }, [sendMessage]);
 
+  /** Stop button: cancel the pending reply and hand the box straight back. The
+   * visitor's message stays in the thread; no bot reply or error is added. */
+  const stopReply = useCallback(() => {
+    turnAbortRef.current?.abort();
+    turnAbortRef.current = null;
+    setPending(false);
+    setConnectionState({ kind: "online" });
+    inputRef.current?.focus();
+  }, []);
+
   const handleSend = useCallback(async () => {
+    // The box stays enabled (and focused) while a reply is pending so the
+    // visitor never has to click back into it -- but nothing is sent, and
+    // their draft isn't cleared, until that reply has arrived.
+    if (pending) return;
     const message = inputValue;
     stopVoiceCapture();
     setInputValue("");
+    inputRef.current?.focus(); // after a send-button click, back to typing
     await sendMessage(message);
-  }, [inputValue, sendMessage, stopVoiceCapture]);
+  }, [pending, inputValue, sendMessage, stopVoiceCapture]);
 
   /**
    * The persistent "Connect with a sales rep" CTA (SR-5 decisions 4/5): a
@@ -1445,7 +1471,6 @@ export function ChatWidget({
                         className="cw-input"
                           placeholder={`Message ${resolvedBotName}…`}
                         value={inputValue}
-                        disabled={pending}
                         onChange={(e) => {
                           tts.cancel(); // barge-in: typing stops any reply mid-speech
                           setInputValue(e.target.value);
@@ -1453,15 +1478,27 @@ export function ChatWidget({
                         onKeyDown={handleKeyDown}
                           aria-label="Message"
                         />
-                      <button
-                        type="button"
-                        className="cw-send-button"
-                        disabled={pending || inputValue.trim().length === 0}
-                        onClick={() => void handleSend()}
-                        aria-label="Send message"
-                      >
-                        <ChatGlyph name="send" />
-                      </button>
+                      {pending ? (
+                        <button
+                          type="button"
+                          className="cw-send-button cw-stop-button"
+                          onClick={stopReply}
+                          aria-label="Stop response"
+                          title="Stop"
+                        >
+                          <ChatGlyph name="stop" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="cw-send-button"
+                          disabled={inputValue.trim().length === 0}
+                          onClick={() => void handleSend()}
+                          aria-label="Send message"
+                        >
+                          <ChatGlyph name="send" />
+                        </button>
+                      )}
                       </div>
                     ) : (
                       <div className="cw-composer cw-composer-voice-only">

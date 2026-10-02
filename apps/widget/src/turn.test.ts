@@ -194,6 +194,20 @@ describe("sendTurn", () => {
     expect(result.turn.prefill).toEqual({ email: "jane@example.com", date: "2099-01-15" });
   });
 
+  it("returns ABORTED (not NETWORK_ERROR) when the Stop button cancelled the request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    fetchMock.mockRejectedValueOnce(new DOMException("The operation was aborted.", "AbortError"));
+    const { sendTurn } = await import("./turn");
+
+    const result = await sendTurn(baseConfig, { message: "hi", conversationId: null, signal: controller.signal });
+
+    if (result.ok) throw new Error("expected an error result");
+    expect(result.error.errorCode).toBe("ABORTED");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBe(controller.signal);
+  });
+
   it("returns a typed NETWORK_ERROR (no throw) when fetch rejects", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const { sendTurn } = await import("./turn");

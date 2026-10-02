@@ -963,6 +963,73 @@ describe("ChatWidget", () => {
     expect(clearResumeRecordMock).not.toHaveBeenCalled();
   });
 
+  it("Stop cancels a pending reply: no typing indicator, no late bot reply, box ready for the next message", async () => {
+    let resolveTurn: (value: TurnResult) => void = () => {};
+    let seenSignal: AbortSignal | undefined;
+    sendTurnMock.mockImplementationOnce((_config: WidgetConfig, input: unknown) => {
+      seenSignal = (input as { signal?: AbortSignal }).signal;
+      return new Promise((resolve) => {
+        resolveTurn = resolve;
+      });
+    });
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+
+    typeAndSend("Long question");
+    const stop = container.querySelector<HTMLButtonElement>(".cw-stop-button")!;
+    expect(stop.getAttribute("aria-label")).toBe("Stop response");
+    act(() => {
+      stop.click();
+    });
+
+    expect(seenSignal?.aborted).toBe(true);
+    expect(container.querySelector(".cw-typing")).toBeNull();
+    expect(container.querySelector(".cw-stop-button")).toBeNull();
+    expect(document.activeElement).toBe(getInput());
+
+    // The cancelled request settling later must not add anything to the thread.
+    await act(async () => {
+      resolveTurn({
+        ok: true,
+        turn: {
+          conversationId: "conv-1", messageId: "m-1", reply: "Too late", decision: "answer",
+          confidence: 0.9, sources: [], action: null,
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain("Too late");
+    expect(container.querySelector(".cw-line-error")).toBeNull();
+    // The visitor's own message stays.
+    expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Long question");
+  });
+
+  it("keeps the cursor in the message box while a reply is pending; a draft typed meanwhile isn't sent early or cleared", () => {
+    sendTurnMock.mockImplementationOnce(() => new Promise(() => {}));
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+
+    typeAndSend("First question");
+    expect(document.activeElement).toBe(getInput());
+
+    const input = getInput();
+    act(() => {
+      setNativeInputValue(input, "Second question");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+
+    expect(sendTurnMock).toHaveBeenCalledTimes(1);
+    expect(getInput().value).toBe("Second question");
+    expect(document.activeElement).toBe(getInput());
+  });
+
   it("sending a message renders an optimistic user bubble + typing indicator, then a bot bubble; stores conversation_id for the next send", async () => {
     let resolveTurn: (value: TurnResult) => void = () => {};
     sendTurnMock.mockImplementationOnce(
@@ -983,8 +1050,12 @@ describe("ChatWidget", () => {
     expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Hello there");
     // Typing indicator visible while pending.
     expect(container.querySelector(".cw-typing")).not.toBeNull();
-    // Input disabled while a turn is in flight.
-    expect(getInput().disabled).toBe(true);
+    // The input stays enabled and focused while a turn is in flight (no
+    // click needed to keep typing); only sending is blocked.
+    expect(getInput().disabled).toBe(false);
+    expect(document.activeElement).toBe(getInput());
+    // Sending is replaced by a Stop button until the reply arrives.
+    expect(container.querySelector(".cw-stop-button")).not.toBeNull();
 
     await act(async () => {
       resolveTurn({

@@ -97,6 +97,8 @@ export interface SendTurnInput {
   conversationId: string | null;
   /** Optional client-generated UUID for idempotent replay (decision 4 note). Never tenant_id-derived. */
   messageId?: string;
+  /** Cancels the request (the widget's Stop button) -> an ABORTED TurnError. */
+  signal?: AbortSignal;
 }
 
 interface BackendErrorEnvelope {
@@ -159,6 +161,7 @@ export async function sendTurn(config: WidgetConfig, input: SendTurnInput): Prom
       method: "POST",
       headers: { "Content-Type": "application/json", ...auth },
       credentials: "omit",
+      ...(input.signal ? { signal: input.signal } : {}),
       body: JSON.stringify({
         message: input.message,
         conversation_id: input.conversationId,
@@ -166,11 +169,12 @@ export async function sendTurn(config: WidgetConfig, input: SendTurnInput): Prom
       }),
     });
   } catch (err) {
+    const aborted = input.signal?.aborted === true;
     return {
       ok: false,
       error: {
         type: "TURN_ERROR",
-        errorCode: "NETWORK_ERROR",
+        errorCode: aborted ? "ABORTED" : "NETWORK_ERROR",
         message: err instanceof Error ? err.message : "Network request failed.",
         correlationId: null,
         status: null,
