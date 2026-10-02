@@ -1050,3 +1050,37 @@ describe("ScheduleCta pre-filled with a time typed in chat", () => {
     expect(getSlotButtons()).toHaveLength(2);
   });
 });
+
+describe("ScheduleCta in reschedule mode", () => {
+  it("says it replaces the current booking and books with reschedule: true", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+    bookSlotMock.mockResolvedValueOnce({
+      ok: true,
+      booking: { eventId: "evt-new", startsAt: SLOT_A.startsAt, endsAt: SLOT_A.endsAt, status: "booked" },
+    });
+
+    act(() => {
+      root.render(
+        <ScheduleCta config={baseConfig} prefill={{ name: "Harshal", email: "h@example.com", reschedule: true }} />,
+      );
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+
+    expect(container.textContent).toContain("Confirm your new time");
+    expect(container.textContent).toContain("This replaces your current booking.");
+    act(() => {
+      getConsentCheckbox().click();
+    });
+    act(() => {
+      getConfirmButton().click();
+    });
+    await flush();
+
+    const [, input] = bookSlotMock.mock.calls[0]!;
+    expect(input).toMatchObject({ reschedule: true, email: "h@example.com" });
+    expect(container.textContent).toContain("Rescheduled to");
+  });
+});

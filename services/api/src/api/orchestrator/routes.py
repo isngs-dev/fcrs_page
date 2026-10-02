@@ -58,6 +58,8 @@ class BookingPrefill(BaseModel):
     phone: str | None = None
     date: str | None = None
     time: str | None = None  # 24-hour HH:MM
+    # The card moves the visitor's existing booking instead of adding one.
+    reschedule: bool = False
 
 
 class ChatMessageResponse(BaseModel):
@@ -154,7 +156,7 @@ async def post_message(
             for s in result.sources
         ],
         action=result.action,  # type: ignore[arg-type]
-        prefill=BookingPrefill(**result.prefill) if result.prefill else None,
+        prefill=BookingPrefill.model_validate(result.prefill) if result.prefill else None,
     )
 
 

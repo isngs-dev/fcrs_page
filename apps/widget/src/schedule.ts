@@ -136,6 +136,8 @@ export interface BookSlotInput {
   email?: string;
   name?: string;
   phone?: string;
+  /** Move the visitor's current upcoming booking to this slot (server cancels the old one). */
+  reschedule?: boolean;
 }
 
 interface BackendErrorEnvelope {
@@ -395,6 +397,7 @@ export async function bookSlot(config: WidgetConfig, input: BookSlotInput): Prom
         ...(input.email ? { email: input.email } : {}),
         ...(input.name ? { name: input.name } : {}),
         ...(input.phone ? { phone: input.phone } : {}),
+        ...(input.reschedule ? { reschedule: true } : {}),
       }),
     });
   } catch (err) {

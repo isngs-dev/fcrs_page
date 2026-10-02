@@ -506,3 +506,20 @@ def _row_to_availability(row: Any) -> Availability:
         rules=row["rules"],
         updated_at=row["updated_at"],
     )
+
+
+async def cancel_event(db: Database, claims: AuthClaims, event_id: str) -> bool:
+    """Mark a still-``booked`` event ``cancelled`` (a reschedule's old slot).
+
+    Tenant-scoped. Returns whether a row was cancelled -- an already
+    cancelled/completed event is left alone (idempotent). A cancelled event's
+    reminders are never claimed (``claim_due_reminders`` joins on ``booked``).
+    """
+    _reject_global(claims)
+    result = await db.execute(
+        "UPDATE schedule_events SET status = 'cancelled' "
+        "WHERE tenant_id = $1 AND event_id = $2 AND status = 'booked'",
+        claims.tenant_id,
+        event_id,
+    )
+    return str(result).endswith(" 1")

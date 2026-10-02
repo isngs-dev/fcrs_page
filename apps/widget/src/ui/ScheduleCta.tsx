@@ -393,6 +393,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
       startsAt: slot.startsAt,
       timezone: timeZone,
       consent: { granted: true, purpose: SCHEDULE_CONSENT_PURPOSE, text: SCHEDULE_CONSENT_TEXT },
+      ...(prefill?.reschedule ? { reschedule: true } : {}),
       ...(leadId ? { leadId } : {}),
       ...(email.trim() ? { email: email.trim() } : {}),
       ...(name.trim() ? { name: name.trim() } : {}),
@@ -697,10 +698,11 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
     return (
       <div className="cw-sched">
         <div className="cw-sched-confirm-heading" tabIndex={-1} ref={confirmHeadingRef}>
-          Confirm your appointment
+          {prefill?.reschedule ? "Confirm your new time" : "Confirm your appointment"}
         </div>
 
         <p>{label}</p>
+        {prefill?.reschedule && <p className="cw-sched-reschedule-note">This replaces your current booking.</p>}
 
         {prefill && (
           <>
@@ -770,7 +772,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   }
   return (
     <div className="cw-sched-confirmation" role="status" tabIndex={-1} ref={confirmationRef}>
-      You&rsquo;re booked for {label}. We&rsquo;ll send a reminder beforehand.
+      {prefill?.reschedule ? <>Rescheduled to {label}. Your previous booking has been cancelled.</> : <>You&rsquo;re booked for {label}. We&rsquo;ll send a reminder beforehand.</>}
     </div>
   );
 }

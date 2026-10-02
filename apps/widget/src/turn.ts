@@ -37,6 +37,7 @@ const ChatMessageResponseSchema = z.object({
       phone: z.string().nullable().optional(),
       date: z.string().nullable().optional(),
       time: z.string().nullable().optional(),
+      reschedule: z.boolean().optional(),
     })
     .nullable()
     .optional(),
@@ -59,6 +60,8 @@ export interface BookingPrefill {
   date?: string;
   /** 24-hour HH:MM the visitor asked for (read in the card's timezone). */
   time?: string;
+  /** The card moves the visitor's existing booking instead of adding one. */
+  reschedule?: boolean;
 }
 
 export interface Turn {
@@ -247,6 +250,7 @@ function toBookingPrefill(raw: {
   phone?: string | null | undefined;
   date?: string | null | undefined;
   time?: string | null | undefined;
+  reschedule?: boolean | undefined;
 }): BookingPrefill {
   const prefill: BookingPrefill = {};
   if (raw.name) prefill.name = raw.name;
@@ -254,5 +258,6 @@ function toBookingPrefill(raw: {
   if (raw.phone) prefill.phone = raw.phone;
   if (raw.date) prefill.date = raw.date;
   if (raw.time) prefill.time = raw.time;
+  if (raw.reschedule) prefill.reschedule = true;
   return prefill;
 }

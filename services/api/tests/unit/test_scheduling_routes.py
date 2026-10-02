@@ -1800,3 +1800,82 @@ async def test_post_book_still_201_when_feed_emit_raises() -> None:
 
     assert response.status_code == 201
     assert len(db._leads) == 1
+
+
+# ---------------------------------------------------------------------------
+# Reschedule: book the new slot, then retire the old booking
+# ---------------------------------------------------------------------------
+
+
+def _previous_booking() -> Any:
+    from datetime import UTC, datetime
+
+    from api.scheduling.repository import ScheduleEvent
+
+    return ScheduleEvent(
+        event_id="evt-old", lead_id=None, visitor_id="visitor-1", email="lead@example.com",
+        name="Lee", starts_at=datetime(2099, 1, 1, 15, 0, tzinfo=UTC),
+        ends_at=datetime(2099, 1, 1, 15, 30, tzinfo=UTC), timezone="UTC", status="booked",
+        calendar_ref=None, consent={}, created_at=datetime(2098, 12, 1, tzinfo=UTC),
+    )
+
+
+async def test_post_book_reschedule_cancels_the_previous_booking_after_booking_the_new_one() -> None:
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.get_upcoming_booking",
+            new=AsyncMock(return_value=_previous_booking()),
+        ),
+        patch("api.scheduling.routes.cancel_event", new=AsyncMock(return_value=True)) as mock_cancel,
+        patch("api.scheduling.routes.skip_pending_reminders", new=AsyncMock()) as mock_skip,
+        patch(
+            "api.scheduling.routes.resolve_event_recipient",
+            new=AsyncMock(return_value="lead@example.com"),
+        ),
+        patch(
+            "api.scheduling.routes.enqueue_notification", new=AsyncMock(return_value="job-1"),
+        ) as mock_enqueue,
+        patch("api.scheduling.routes.send_notification"),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/public/schedule/book",
+                json={**_book_body(), "reschedule": True},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert response.status_code == 201
+    assert response.json()["event_id"] != "evt-old"
+    assert mock_cancel.await_args.args[2] == "evt-old"
+    assert mock_skip.await_args.args[2] == "evt-old"
+    confirm = mock_enqueue.await_args_list[0].kwargs
+    assert confirm["subject"] == "Your call has been rescheduled"
+    assert "replaces your earlier booking" in confirm["body"]
+
+
+async def test_post_book_without_reschedule_never_touches_an_existing_booking() -> None:
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.get_upcoming_booking",
+            new=AsyncMock(return_value=_previous_booking()),
+        ) as mock_upcoming,
+        patch("api.scheduling.routes.cancel_event", new=AsyncMock()) as mock_cancel,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/public/schedule/book",
+                json=_book_body(),
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert response.status_code == 201
+    mock_upcoming.assert_not_awaited()
+    mock_cancel.assert_not_awaited()

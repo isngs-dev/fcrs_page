@@ -117,6 +117,8 @@ class CalendarProvider(Protocol):
         self, claims: AuthClaims, ref: CalendarRef, event: CalendarEvent
     ) -> None: ...
 
+    async def delete_event(self, claims: AuthClaims, ref: CalendarRef) -> None: ...
+
 
 class CalendarConfigError(ValidationError):
     """Deterministic calendar config error -- raised before any network call."""
@@ -162,6 +164,9 @@ class StubCalendarProvider:
         self, claims: AuthClaims, ref: CalendarRef, event: CalendarEvent
     ) -> None:
         raise NotImplementedError("StubCalendarProvider.update_event is not wired this sprint")
+
+    async def delete_event(self, claims: AuthClaims, ref: CalendarRef) -> None:
+        return None  # nothing real to delete
 
 
 def _extract_meet_url(event_response: dict[str, object]) -> str | None:
@@ -292,6 +297,26 @@ class GoogleCalendarProvider:
         self, claims: AuthClaims, ref: CalendarRef, event: CalendarEvent
     ) -> None:
         raise NotImplementedError("GoogleCalendarProvider.update_event is not wired this sprint")
+
+    async def delete_event(self, claims: AuthClaims, ref: CalendarRef) -> None:
+        """Remove a rescheduled booking's old event (``sendUpdates=none``: the
+        visitor-facing emails come from the notification service, as for
+        create). Already gone (404/410) counts as done."""
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            try:
+                response = await client.delete(
+                    f"{_GOOGLE_CALENDAR_API_BASE}/calendars/{self._calendar_id}/events/{ref.external_id}",
+                    headers={"Authorization": f"Bearer {self._access_token}"},
+                    params={"sendUpdates": "none"},
+                )
+            except httpx.HTTPError as exc:
+                raise RuntimeError(f"Google events.delete request failed: {exc}") from exc
+        if response.status_code in (404, 410):
+            return
+        if not (200 <= response.status_code < 300):
+            raise RuntimeError(
+                f"Google events.delete returned non-2xx status: {response.status_code}"
+            )
 
 
 def calendar_provider_for(config: CalendarConfig, *, timeout: float) -> CalendarProvider:

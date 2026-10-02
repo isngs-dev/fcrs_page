@@ -30,8 +30,12 @@ def booking_confirmation_message(
     timezone: str,
     calendly_link: str | None = None,
     meet_url: str | None = None,
+    rescheduled_from: datetime | None = None,
 ) -> tuple[str, str]:
     """Build the ``(subject, body)`` for a booking-confirmation email.
+
+    ``rescheduled_from``: the old slot's start when this booking replaces an
+    earlier one -- the email then says so.
 
     ``calendly_link``, when the tenant has one configured, replaces the
     generic "contact us" fallback line with a direct reschedule/manage link.
@@ -41,7 +45,12 @@ def booking_confirmation_message(
     that doesn't exist.
     """
     when = _local_wall_clock(starts_at, timezone)
-    subject = "Your call is confirmed"
+    subject = "Your call has been rescheduled" if rescheduled_from else "Your call is confirmed"
+    moved_line = (
+        f"\nThis replaces your earlier booking on {_local_wall_clock(rescheduled_from, timezone)}."
+        if rescheduled_from
+        else ""
+    )
     reschedule_line = (
         f"Need to reschedule? Manage your booking here: {calendly_link}"
         if calendly_link
@@ -51,6 +60,7 @@ def booking_confirmation_message(
     body = (
         "Your call is confirmed.\n\n"
         f"When: {when}"
+        f"{moved_line}"
         f"{meet_line}\n\n"
         f"{reschedule_line}"
     )
@@ -65,14 +75,22 @@ def rep_booking_notification_message(
     visitor_email: str | None,
     visitor_phone: str | None,
     meet_url: str | None = None,
+    rescheduled_from: datetime | None = None,
 ) -> tuple[str, str]:
     """Build the ``(subject, body)`` telling the calendar owner (the rep) a
     visitor booked a call. Same omit-if-absent rule for every optional line.
     """
     when = _local_wall_clock(starts_at, timezone)
     who = visitor_name or visitor_email or "A website visitor"
-    subject = f"New call booked: {who}"
-    lines = [f"{who} booked a call with you.", "", f"When: {when}"]
+    if rescheduled_from:
+        subject = f"Call rescheduled: {who}"
+        lines = [
+            f"{who} rescheduled their call with you.", "", f"When: {when}",
+            f"Previously: {_local_wall_clock(rescheduled_from, timezone)}",
+        ]
+    else:
+        subject = f"New call booked: {who}"
+        lines = [f"{who} booked a call with you.", "", f"When: {when}"]
     if visitor_name:
         lines.append(f"Name: {visitor_name}")
     if visitor_email:

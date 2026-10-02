@@ -41,6 +41,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from common.auth import AuthClaims
 from common.db import Database
@@ -52,6 +53,7 @@ from api.conversation_store.repository import (
     append_message,
     count_messages,
     create_conversation,
+    get_last_assistant_decision,
     get_message,
     get_recent_assistant_intents,
     get_working_memory,
@@ -63,7 +65,7 @@ from api.llm.provider import ChatMessage, LLMError, LLMProvider
 from api.orchestrator.config_repository import get_orchestrator_config
 from api.orchestrator.guardrails import scan_output
 from api.rag.service import HybridMatch, retrieve_hybrid
-from api.scheduling.repository import get_availability
+from api.scheduling.repository import ScheduleEvent, get_availability, get_upcoming_booking
 
 _log = get_logger(__name__)
 
@@ -356,6 +358,57 @@ _BOOKING_DETAILS_LEAD_REPLY = (
 )
 
 
+# Already booked: offer to move the booking instead of starting a new one.
+_RESCHEDULE_OFFER_REPLY = (
+    "You already have a call booked for {when}. Would you like to reschedule it? "
+    "Reply yes, or tell me the new day and time you'd prefer."
+)
+_RESCHEDULE_CARD_REPLY = (
+    "Sure -- pick a new time below. Once you confirm, your call on {when} will "
+    "be moved to it."
+)
+_RESCHEDULE_KEPT_REPLY = (
+    "No problem -- your call on {when} stays as it is. Is there anything else "
+    "I can help with?"
+)
+# Some details given, some missing: ask for the rest before opening the card.
+_DETAILS_MISSING_REPLY = (
+    "Thanks{greeting}! Could you also share your {missing}? Then I'll bring up "
+    "the available times for you."
+)
+_REQUIRED_DETAILS = (("name", "name"), ("email", "email"), ("phone", "phone number"))
+_SAFE_NAME_RE = re.compile(r"^[^\W\d_][\w .'-]{0,79}$")
+_YES_WORDS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "reschedule", "change"}
+_NO_WORDS = {"no", "nope", "nah", "keep", "fine", "don't", "dont", "not"}
+
+
+def _yes_no(text: str) -> str | None:
+    """'yes' / 'no' for a short reply to the reschedule question, else ``None``."""
+    words = set(re.findall(r"[a-z']+", text.lower()))
+    said_yes, said_no = bool(words & _YES_WORDS), bool(words & _NO_WORDS)
+    if said_yes == said_no:
+        return None
+    return "yes" if said_yes else "no"
+
+
+def _format_when(starts_at: datetime, timezone: str) -> str:
+    """'Fri 2 Oct, 10:30 AM (EDT)' in the booking's own timezone."""
+    local = starts_at.astimezone(ZoneInfo(timezone))
+    hour = local.hour % 12 or 12
+    return (
+        f"{local:%a} {local.day} {local:%b}, {hour}:{local.minute:02d} "
+        f"{'AM' if local.hour < 12 else 'PM'} ({local:%Z})"
+    )
+
+
+def _missing_details_reply(prefill: dict[str, str], missing: list[str]) -> str:
+    labels = [label for key, label in _REQUIRED_DETAILS if key in missing]
+    joined = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+    name = prefill.get("name", "")
+    greeting = f", {name.split()[0]}" if name and _SAFE_NAME_RE.match(name) else ""
+    return _DETAILS_MISSING_REPLY.format(greeting=greeting, missing=joined)
+
+
 async def _extract_booking_prefill(
     provider: LLMProvider, model: str, visitor_text: str, today: date,
 ) -> dict[str, str]:
@@ -533,6 +586,27 @@ def _sources_to_payload(sources: list[Source]) -> list[dict[str, Any]]:
     ]
 
 
+def _reschedule_offer(
+    conversation_id: str, assistant_id: str | None, upcoming: ScheduleEvent,
+) -> _FixedOutcome:
+    """'You already have a call booked for ... reschedule?' -- stored as
+    intent='reschedule_offer' so Step 5.55 reads the visitor's answer."""
+    return _FixedOutcome(
+        conversation_id=conversation_id,
+        assistant_id=assistant_id,
+        reply=_RESCHEDULE_OFFER_REPLY.format(
+            when=_format_when(upcoming.starts_at, upcoming.timezone),
+        ),
+        decision="answer",
+        confidence=None,
+        sources=[],
+        intent="reschedule_offer",
+        action=None,
+        grounded=False,
+        tokens=None,
+    )
+
+
 async def _resolve_turn(
     db: Database,
     claims: AuthClaims,
@@ -637,18 +711,79 @@ async def _resolve_turn(
             tokens=None,
         )
 
+    # Step 5.55: the visitor's answer to "would you like to reschedule?" --
+    # "no" keeps the booking; "yes" or a new day/time opens the booking card in
+    # reschedule mode (the old booking is only cancelled once they confirm the
+    # new slot); anything else falls through to the normal pipeline.
+    last_intents = await get_recent_assistant_intents(db, claims, conversation_id, limit=1)
+    last_intent = last_intents[0] if last_intents else None
+    if last_intent == "reschedule_offer":
+        upcoming = await get_upcoming_booking(db, claims, claims.subject)
+        if upcoming is not None:
+            when = _format_when(upcoming.starts_at, upcoming.timezone)
+            wanted = await _extract_booking_prefill(
+                provider, config.model, message, datetime.now(UTC).date(),
+            )
+            answer = _yes_no(message)
+            if "date" in wanted or "time" in wanted or answer == "yes":
+                card_prefill: dict[str, str] = {
+                    k: wanted[k] for k in ("date", "time") if k in wanted
+                }
+                if upcoming.email:
+                    card_prefill["email"] = upcoming.email
+                if upcoming.name:
+                    card_prefill["name"] = upcoming.name
+                card_prefill["reschedule"] = "true"
+                action = await _schedule_action(db, claims)
+                await provider.aclose()
+                return _FixedOutcome(
+                    conversation_id=conversation_id,
+                    assistant_id=assistant_id,
+                    reply=_RESCHEDULE_CARD_REPLY.format(when=when),
+                    decision="answer",
+                    confidence=None,
+                    sources=[],
+                    intent="scheduling_request",
+                    action=action,
+                    grounded=False,
+                    tokens=None,
+                    prefill=card_prefill,
+                )
+            if answer == "no":
+                await provider.aclose()
+                return _FixedOutcome(
+                    conversation_id=conversation_id,
+                    assistant_id=assistant_id,
+                    reply=_RESCHEDULE_KEPT_REPLY.format(when=when),
+                    decision="answer",
+                    confidence=None,
+                    sources=[],
+                    intent="reschedule_declined",
+                    action=None,
+                    grounded=False,
+                    tokens=None,
+                )
+
     # Step 5.6: booking details typed into the chat (name/email/phone, as the
-    # scheduling reply asks for). Triggered by an email address, or by a phone
-    # number right after the bot asked for details. Reads the visitor's recent
-    # messages too, so a date/time said earlier ("tomorrow at 10 AM") carries
-    # over. Pre-empts the turn cap -- a visitor handing over their details
-    # must always get the booking card. The card is the existing consent-gated
-    # booking flow, pre-filled: nothing is booked or stored from chat text.
-    booking_details = _EMAIL_RE.search(message) is not None
-    if not booking_details and _find_phone(message):
-        last_intents = await get_recent_assistant_intents(db, claims, conversation_id, limit=1)
-        booking_details = last_intents[:1] == ["scheduling_request"]
-    if booking_details:
+    # scheduling reply asks for). Triggered by an email address; by a phone
+    # number right after a booking turn; or by ANY reply right after the bot
+    # asked for details (so a name alone gets "please also share..."). Reads
+    # the visitor's recent messages too, so details and a date/time said
+    # earlier carry over. Name, email and phone are all required before the
+    # card opens. A visitor who already has an upcoming booking is offered a
+    # reschedule instead. Pre-empts the turn cap. The card is the existing
+    # consent-gated booking flow, pre-filled: nothing is booked from chat text.
+    has_email = _EMAIL_RE.search(message) is not None
+    has_phone = _find_phone(message) is not None
+    after_ask = (
+        last_intent == "scheduling_request"
+        and await get_last_assistant_decision(db, claims, conversation_id) == "escalate"
+    )
+    if has_email or (last_intent == "scheduling_request" and (has_phone or after_ask)):
+        upcoming = await get_upcoming_booking(db, claims, claims.subject)
+        if upcoming is not None:
+            await provider.aclose()
+            return _reschedule_offer(conversation_id, assistant_id, upcoming)
         wm = await get_working_memory(
             db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
         )
@@ -661,23 +796,47 @@ async def _resolve_turn(
             "\n".join(visitor_messages[-_BOOKING_CONTEXT_MESSAGES:]),
             datetime.now(UTC).date(),
         )
-        action = await _schedule_action(db, claims)
-        await provider.aclose()
-        return _FixedOutcome(
-            conversation_id=conversation_id,
-            assistant_id=assistant_id,
-            reply=(
-                _BOOKING_DETAILS_REPLY if action == "schedule_cta" else _BOOKING_DETAILS_LEAD_REPLY
-            ),
-            decision="answer",
-            confidence=None,
-            sources=[],
-            intent="scheduling_request",
-            action=action,
-            grounded=False,
-            tokens=None,
-            prefill=prefill or None,
+        gave_details = (
+            has_email or has_phone
+            or prefill.get("name", "\0").lower() in message.lower()
         )
+        if gave_details:
+            missing = [key for key, _ in _REQUIRED_DETAILS if key not in prefill]
+            if missing:
+                await provider.aclose()
+                return _FixedOutcome(
+                    conversation_id=conversation_id,
+                    assistant_id=assistant_id,
+                    reply=_missing_details_reply(prefill, missing),
+                    decision="escalate",
+                    confidence=None,
+                    sources=[],
+                    intent="scheduling_request",
+                    action=None,
+                    grounded=False,
+                    tokens=None,
+                )
+            action = await _schedule_action(db, claims)
+            await provider.aclose()
+            return _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=(
+                    _BOOKING_DETAILS_REPLY
+                    if action == "schedule_cta"
+                    else _BOOKING_DETAILS_LEAD_REPLY
+                ),
+                decision="answer",
+                confidence=None,
+                sources=[],
+                intent="scheduling_request",
+                action=action,
+                grounded=False,
+                tokens=None,
+                prefill=prefill or None,
+            )
+        # A reply after the ask that carries no details (e.g. a question) is
+        # answered by the normal pipeline below.
 
     # Step 6 (S10.4 decision 1): the turn-count cap -- an INDEPENDENT,
     # pre-empting trigger, counted AFTER the user turn is stored, strict `>`.
@@ -792,7 +951,11 @@ async def _resolve_turn(
         # No RAG, no generate -- a fixed, trusted-constant reply that asks for
         # the visitor's details in the chat; no card yet (their reply opens the
         # pre-filled booking card via Step 5.6). Never scanned (decision 4).
+        # Already booked -> offer to reschedule instead of booking again.
         await provider.aclose()
+        upcoming = await get_upcoming_booking(db, claims, claims.subject)
+        if upcoming is not None:
+            return _reschedule_offer(conversation_id, assistant_id, upcoming)
         return _FixedOutcome(
             conversation_id=conversation_id,
             assistant_id=assistant_id,

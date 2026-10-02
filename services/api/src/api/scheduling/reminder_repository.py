@@ -215,3 +215,18 @@ def _row_to_reminder_job(row: Any, event_id: str) -> ReminderJob:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+async def skip_pending_reminders(db: Database, claims: AuthClaims, event_id: str) -> None:
+    """Mark a cancelled event's not-yet-sent reminders ``skipped`` (tenant-scoped).
+
+    Belt and braces: ``claim_due_reminders`` already ignores cancelled events;
+    this just makes the reminder rows themselves say so.
+    """
+    _reject_global(claims)
+    await db.execute(
+        "UPDATE reminder_jobs SET status = 'skipped', last_error = 'EVENT_CANCELLED', "
+        "updated_at = now() WHERE tenant_id = $1 AND event_id = $2 AND status = 'pending'",
+        claims.tenant_id,
+        event_id,
+    )

@@ -538,3 +538,37 @@ async def test_calendar_provider_for_async_google_missing_client_secret_raises()
         await calendar_provider_for_async(
             config, timeout_seconds=5.0, google_client_id="client-id", google_client_secret=None
         )
+
+
+async def test_google_delete_event_deletes_without_emailing_the_attendee(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _StubTransport(status_code=204)
+    await _post_via_stub(monkeypatch, transport)
+    provider = GoogleCalendarProvider(calendar_id="primary", access_token="tok", timeout=5.0)
+
+    await provider.delete_event(None, CalendarRef(provider="google", external_id="g-old"))  # type: ignore[arg-type]
+
+    request = transport.captured_request
+    assert request is not None
+    assert request.method == "DELETE"
+    assert "/calendars/primary/events/g-old" in str(request.url)
+    assert request.url.params.get("sendUpdates") == "none"
+
+
+@pytest.mark.parametrize("status", [404, 410])
+async def test_google_delete_event_treats_already_gone_as_done(
+    monkeypatch: pytest.MonkeyPatch, status: int,
+) -> None:
+    await _post_via_stub(monkeypatch, _StubTransport(status_code=status))
+    provider = GoogleCalendarProvider(calendar_id="primary", access_token="tok", timeout=5.0)
+
+    await provider.delete_event(None, CalendarRef(provider="google", external_id="g-old"))  # type: ignore[arg-type]
+
+
+async def test_google_delete_event_raises_on_a_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    await _post_via_stub(monkeypatch, _StubTransport(status_code=500))
+    provider = GoogleCalendarProvider(calendar_id="primary", access_token="tok", timeout=5.0)
+
+    with pytest.raises(RuntimeError):
+        await provider.delete_event(None, CalendarRef(provider="google", external_id="g-old"))  # type: ignore[arg-type]

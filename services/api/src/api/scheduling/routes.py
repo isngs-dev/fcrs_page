@@ -36,12 +36,13 @@ from api.notifications.templates import (
     booking_confirmation_message,
     rep_booking_notification_message,
 )
-from api.scheduling.calendar import CalendarEvent, calendar_provider_for_async
+from api.scheduling.calendar import CalendarEvent, CalendarRef, calendar_provider_for_async
 from api.scheduling.calendar_config_repository import get_calendar_config
 from api.scheduling.handoff_intent_repository import create_handoff_intent
-from api.scheduling.reminder_repository import create_reminder_jobs
+from api.scheduling.reminder_repository import create_reminder_jobs, skip_pending_reminders
 from api.scheduling.repository import (
     Availability,
+    cancel_event,
     create_event,
     delete_event,
     get_availability,
@@ -86,6 +87,9 @@ class BookRequest(BaseModel):
     email: str | None = None
     name: str | None = None
     phone: str | None = None
+    # Move the visitor's current upcoming booking to this slot: the new one is
+    # booked first (same checks/emails), then the old one is cancelled.
+    reschedule: bool = False
 
     @field_validator("starts_at")
     @classmethod
@@ -402,6 +406,11 @@ async def book_slot(
             "The requested time is no longer available.", code="SLOT_UNAVAILABLE"
         )
 
+    # Reschedule: the visitor's current upcoming booking (looked up from their
+    # own session, never an id from the body) is cancelled only AFTER the new
+    # one is fully booked below -- a failed new booking leaves it untouched.
+    previous = await get_upcoming_booking(db, claims, claims.subject) if body.reschedule else None
+
     consent_with_timestamp = {
         "granted": body.consent.granted,
         "purpose": body.consent.purpose,
@@ -619,6 +628,7 @@ async def book_slot(
                 timezone=event.timezone,
                 calendly_link=calendly_link,
                 meet_url=meet_url,
+                rescheduled_from=previous.starts_at if previous is not None else None,
             )
             job_id = await enqueue_notification(
                 db,
@@ -662,6 +672,7 @@ async def book_slot(
                 visitor_email=str(body.email) if body.email is not None else None,
                 visitor_phone=body.phone,
                 meet_url=meet_url,
+                rescheduled_from=previous.starts_at if previous is not None else None,
             )
             rep_job_id = await enqueue_notification(
                 db,
@@ -687,6 +698,35 @@ async def book_slot(
                 extra={
                     "event": "booking_rep_notify_enqueue_degraded",
                     "event_id": event.event_id,
+                    "tenant_id": claims.tenant_id,
+                },
+            )
+
+    # Reschedule cleanup: the new booking is in place, so retire the old one --
+    # cancelled, its unsent reminders skipped, its calendar event deleted.
+    # Best-effort like the emails: a failure is logged, never fails the new
+    # booking (the reminder claimer already ignores cancelled events).
+    if previous is not None:
+        try:
+            await cancel_event(db, claims, previous.event_id)
+            await skip_pending_reminders(db, claims, previous.event_id)
+            if previous.calendar_ref and calendar_config is not None and calendar_config.enabled:
+                provider_name, _, external_id = previous.calendar_ref.partition(":")
+                old_provider = await calendar_provider_for_async(
+                    calendar_config,
+                    timeout_seconds=settings.calendar_http_timeout_seconds,
+                    google_client_id=settings.google_oauth_client_id,
+                    google_client_secret=settings.google_oauth_client_secret,
+                )
+                await old_provider.delete_event(
+                    claims, CalendarRef(provider=provider_name, external_id=external_id),
+                )
+        except Exception:
+            _log.warning(
+                "booking_reschedule_cleanup_degraded",
+                extra={
+                    "event": "booking_reschedule_cleanup_degraded",
+                    "event_id": previous.event_id,
                     "tenant_id": claims.tenant_id,
                 },
             )

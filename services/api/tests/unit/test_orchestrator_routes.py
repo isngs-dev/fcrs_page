@@ -810,4 +810,5 @@ async def test_post_chat_message_surfaces_booking_prefill() -> None:
     assert resp.status_code == 200
     assert resp.json()["prefill"] == {
         "name": "Jane", "email": "jane@example.com", "phone": None, "date": "2099-01-15", "time": None,
+        "reschedule": False,
     }

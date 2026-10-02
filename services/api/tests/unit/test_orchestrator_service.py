@@ -176,6 +176,8 @@ class _Patched:
         count_messages_return: int = 1,
         gate_turns_return: int = 0,
         recent_intents: list[str | None] | None = None,
+        last_decision: str | None = None,
+        upcoming_booking: Any = None,
         availability: Availability | None = ...,  # type: ignore[assignment]
         stream_chunks: list[str] | None = None,
         stream_error: Exception | None = None,
@@ -202,6 +204,8 @@ class _Patched:
             return self.count_messages_return
 
         self.count_messages = AsyncMock(side_effect=_count_messages_side_effect)
+        self.get_last_assistant_decision = AsyncMock(return_value=last_decision)
+        self.get_upcoming_booking = AsyncMock(return_value=upcoming_booking)
         self.get_recent_assistant_intents = AsyncMock(
             return_value=recent_intents if recent_intents is not None else []
         )
@@ -284,6 +288,11 @@ class _Patched:
                 "api.orchestrator.service.get_recent_assistant_intents",
                 self.get_recent_assistant_intents,
             ),
+            patch(
+                "api.orchestrator.service.get_last_assistant_decision",
+                self.get_last_assistant_decision,
+            ),
+            patch("api.orchestrator.service.get_upcoming_booking", self.get_upcoming_booking),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
             patch(
                 "api.orchestrator.service.get_lead_id_by_visitor_id",
@@ -553,7 +562,7 @@ async def test_third_off_topic_in_a_row_offers_a_call() -> None:
     assert result.reply == _OFF_TOPIC_BOOKING_REPLY
     assert result.decision == "escalate"
     assert result.action == "schedule_cta"
-    p.get_recent_assistant_intents.assert_awaited_once()
+    assert p.get_recent_assistant_intents.await_count >= 1
     assert p.get_recent_assistant_intents.await_args.kwargs["limit"] == 2
 
 
@@ -2218,6 +2227,8 @@ class _RealStorePatched:
         self.get_working_memory = AsyncMock(return_value=_wm())
         self.get_availability = AsyncMock(return_value=None)
         self.get_recent_assistant_intents = AsyncMock(return_value=[])
+        self.get_last_assistant_decision = AsyncMock(return_value=None)
+        self.get_upcoming_booking = AsyncMock(return_value=None)
         self.retrieve_hybrid = AsyncMock(
             return_value=HybridResult(chunks=[_chunk()], confidence=0.8)
         )
@@ -2245,6 +2256,11 @@ class _RealStorePatched:
                 "api.orchestrator.service.get_recent_assistant_intents",
                 self.get_recent_assistant_intents,
             ),
+            patch(
+                "api.orchestrator.service.get_last_assistant_decision",
+                self.get_last_assistant_decision,
+            ),
+            patch("api.orchestrator.service.get_upcoming_booking", self.get_upcoming_booking),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
         ]
         for p in self._patchers:
@@ -2338,51 +2354,53 @@ def _json_completion(text: str) -> Completion:
 
 
 async def test_booking_details_in_chat_prefill_the_booking_card() -> None:
-    """A message with an email skips classify/RAG and returns the booking card
-    pre-filled with what the visitor typed -- nothing is booked from chat."""
+    """Name + email + phone in the chat skip classify/RAG and return the booking
+    card pre-filled with what the visitor typed -- nothing is booked from chat."""
     p = _Patched(
-        completion=_json_completion(
-            '{"name": "Jane Smith", "email": "jane@example.com", "date": "2099-01-15"}'
-        ),
+        completion=_json_completion('{"name": "Jane Smith", "date": "2099-01-15"}'),
         availability=_availability(),
     )
     with p:
         result = await answer_turn(
             db=object(), claims=_claims(),
-            message="Jane Smith, jane@example.com, 15 January 2099 please",
+            message="Jane Smith, jane@example.com, (555) 123-4567, 15 January 2099 please",
         )
 
     p.provider.classify.assert_not_awaited()
     p.retrieve_hybrid.assert_not_awaited()
     assert result.decision == "answer"
     assert result.action == "schedule_cta"
-    assert result.prefill == {"name": "Jane Smith", "email": "jane@example.com", "date": "2099-01-15"}
+    assert result.prefill == {
+        "name": "Jane Smith", "email": "jane@example.com", "phone": "(555) 123-4567",
+        "date": "2099-01-15",
+    }
     assert p._append_calls[1]["action"] == "schedule_cta"
 
 
 async def test_booking_details_without_availability_prefill_the_lead_form() -> None:
-    p = _Patched(completion=_json_completion('{"name": null, "email": null, "date": null}'),
-                 availability=None)
+    p = _Patched(completion=_json_completion('{"name": "Ann Lee", "date": null}'), availability=None)
     with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="reach me at a@b.co")
+        result = await answer_turn(
+            db=object(), claims=_claims(), message="Ann Lee, a@b.co, 555 123 4567",
+        )
 
     assert result.action == "lead_form"
-    assert result.prefill == {"email": "a@b.co"}
+    assert result.prefill == {"name": "Ann Lee", "email": "a@b.co", "phone": "555 123 4567"}
 
 
 async def test_booking_prefill_drops_anything_the_model_invented() -> None:
-    """Name not in the message, a past date, and a model-made email are all
-    discarded; the email always comes from the message text itself."""
+    """A name not in the message is discarded (so it's asked for), as is a
+    past date; the email always comes from the message text itself."""
     p = _Patched(
-        completion=_json_completion(
-            '{"name": "Robert Paulson", "email": "made@up.com", "date": "2001-01-01"}'
-        ),
+        completion=_json_completion('{"name": "Robert Paulson", "date": "2001-01-01"}'),
         availability=_availability(),
     )
     with p:
         result = await answer_turn(db=object(), claims=_claims(), message="it's me, bob@example.com")
 
-    assert result.prefill == {"email": "bob@example.com"}
+    assert result.prefill is None
+    assert result.action is None
+    assert "name and phone number" in result.reply
 
 
 async def test_booking_prefill_survives_unparseable_model_output() -> None:
@@ -2390,8 +2408,9 @@ async def test_booking_prefill_survives_unparseable_model_output() -> None:
     with p:
         result = await answer_turn(db=object(), claims=_claims(), message="x@y.io tomorrow")
 
-    assert result.prefill == {"email": "x@y.io"}
-    assert result.action == "schedule_cta"
+    # The regex-found email still counts; the model failing just means the
+    # name (and the missing phone) are asked for.
+    assert "name and phone number" in result.reply
 
 
 async def test_phone_right_after_the_details_ask_opens_the_prefilled_card() -> None:
@@ -2402,7 +2421,7 @@ async def test_phone_right_after_the_details_ask_opens_the_prefilled_card() -> N
         availability=_availability(),
         recent_intents=["scheduling_request"],
         working_memory=_wm(messages=[
-            _msg("user", "please schedule for 15 January 2099 at 10 AM", "m1"),
+            _msg("user", "please schedule for 15 January 2099 at 10 AM, john@example.com", "m1"),
             _msg("bot", "Happy to help you book that!", "m2"),
             _msg("user", "John Smith, (555) 123-4567", "m3"),
         ]),
@@ -2415,7 +2434,8 @@ async def test_phone_right_after_the_details_ask_opens_the_prefilled_card() -> N
     p.provider.classify.assert_not_awaited()
     assert result.action == "schedule_cta"
     assert result.prefill == {
-        "name": "John Smith", "phone": "(555) 123-4567", "date": "2099-01-15", "time": "10:00",
+        "name": "John Smith", "email": "john@example.com", "phone": "(555) 123-4567",
+        "date": "2099-01-15", "time": "10:00",
     }
     extract_prompt = p.provider.generate.await_args.args[0]
     assert "15 January 2099 at 10 AM" in extract_prompt[1].content
@@ -2434,10 +2454,132 @@ async def test_a_phone_number_out_of_the_blue_is_not_treated_as_booking_details(
 
 async def test_booking_prefill_rejects_an_invalid_time() -> None:
     p = _Patched(
-        completion=_json_completion('{"name": null, "date": null, "time": "25:99"}'),
+        completion=_json_completion('{"name": "Mo Patel", "date": null, "time": "25:99"}'),
         availability=_availability(),
     )
     with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="me@x.io at noonish")
+        result = await answer_turn(
+            db=object(), claims=_claims(), message="Mo Patel, me@x.io, 555 123 4567 at noonish",
+        )
 
-    assert result.prefill == {"email": "me@x.io"}
+    assert result.prefill == {"name": "Mo Patel", "email": "me@x.io", "phone": "555 123 4567"}
+
+# -- partial details + reschedule ----------------------------------------------------
+
+
+def _booked(**overrides: Any) -> Any:
+    from datetime import UTC, datetime
+
+    from api.scheduling.repository import ScheduleEvent
+
+    fields: dict[str, Any] = {
+        "event_id": "evt-old", "lead_id": None, "visitor_id": "visitor-1",
+        "email": "harshal@example.com", "name": "Harshal Bhagde",
+        "starts_at": datetime(2099, 10, 2, 14, 30, tzinfo=UTC),
+        "ends_at": datetime(2099, 10, 2, 15, 0, tzinfo=UTC),
+        "timezone": "America/New_York", "status": "booked", "calendar_ref": "google:abc",
+        "consent": {}, "created_at": datetime(2099, 9, 1, tzinfo=UTC),
+    }
+    fields.update(overrides)
+    return ScheduleEvent(**fields)
+
+
+async def test_a_name_alone_after_the_details_ask_gets_asked_for_the_rest() -> None:
+    p = _Patched(
+        completion=_json_completion('{"name": "Harshal Bhagde", "date": null, "time": null}'),
+        availability=_availability(),
+        recent_intents=["scheduling_request"],
+        last_decision="escalate",
+        working_memory=_wm(messages=[_msg("user", "Harshal Bhagde", "m1")]),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="Harshal Bhagde")
+
+    p.provider.classify.assert_not_awaited()
+    assert result.reply == (
+        "Thanks, Harshal! Could you also share your email and phone number? "
+        "Then I'll bring up the available times for you."
+    )
+    assert result.action is None
+    assert p._append_calls[1]["intent"] == "scheduling_request"
+    assert p._append_calls[1]["decision"] == "escalate"
+
+
+async def test_a_question_after_the_details_ask_is_answered_normally() -> None:
+    p = _Patched(
+        classify_return="question",
+        completion=_json_completion('{"name": null, "date": null, "time": null}'),
+        recent_intents=["scheduling_request"],
+        last_decision="escalate",
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="how much does it cost?")
+
+    p.provider.classify.assert_awaited_once()
+    assert result.prefill is None
+
+
+async def test_booking_request_when_already_booked_offers_a_reschedule() -> None:
+    p = _Patched(classify_return="scheduling_request", upcoming_booking=_booked())
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="Schedule an inspection")
+
+    assert result.reply.startswith("You already have a call booked for Fri 2 Oct, 10:30 AM (EDT).")
+    assert "reschedule" in result.reply
+    assert result.action is None
+    assert p._append_calls[1]["intent"] == "reschedule_offer"
+
+
+async def test_details_sent_again_when_already_booked_offer_a_reschedule() -> None:
+    p = _Patched(upcoming_booking=_booked(), availability=_availability())
+    with p:
+        result = await answer_turn(
+            db=object(), claims=_claims(), message="Harshal, harshal@example.com, 9653491090",
+        )
+
+    assert p._append_calls[1]["intent"] == "reschedule_offer"
+    assert result.prefill is None
+
+
+async def test_no_to_the_reschedule_offer_keeps_the_booking() -> None:
+    p = _Patched(
+        completion=_json_completion('{"name": null, "date": null, "time": null}'),
+        recent_intents=["reschedule_offer"],
+        upcoming_booking=_booked(),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="no, keep it")
+
+    assert "stays as it is" in result.reply
+    assert result.action is None
+
+
+async def test_a_new_time_after_the_offer_opens_the_card_in_reschedule_mode() -> None:
+    p = _Patched(
+        completion=_json_completion('{"name": null, "date": "2099-10-05", "time": "11:00"}'),
+        recent_intents=["reschedule_offer"],
+        upcoming_booking=_booked(),
+        availability=_availability(),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="Monday at 11 AM please")
+
+    assert result.action == "schedule_cta"
+    assert result.prefill == {
+        "date": "2099-10-05", "time": "11:00", "email": "harshal@example.com",
+        "name": "Harshal Bhagde", "reschedule": "true",
+    }
+    assert "will be moved" in result.reply
+
+
+async def test_an_unrelated_reply_to_the_offer_is_answered_normally() -> None:
+    p = _Patched(
+        classify_return="question",
+        completion=_json_completion('{"name": null, "date": null, "time": null}'),
+        recent_intents=["reschedule_offer"],
+        upcoming_booking=_booked(),
+    )
+    with p:
+        await answer_turn(db=object(), claims=_claims(), message="what materials do you use?")
+
+    p.provider.classify.assert_awaited_once()
