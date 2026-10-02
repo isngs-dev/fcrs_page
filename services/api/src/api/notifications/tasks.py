@@ -19,8 +19,10 @@ Idempotent + retryable; redelivery never double-sends (S9.1 decision 5):
       that already flipped the row causes this to match 0 rows (no second
       flip). A transient provider error (SMTP connect/timeout/disconnect/
       network) -- anything NOT a ``ValidationError`` -- propagates so Celery
-      retries with backoff/jitter; the job stays ``pending`` and is retried
-      under the SAME ``job_id`` (no new row). A deterministic provider error
+      retries with backoff/jitter (``SEND_MAX_RETRIES``); the job stays ``pending``
+      (attempt + reason recorded) and is retried under the SAME ``job_id`` (no
+      new row). The LAST attempt marks it ``failed`` with that reason instead,
+      so a job can never be left ``pending`` forever. A deterministic provider error
       (``ValidationError``, e.g. ``NotificationDeliveryError`` -- SMTP auth
       failure / permanent 5xx / malformed address) ->
       ``mark_notification(status='failed', last_error=..., increment_attempt=True)``,
@@ -43,6 +45,7 @@ emitted by ``LogNotificationProvider.send`` itself.
 from __future__ import annotations
 
 import asyncio
+import random
 
 from common.auth import AuthClaims, Role
 from common.db import Database
@@ -56,11 +59,16 @@ from api.tasks.celery_app import _CorrelationTask, celery_app
 
 _log = get_logger(__name__)
 
+# Transient send errors: retried 3 times, waiting ~30s, ~60s, ~120s (+ jitter).
+SEND_MAX_RETRIES = 3
+SEND_RETRY_BASE_SECONDS = 30
+
 
 @celery_app.task(  # type: ignore[untyped-decorator]
     bind=True,
     name="notifications.send_notification",
     base=_CorrelationTask,
+    max_retries=SEND_MAX_RETRIES,
 )
 def send_notification(
     self: _CorrelationTask,
@@ -80,14 +88,23 @@ def send_notification(
         Must be declared here (see module docstring). Consumed by
         ``_CorrelationTask.__call__`` before this body runs.
     """
+    # A transient provider error (connect/timeout/disconnect) is retried with
+    # exponential backoff + jitter; the LAST attempt records it as `failed`
+    # instead of raising, so a job can never sit at `pending` forever.
+    final_attempt = self.request.retries >= SEND_MAX_RETRIES
     loop = asyncio.new_event_loop()
     try:
-        return loop.run_until_complete(_run(job_id, tenant_id))
+        return loop.run_until_complete(_run(job_id, tenant_id, final_attempt=final_attempt))
+    except ValidationError:
+        raise
+    except Exception as exc:
+        countdown = SEND_RETRY_BASE_SECONDS * (2**self.request.retries) + random.uniform(0, 10)  # noqa: S311 -- retry jitter, not security
+        raise self.retry(exc=exc, countdown=countdown) from exc
     finally:
         loop.close()
 
 
-async def _run(job_id: str, tenant_id: str) -> dict[str, object]:
+async def _run(job_id: str, tenant_id: str, *, final_attempt: bool = False) -> dict[str, object]:
     """Async inner body: open a DB connection and delegate to ``_execute``."""
     from api.config import get_api_settings  # noqa: PLC0415
 
@@ -100,6 +117,7 @@ async def _run(job_id: str, tenant_id: str) -> dict[str, object]:
             tenant_id=tenant_id,
             smtp_timeout=settings.notification_smtp_timeout_seconds,
             twilio_timeout=settings.notification_twilio_timeout_seconds,
+            final_attempt=final_attempt,
         )
     finally:
         await db.close()
@@ -136,6 +154,7 @@ async def _execute(
     tenant_id: str,
     smtp_timeout: float,
     twilio_timeout: float = 10.0,
+    final_attempt: bool = False,
 ) -> dict[str, object]:
     """Core re-read -> config-load -> provider-select -> send -> flip logic."""
     claims = AuthClaims(subject="system:notifications", role=Role.CLIENT_ADMIN, tenant_id=tenant_id)
@@ -228,8 +247,32 @@ async def _execute(
         )
         return {"job_id": job_id, "status": "failed"}
 
-    # Transient (network/connect/timeout) errors from provider.send propagate
-    # here so Celery retries -- intentionally NOT caught.
+    except Exception as exc:
+        # Transient (network/connect/timeout/disconnect) error -- a real
+        # attempt, recorded with its reason. Not the last try: stays `pending`
+        # and re-raises so the task retries (same job_id, no new row). Last
+        # try: `failed`, so it surfaces instead of sitting pending forever.
+        reason = f"{type(exc).__name__}: {exc}"[:300]
+        await mark_notification(
+            db,
+            claims,
+            job_id,
+            status="failed" if final_attempt else "pending",
+            last_error=reason,
+            increment_attempt=True,
+        )
+        _log.warning(
+            "notification_send_transient_error",
+            extra={
+                "event": "notification_send_transient_error",
+                "job_id": job_id,
+                "tenant_id": tenant_id,
+                "error_code": type(exc).__name__,
+            },
+        )
+        if final_attempt:
+            return {"job_id": job_id, "status": "failed"}
+        raise
 
     await mark_notification(
         db, claims, job_id, status="sent", delivery_ref=ref.ref, increment_attempt=True

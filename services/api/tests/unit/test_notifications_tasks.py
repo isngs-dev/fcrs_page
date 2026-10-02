@@ -349,6 +349,57 @@ async def test_transient_provider_error_raises() -> None:
     assert job["status"] == "pending"
 
 
+async def test_transient_error_records_the_attempt_and_reason_but_stays_pending() -> None:
+    job = _job_row(status="pending")
+    db = _StubDatabase(job=job, config=_smtp_config_row())
+    fake_provider = AsyncMock()
+    fake_provider.send.side_effect = ConnectionError("connection unexpectedly closed")
+
+    with patch("api.notifications.tasks.notification_provider_for", return_value=fake_provider):
+        with pytest.raises(ConnectionError):
+            await _execute(db, job_id="job-1", tenant_id=_TENANT_A, smtp_timeout=5.0)
+
+    assert job["status"] == "pending"
+    assert job["attempts"] == 1
+    assert "connection unexpectedly closed" in job["last_error"]
+
+
+async def test_transient_error_on_the_last_attempt_marks_failed_instead_of_hanging() -> None:
+    job = _job_row(status="pending")
+    db = _StubDatabase(job=job, config=_smtp_config_row())
+    fake_provider = AsyncMock()
+    fake_provider.send.side_effect = ConnectionError("connection unexpectedly closed")
+
+    with patch("api.notifications.tasks.notification_provider_for", return_value=fake_provider):
+        result = await _execute(
+            db, job_id="job-1", tenant_id=_TENANT_A, smtp_timeout=5.0, final_attempt=True,
+        )
+
+    assert result["status"] == "failed"
+    assert job["status"] == "failed"
+    assert job["last_error"].startswith("ConnectionError")
+
+
+def test_task_retries_transient_errors_then_runs_a_final_attempt() -> None:
+    """The Celery task really retries (it used to have no retry policy, so a
+    transient error stranded the job at pending) and flags the last try."""
+    from api.notifications.tasks import SEND_MAX_RETRIES, send_notification
+
+    calls: list[bool] = []
+
+    async def failing_run(job_id: str, tenant_id: str, *, final_attempt: bool = False) -> dict:
+        calls.append(final_attempt)
+        if final_attempt:
+            return {"job_id": job_id, "status": "failed"}
+        raise ConnectionError("down")
+
+    with patch("api.notifications.tasks._run", failing_run):
+        result = send_notification.apply(kwargs={"job_id": "job-1", "tenant_id": _TENANT_A})
+
+    assert calls == [False] * SEND_MAX_RETRIES + [True]
+    assert result.get() == {"job_id": "job-1", "status": "failed"}
+
+
 # ==============================================================================
 # Tenant re-scoping
 # ==============================================================================
