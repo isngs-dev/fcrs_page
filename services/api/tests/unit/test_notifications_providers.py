@@ -184,6 +184,8 @@ async def test_smtp_provider_sends_and_returns_delivery_ref() -> None:
     assert sent_msg["From"] == "Chatbot <bot@dev.local>"
     assert sent_msg["To"] == "alice@example.com"
     assert sent_msg["Subject"] == "super secret subject"
+    assert sent_msg["Message-Id"].endswith("@dev.local>")
+    assert sent_msg["Date"]
 
     assert isinstance(ref, DeliveryRef)
     assert ref.provider == "smtp"

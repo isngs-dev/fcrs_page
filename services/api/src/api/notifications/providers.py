@@ -30,7 +30,7 @@ import re
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import make_msgid
+from email.utils import formatdate, make_msgid
 from typing import Protocol
 from uuid import uuid4
 
@@ -179,8 +179,11 @@ class SmtpEmailProvider:
         msg["From"] = from_header
         msg["To"] = message.recipient
         msg["Subject"] = message.subject
-        message_id = make_msgid()
+        # Spam filters penalise a missing Date and a Message-Id on a bare
+        # container hostname, so stamp both on the sender's own domain.
+        message_id = make_msgid(domain=self._from_address.rpartition("@")[2] or None)
         msg["Message-Id"] = message_id
+        msg["Date"] = formatdate(usegmt=True)
         msg.set_content(message.body)
 
         try:
