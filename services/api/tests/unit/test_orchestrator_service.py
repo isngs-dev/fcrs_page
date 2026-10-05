@@ -2583,3 +2583,52 @@ async def test_an_unrelated_reply_to_the_offer_is_answered_normally() -> None:
         await answer_turn(db=object(), claims=_claims(), message="what materials do you use?")
 
     p.provider.classify.assert_awaited_once()
+
+
+async def test_a_one_word_name_with_email_and_phone_opens_the_card_even_if_the_model_misses_it() -> None:
+    p = _Patched(
+        completion=_json_completion('{"name": null, "date": null, "time": null}'),
+        availability=_availability(),
+        recent_intents=["scheduling_request"],
+        last_decision="escalate",
+    )
+    with p:
+        result = await answer_turn(
+            db=object(), claims=_claims(), message="Shetty, vinith@example.com, 9890068591",
+        )
+
+    assert result.action == "schedule_cta"
+    assert result.prefill == {"name": "Shetty", "email": "vinith@example.com", "phone": "9890068591"}
+
+
+async def test_a_one_word_name_after_the_ask_completes_the_details_given_earlier() -> None:
+    p = _Patched(
+        completion=_json_completion('{"name": null, "date": null, "time": null}'),
+        availability=_availability(),
+        recent_intents=["scheduling_request"],
+        last_decision="escalate",
+        working_memory=_wm(messages=[
+            _msg("user", "Schedule an inspection", "m1"),
+            _msg("user", "vinith@example.com, 9890068591", "m2"),
+        ]),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="Shetty")
+
+    p.provider.classify.assert_not_awaited()
+    assert result.action == "schedule_cta"
+    assert result.prefill == {"name": "Shetty", "email": "vinith@example.com", "phone": "9890068591"}
+
+
+async def test_a_plain_yes_after_the_ask_is_not_taken_as_a_name() -> None:
+    p = _Patched(
+        classify_return="question",
+        completion=_json_completion('{"name": null, "date": null, "time": null}'),
+        recent_intents=["scheduling_request"],
+        last_decision="escalate",
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="ok sure")
+
+    assert result.prefill is None
+    p.provider.classify.assert_awaited_once()

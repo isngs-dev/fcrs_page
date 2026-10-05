@@ -241,8 +241,9 @@ _FORMATTING_RULES = (
     " If the visitor wants to book an inspection, estimate, or call, ask for "
     "their name, email, and phone number (and their preferred date and time if "
     "they haven't said) -- never an address or other personal details. Never "
-    "say a time is available or that anything is booked or confirmed: the "
-    "booking form checks availability and the visitor confirms there."
+    "say a time is available, that anything is booked or confirmed, or that "
+    "their details were recorded or someone will contact them: the booking "
+    "form checks availability and the visitor confirms there."
 )
 
 _GROUNDING_SYSTEM_PROMPT = (
@@ -332,7 +333,9 @@ _BOOKING_CONTEXT_MESSAGES = 6  # recent visitor messages the extractor reads
 _BOOKING_EXTRACT_PROMPT = (
     "Extract call-booking details from what the visitor has said in this chat "
     "(their messages, oldest first). Today is {today}. Reply with ONLY a JSON "
-    "object with the keys name, date and time. date is YYYY-MM-DD, resolving "
+    "object with the keys name, date and time. name is the visitor's own name "
+    "exactly as they typed it -- a single word (a first name or surname) counts. "
+    "date is YYYY-MM-DD, resolving "
     "words like 'tomorrow' or 'next Monday' against today; time is 24-hour "
     "HH:MM (10 AM -> 10:00, 2:30 pm -> 14:30). If something was said more than "
     "once, use the latest. Use null for anything not stated -- never guess."
@@ -399,6 +402,33 @@ def _format_when(starts_at: datetime, timezone: str) -> str:
         f"{local:%a} {local.day} {local:%b}, {hour}:{local.minute:02d} "
         f"{'AM' if local.hour < 12 else 'PM'} ({local:%Z})"
     )
+
+
+_NAME_LEADIN_RE = re.compile(r"^(?:my name is|my name's|name is|name:|i am|i'm|this is)\s+", re.I)
+_NAME_PART_RE = re.compile(r"^[^\W\d_]+(?:[ .'-]+[^\W\d_]+){0,2}\.?$")
+_NOT_NAME_WORDS = _YES_WORDS | _NO_WORDS | {
+    "hi", "hello", "hey", "thanks", "thank", "you", "book", "booking", "schedule",
+    "call", "inspection", "today", "tomorrow", "time", "date", "email", "phone",
+    "i", "a", "an", "the", "my", "me", "we", "is", "it", "to", "for", "of", "and",
+    "or", "need", "want", "roof", "quote", "what", "how", "when", "where", "why",
+}
+
+
+def _name_from_messages(messages: list[str]) -> str | None:
+    """A name the visitor typed as its own comma/line-separated part of a
+    message ("Shetty, a@b.co, 555 123 4567" or just "Shetty"), newest first.
+    Fallback for when the extraction model returns no name.
+
+    ponytail: word-list heuristic, misses names written inside a sentence
+    (the model handles those); widen _NOT_NAME_WORDS if false hits show up.
+    """
+    for message in reversed(messages):
+        for part in re.split(r"[,;\n]", _EMAIL_RE.sub(",", message)):
+            part = _NAME_LEADIN_RE.sub("", part.strip())
+            words = {w.lower().strip(".'-") for w in part.split()}
+            if _NAME_PART_RE.match(part) and not words & _NOT_NAME_WORDS:
+                return part.rstrip(".")
+    return None
 
 
 def _missing_details_reply(prefill: dict[str, str], missing: list[str]) -> str:
@@ -796,6 +826,10 @@ async def _resolve_turn(
             "\n".join(visitor_messages[-_BOOKING_CONTEXT_MESSAGES:]),
             datetime.now(UTC).date(),
         )
+        if "name" not in prefill:
+            fallback_name = _name_from_messages(visitor_messages[-_BOOKING_CONTEXT_MESSAGES:])
+            if fallback_name:
+                prefill["name"] = fallback_name
         gave_details = (
             has_email or has_phone
             or prefill.get("name", "\0").lower() in message.lower()
