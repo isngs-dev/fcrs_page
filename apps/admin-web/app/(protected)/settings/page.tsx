@@ -22,6 +22,8 @@
 import { requireAnyRole } from "@/lib/auth";
 import { getBotSettings, type BotSettings } from "@/lib/settings";
 import { getCallConfig } from "@/lib/calls";
+import { getVoiceCallConfig } from "@/lib/voice-calls";
+import { getVoiceAgentConfig } from "@/lib/voice-agent";
 import { SoftCard } from "@/components/admin/soft-card";
 import { SettingsForm } from "@/app/(protected)/settings/settings-form";
 
@@ -149,12 +151,18 @@ export default async function SettingsPage() {
     );
   }
 
-  const callConfigResult = await getCallConfig();
+  const [callConfigResult, voiceCallConfigResult, voiceAgentConfigResult] = await Promise.all([
+    getCallConfig(),
+    getVoiceCallConfig(),
+    getVoiceAgentConfig(),
+  ]);
 
   return (
     <SettingsForm
       currentSettings={result.settings}
       callConfigResult={callConfigResult}
+      voiceCallConfigResult={voiceCallConfigResult}
+      voiceAgentConfigResult={voiceAgentConfigResult}
       ownTenantId={claims.tenantId ?? ""}
     />
   );

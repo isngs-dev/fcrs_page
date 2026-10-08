@@ -20,7 +20,7 @@ const baseLead = {
 };
 
 describe("LeadDrawer -- SR-17 D3 Timeline tab (shared with ContactDrawer)", () => {
-  it("SR-24: has exactly three tabs (Timeline/Details/Notes) -- Transcript and Activity are deleted", () => {
+  it("SR-24: has Timeline/Details/Notes tabs (plus AI call) -- Transcript and Activity are deleted", () => {
     const html = renderToStaticMarkup(
       <LeadDrawer
         leadId="lead-1"

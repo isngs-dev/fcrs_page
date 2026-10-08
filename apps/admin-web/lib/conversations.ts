@@ -45,6 +45,8 @@ export interface ConversationListItem {
   endedAt: string | null;
   messageCount: number;
   summary: string | null;
+  /** Includes an AI voice agent ("Call Us") call. */
+  hasVoiceCall: boolean;
 }
 
 interface ConversationListItemResponseBody {
@@ -56,6 +58,7 @@ interface ConversationListItemResponseBody {
   ended_at: string | null;
   message_count: number;
   summary: string | null;
+  has_voice_call?: boolean;
 }
 
 interface ConversationListResponseBody {
@@ -109,6 +112,7 @@ function toConversationListItem(body: ConversationListItemResponseBody): Convers
     endedAt: body.ended_at,
     messageCount: body.message_count,
     summary: body.summary,
+    hasVoiceCall: body.has_voice_call ?? false,
   };
 }
 

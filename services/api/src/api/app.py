@@ -206,6 +206,11 @@ def create_app() -> FastAPI:
     from api.auth.routes import router as auth_router
     from api.calls.admin_routes import router as calls_admin_router
     from api.calls.admin_routes import tenant_scoped_router as calls_admin_tenant_router
+    from api.calls.voice_admin_routes import router as voice_calls_admin_router
+    from api.calls.voice_admin_routes import (
+        tenant_scoped_router as voice_calls_admin_tenant_router,
+    )
+    from api.calls.voice_webhook import router as voice_calls_webhook_router
     from api.calls.webhook import router as calls_webhook_router
     from api.contacts.admin_routes import router as contacts_admin_router
     from api.contacts.admin_routes import tenant_scoped_router as contacts_admin_tenant_router
@@ -246,10 +251,19 @@ def create_app() -> FastAPI:
     from api.training.routes import router as training_router
     from api.training.routes import tenant_scoped_router as training_tenant_router
     from api.voice.routes import router as voice_router
+    from api.voice_agent.admin_routes import router as voice_agent_admin_router
+    from api.voice_agent.admin_routes import (
+        tenant_scoped_router as voice_agent_admin_tenant_router,
+    )
+    from api.voice_agent.routes import router as voice_agent_router
 
     app.include_router(accounts_admin_router)
     app.include_router(calls_admin_router)
     app.include_router(calls_webhook_router)
+    app.include_router(voice_calls_admin_router)
+    app.include_router(voice_calls_webhook_router)
+    app.include_router(voice_agent_admin_router)
+    app.include_router(voice_agent_router)
     app.include_router(admin_api_keys_router)
     app.include_router(admin_llm_router)
     app.include_router(admin_assignment_router)
@@ -293,6 +307,8 @@ def create_app() -> FastAPI:
     # CLIENT_AGENT.
     app.include_router(accounts_admin_tenant_router)
     app.include_router(calls_admin_tenant_router)
+    app.include_router(voice_calls_admin_tenant_router)
+    app.include_router(voice_agent_admin_tenant_router)
     app.include_router(admin_api_keys_tenant_router)
     app.include_router(admin_assignment_tenant_router)
     app.include_router(admin_settings_tenant_router)

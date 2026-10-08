@@ -17,6 +17,7 @@
  */
 import { getLeadActivities, getLeadDetail } from "@/lib/leads";
 import { getLeadTimeline } from "@/lib/timeline";
+import { getLeadVoiceCalls } from "@/lib/voice-calls";
 import { LeadDrawer } from "@/app/(protected)/leads/lead-drawer";
 import { isTab, type Tab } from "@/app/(protected)/leads/lead-drawer-tabs";
 
@@ -40,6 +41,7 @@ export async function LeadDrawerContainer({
   // don't, so skip the extra round trip when Notes isn't the active tab.
   const activitiesResult = tab === "notes" ? await getLeadActivities(leadId, tenantId) : null;
   const timelineResult = tab === "timeline" ? await getLeadTimeline(leadId, { before }) : null;
+  const voiceCallsResult = tab === "calls" ? await getLeadVoiceCalls(leadId, tenantId) : null;
 
   return (
     <LeadDrawer
@@ -48,6 +50,7 @@ export async function LeadDrawerContainer({
       detailResult={detailResult}
       activitiesResult={activitiesResult}
       timelineResult={timelineResult}
+      voiceCallsResult={voiceCallsResult}
       basePath={basePath}
       tenantId={tenantId}
     />

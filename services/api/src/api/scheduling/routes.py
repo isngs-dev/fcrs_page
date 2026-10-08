@@ -23,6 +23,8 @@ from common.logging import get_logger
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, field_validator
 
+from api.calls.voice import schedule_booking_call
+from api.calls.voice_tasks import place_voice_call
 from api.config import ApiSettings, get_api_settings
 from api.gateway.dependencies import get_visitor_claims
 from api.leads.assignment import assign_lead_fail_open
@@ -87,6 +89,10 @@ class BookRequest(BaseModel):
     email: str | None = None
     name: str | None = None
     phone: str | None = None
+    # The visitor ticked consent wording that covers an automated confirmation
+    # call to `phone` (the widget only offers it when the chatbot has calls on).
+    # No consent -> no call, whatever else is configured.
+    voice_call_consent: bool = False
     # Move the visitor's current upcoming booking to this slot: the new one is
     # booked first (same checks/emails), then the old one is cancelled.
     reschedule: bool = False
@@ -730,6 +736,40 @@ async def book_slot(
                     "tenant_id": claims.tenant_id,
                 },
             )
+
+    # Best-effort AI voice confirmation call (api.calls.voice) -- only when the
+    # visitor consented to it, the chatbot has it switched on, and the phone is
+    # diallable. Placed by Celery after a short delay; never fails the booking.
+    try:
+        call_id = None if not body.voice_call_consent else await schedule_booking_call(
+            db,
+            claims,
+            event_id=event.event_id,
+            lead_id=lead_id,
+            phone=body.phone,
+            starts_at=event.starts_at,
+            timezone=event.timezone,
+        )
+        if call_id is not None:
+            from common.logging import _correlation_id  # noqa: PLC0415, PLC2701
+
+            place_voice_call.apply_async(
+                kwargs={
+                    "call_id": call_id,
+                    "tenant_id": claims.tenant_id,
+                    "correlation_id": _correlation_id.get() or "",
+                },
+                countdown=settings.voice_call_delay_seconds,
+            )
+    except Exception:
+        _log.warning(
+            "booking_voice_call_degraded",
+            extra={
+                "event": "booking_voice_call_degraded",
+                "event_id": event.event_id,
+                "tenant_id": claims.tenant_id,
+            },
+        )
 
     return BookResponse(
         event_id=event.event_id,

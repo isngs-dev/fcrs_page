@@ -86,7 +86,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { WidgetConfig } from "../config";
 import { sendTurn, type TurnResult } from "../turn";
 import { clearResumeRecord, touchResumeRecord } from "../resume";
-import { isResumeEnabled, isVoiceAsrEnabled, mintVisitorSession } from "../session";
+import { isResumeEnabled, isVoiceAgentEnabled, isVoiceAsrEnabled, mintVisitorSession } from "../session";
+import { shouldOfferBookingAfterCall, startVoiceAgentCall, type VoiceCallHandle } from "../voiceAgent";
 import { withRetry } from "../retry";
 import { fetchAvailabilitySummary, type AvailabilitySummary } from "../schedule";
 import { transcribeAudio } from "../voice";
@@ -123,8 +124,14 @@ const TURN_RETRY_MAX_ATTEMPTS = 4;
 const REMINT_MAX_ATTEMPTS = 2;
 
 /** Small inline SVGs keep the embed self-contained without adding an icon package. */
-function ChatGlyph({ name }: { name: "chat" | "close" | "sound" | "muted" | "send" | "reset" | "mic" | "stop" }) {
+function ChatGlyph({ name }: { name: "chat" | "close" | "sound" | "muted" | "send" | "reset" | "mic" | "stop" | "phone" | "calendar" }) {
   const common = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.9 };
+  if (name === "phone") {
+    return <svg aria-hidden="true" {...common}><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" /></svg>;
+  }
+  if (name === "calendar") {
+    return <svg aria-hidden="true" {...common}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>;
+  }
   if (name === "close") {
     return <svg aria-hidden="true" {...common}><path d="m6 6 12 12M18 6 6 18" /></svg>;
   }
@@ -1280,6 +1287,59 @@ export function ChatWidget({
     ]);
   }, [pending, schedulePending]);
 
+  // "Call Us": a live browser call with the AI voice agent (../voiceAgent).
+  const [callState, setCallState] = useState<"idle" | "connecting" | "live">("idle");
+  const [callSeconds, setCallSeconds] = useState(0);
+  const [callMuted, setCallMuted] = useState(false);
+  const [callError, setCallError] = useState<string | null>(null);
+  const callRef = useRef<VoiceCallHandle | null>(null);
+
+  useEffect(() => {
+    if (callState !== "live") return;
+    setCallSeconds(0);
+    const timer = window.setInterval(() => setCallSeconds((s) => s + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [callState]);
+
+  useEffect(() => () => callRef.current?.hangUp(), []);
+
+  const startCall = useCallback(async () => {
+    if (callState !== "idle") return;
+    tts.cancel();
+    setCallError(null);
+    setCallMuted(false);
+    setCallState("connecting");
+    const result = await startVoiceAgentCall(config, conversationIdRef.current, {
+      onConnected: () => setCallState("live"),
+      onEnded: () => {
+        const ended = callRef.current;
+        callRef.current = null;
+        setCallState("idle");
+        if (!ended || unmountedRef.current) return;
+        setMessages((prev) => [...prev, { id: nextLocalId(), role: "bot", text: "Thanks for calling! Anything else I can help with?" }]);
+        // Couldn't reach the team (after hours / no answer): offer a booking.
+        void shouldOfferBookingAfterCall(config, ended.callId).then((offer) => {
+          if (offer && !unmountedRef.current) void startScheduling("Schedule a Call");
+        });
+      },
+    });
+    if (unmountedRef.current) return;
+    if (!result.ok) {
+      setCallError(result.message);
+      setCallState("idle");
+      return;
+    }
+    callRef.current = result.call;
+    conversationIdRef.current = result.call.conversationId;
+  }, [callState, config, startScheduling]);
+
+  const toggleCallMute = useCallback(() => {
+    setCallMuted((muted) => {
+      callRef.current?.setMuted(!muted);
+      return !muted;
+    });
+  }, []);
+
   /** Manual Retry (decision 4/6): replay the last failed send without a new optimistic bubble. */
   const handleManualRetry = useCallback(async () => {
     const last = lastFailedSendRef.current;
@@ -1472,6 +1532,56 @@ export function ChatWidget({
                     </div>
                   )}
                   <div className="cw-input-row">
+                    {callError && (
+                      <div className="cw-voice-error" role="alert">
+                        {callError}
+                      </div>
+                    )}
+                    {callState === "idle" ? (
+                      <div className="cw-quick-actions">
+                        {isVoiceAgentEnabled() && (
+                          <button type="button" className="cw-quick-action" onClick={() => void startCall()}>
+                            <ChatGlyph name="phone" />
+                            Call Us
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="cw-quick-action"
+                          disabled={pending || schedulePending || schedulingUiActive}
+                          onClick={() => void startScheduling("Schedule a Call")}
+                        >
+                          <ChatGlyph name="calendar" />
+                          Schedule a Call
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="cw-call-bar" role="status">
+                        <span className="cw-call-status">
+                          <span className="cw-call-dot" aria-hidden="true" />
+                          {callState === "connecting"
+                            ? "Connecting…"
+                            : `On call ${Math.floor(callSeconds / 60)}:${String(callSeconds % 60).padStart(2, "0")}`}
+                        </span>
+                        <button
+                          type="button"
+                          className="cw-call-button"
+                          onClick={toggleCallMute}
+                          disabled={callState !== "live"}
+                          aria-pressed={callMuted}
+                        >
+                          {callMuted ? "Unmute" : "Mute"}
+                        </button>
+                        <button
+                          type="button"
+                          className="cw-call-button cw-call-hangup"
+                          onClick={() => callRef.current?.hangUp()}
+                        >
+                          Hang up
+                        </button>
+                        <p className="cw-call-notice">You&rsquo;re talking with an AI assistant. Calls are transcribed.</p>
+                      </div>
+                    )}
                     {interactionMode === "type" ? (
                       <div className="cw-composer">
                         <input

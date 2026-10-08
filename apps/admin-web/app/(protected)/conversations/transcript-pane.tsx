@@ -103,6 +103,11 @@ function MessageBubble({
   return (
     <div className="flex flex-col gap-1">
       {bubble}
+      {intent === "voice_call" ? (
+        <span className={`text-[10.5px] font-medium text-[#15803d] ${isVisitor ? "self-end" : "ml-9"}`}>
+          Voice call · {formatDateTime(createdAt)}
+        </span>
+      ) : null}
       {isBot && confidence !== null ? (
         <span className="ml-9 text-[10.5px] text-muted-foreground">
           {intent ? `${intent} · ` : ""}confidence {confidence.toFixed(2)}

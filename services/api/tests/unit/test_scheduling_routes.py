@@ -1803,6 +1803,83 @@ async def test_post_book_still_201_when_feed_emit_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# AI voice confirmation call (api.calls.voice)
+# ---------------------------------------------------------------------------
+
+
+async def test_post_book_schedules_the_voice_call_after_the_configured_delay() -> None:
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.schedule_booking_call", new=AsyncMock(return_value="call-1"),
+        ) as mock_schedule,
+        patch("api.scheduling.routes.place_voice_call") as mock_task,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/public/schedule/book",
+                json={**_book_body(), "phone": "(555) 123-4567", "voice_call_consent": True},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert response.status_code == 201
+    assert mock_schedule.await_args.kwargs["phone"] == "(555) 123-4567"
+    assert mock_schedule.await_args.kwargs["event_id"] == response.json()["event_id"]
+    _, call_kwargs = mock_task.apply_async.call_args
+    assert call_kwargs["kwargs"]["call_id"] == "call-1"
+    assert call_kwargs["countdown"] == 60
+
+
+async def test_post_book_voice_call_failure_never_fails_the_booking() -> None:
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.schedule_booking_call",
+            new=AsyncMock(side_effect=RuntimeError("db down")),
+        ),
+        patch("api.scheduling.routes.place_voice_call") as mock_task,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/public/schedule/book",
+                json={**_book_body(), "phone": "(555) 123-4567", "voice_call_consent": True},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert response.status_code == 201
+    mock_task.apply_async.assert_not_called()
+
+
+async def test_post_book_never_calls_without_voice_call_consent() -> None:
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+
+    with (
+        patch(
+            "api.scheduling.routes.schedule_booking_call", new=AsyncMock(return_value="call-1"),
+        ) as mock_schedule,
+        patch("api.scheduling.routes.place_voice_call") as mock_task,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/public/schedule/book",
+                json={**_book_body(), "phone": "(555) 123-4567"},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert response.status_code == 201
+    mock_schedule.assert_not_awaited()
+    mock_task.apply_async.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Reschedule: book the new slot, then retire the old booking
 # ---------------------------------------------------------------------------
 

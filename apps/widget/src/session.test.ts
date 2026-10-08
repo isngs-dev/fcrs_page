@@ -10,6 +10,7 @@ import {
   isResumeEnabled,
   isVoiceAsrEnabled,
   isVoiceTtsEnabled,
+  isVoiceCallEnabled,
   mintVisitorSession,
 } from "./session";
 
@@ -332,6 +333,20 @@ describe("mintVisitorSession", () => {
 
     expect(isVoiceAsrEnabled()).toBe(false);
     expect(isVoiceTtsEnabled()).toBe(false);
+  });
+
+  it("parses voice_call_enabled (AI confirmation call) and treats it as off when absent", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { visitor_token: "jwt.abc.def", expires_at: "2026-07-16T12:30:00Z", voice_call_enabled: true }),
+    );
+    await mintVisitorSession(baseConfig);
+    expect(isVoiceCallEnabled()).toBe(true);
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { visitor_token: "jwt.abc.def", expires_at: "2026-07-16T12:30:00Z" }),
+    );
+    await mintVisitorSession(baseConfig);
+    expect(isVoiceCallEnabled()).toBe(false);
   });
 
   it("the two voice flags are independent -- ASR configured without TTS reports exactly that", async () => {

@@ -102,6 +102,11 @@ export function ConversationList({
                     ) : null}
                     {badge.label}
                   </span>
+                  {item.hasVoiceCall ? (
+                    <span className="flex h-5 items-center rounded-[5px] bg-[#ecfdf3] px-2 text-[10px] font-bold text-[#15803d]">
+                      Voice call
+                    </span>
+                  ) : null}
                 </span>
               </span>
             </Link>

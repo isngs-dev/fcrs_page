@@ -281,6 +281,38 @@ class ApiSettings(Settings):
     platform_smtp_from_address: str | None = None
     platform_smtp_from_name: str | None = None
 
+    # AI voice confirmation calls (api.calls.voice).
+    # public_api_base_url: this API's public origin as Twilio/Plivo reach it
+    #   (e.g. https://api.example.com) -- their call webhooks are built from
+    #   it, and their signatures are verified against it. Unset -> no calls.
+    # platform_twilio_*: the platform's own Twilio account + voice-capable
+    #   number, used for any chatbot without its own Twilio (SMS) config --
+    #   the same explicit-default pattern as platform_smtp_*. Unset -> a call
+    #   is recorded as failed (TWILIO_NOT_CONFIGURED), never silently skipped.
+    public_api_base_url: str | None = None
+    platform_twilio_account_sid: str | None = None
+    platform_twilio_auth_token: str | None = None
+    platform_twilio_from_number: str | None = None
+    # How long after a booking the confirmation call is placed, and the
+    # Twilio <Say> voice (Amazon Polly neural voices are available on Twilio).
+    voice_call_delay_seconds: int = 60
+    voice_call_voice: str = "Polly.Joanna-Neural"
+
+    # AI voice agent ("Call Us" in the widget, api.voice_agent) runs on Plivo.
+    # The Plivo Application's answer URL is
+    # {public_api_base_url}/public/voice-agent/answer and its hangup URL
+    # .../public/voice-agent/hangup (both POST); the endpoint is linked to that
+    # application and the browser registers as it with a short-lived JWT.
+    # auth_token verifies webhook signatures; from_number is the caller ID on
+    # transfers. Any unset -> no "Call Us".
+    platform_plivo_auth_id: str | None = None
+    platform_plivo_auth_token: str | None = None
+    platform_plivo_from_number: str | None = None
+    platform_plivo_app_id: str | None = None
+    platform_plivo_endpoint_username: str | None = None
+    # Plivo <Speak> voice: WOMAN or MAN.
+    voice_agent_tts_voice: str = "WOMAN"
+
     # Notifications (S9.3).
     # notification_twilio_timeout_seconds: the httpx.AsyncClient timeout used
     #   by TwilioNotificationProvider for SMS/WhatsApp sends. Mirrors

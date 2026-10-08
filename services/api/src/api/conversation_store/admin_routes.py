@@ -29,6 +29,7 @@ from api.conversation_store.repository import (
     list_conversations,
 )
 from api.rag.repository import resolve_chunks
+from api.voice_agent.repository import list_voice_call_conversation_ids
 
 _log = get_logger(__name__)
 
@@ -52,6 +53,8 @@ class ConversationListItem(BaseModel):
     ended_at: datetime | None
     message_count: int
     summary: str | None
+    # The conversation includes an AI voice agent call ("Call Us").
+    has_voice_call: bool = False
 
 
 class ConversationListResponse(BaseModel):
@@ -173,8 +176,15 @@ async def _list_conversations(
         },
     )
 
+    voice_ids = (
+        await list_voice_call_conversation_ids(db, claims, [r.conversation_id for r in rows])
+        if rows else set()
+    )
+    items = [_to_list_item(r) for r in rows]
+    for item in items:
+        item.has_voice_call = item.conversation_id in voice_ids
     return ConversationListResponse(
-        items=[_to_list_item(r) for r in rows],
+        items=items,
         total=total,
         limit=clamped_limit,
         offset=clamped_offset,

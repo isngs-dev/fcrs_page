@@ -19,8 +19,11 @@ vi.mock("../schedule", async () => {
   };
 });
 
+let voiceCallOn = false;
+vi.mock("../session", () => ({ isVoiceCallEnabled: () => voiceCallOn }));
+
 import { ScheduleCta } from "./ScheduleCta";
-import { SCHEDULE_CONSENT_TEXT } from "../schedule";
+import { SCHEDULE_CALL_CONSENT_TEXT, SCHEDULE_CONSENT_TEXT } from "../schedule";
 
 const baseConfig: WidgetConfig = {
   clientKey: "pk_test_123",
@@ -1013,6 +1016,88 @@ describe("ScheduleCta pre-filled from chat", () => {
     // SLOT_A is 09:00 UTC on 20 July = 5:00 AM Eastern Daylight Time.
     expect(getSlotButton(0).textContent).toContain("5:00 AM");
     expect(container.querySelector(".cw-sched-list-label")?.textContent).toMatch(/[(](EDT|EST)[)]/);
+  });
+});
+
+describe("ScheduleCta with the AI confirmation call switched on", () => {
+  beforeEach(() => {
+    voiceCallOn = true;
+  });
+  afterEach(() => {
+    voiceCallOn = false;
+  });
+
+  it("requires a phone, shows call consent wording, and books with voiceCallConsent", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+    bookSlotMock.mockResolvedValueOnce({
+      ok: true,
+      booking: { eventId: "evt-1", startsAt: SLOT_A.startsAt, endsAt: SLOT_A.endsAt, status: "booked" },
+    });
+
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={{ name: "Jane", email: "jane@example.com" }} />);
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+
+    expect(container.textContent).toContain(SCHEDULE_CALL_CONSENT_TEXT);
+    act(() => {
+      getConsentCheckbox().click();
+    });
+    // Consent ticked but no phone yet -> still blocked.
+    expect(getConfirmButton().disabled).toBe(true);
+
+    const phoneInput = container.querySelector<HTMLInputElement>(".cw-sched-phone-input")!;
+    act(() => {
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      Reflect.apply(setter, phoneInput, ["5551234567"]);
+      phoneInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(getConfirmButton().disabled).toBe(false);
+
+    act(() => {
+      getConfirmButton().click();
+    });
+    await flush();
+
+    const [, input] = bookSlotMock.mock.calls[0]!;
+    expect(input).toMatchObject({
+      voiceCallConsent: true,
+      phone: "(555) 123-4567",
+      consent: { granted: true, text: SCHEDULE_CALL_CONSENT_TEXT },
+    });
+  });
+
+  it("with the call off, the booking never claims call consent", async () => {
+    voiceCallOn = false;
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+    bookSlotMock.mockResolvedValueOnce({
+      ok: true,
+      booking: { eventId: "evt-1", startsAt: SLOT_A.startsAt, endsAt: SLOT_A.endsAt, status: "booked" },
+    });
+
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} />);
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+    expect(container.textContent).toContain(SCHEDULE_CONSENT_TEXT);
+    expect(container.textContent).not.toContain("automated confirmation call");
+    act(() => {
+      getConsentCheckbox().click();
+    });
+    act(() => {
+      getConfirmButton().click();
+    });
+    await flush();
+
+    const [, input] = bookSlotMock.mock.calls[0]!;
+    expect(input).not.toHaveProperty("voiceCallConsent");
   });
 });
 

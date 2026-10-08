@@ -77,6 +77,7 @@ celery_app = Celery(
         "api.notifications.events_tasks",
         "api.leads.tasks",
         "api.conversation_store.tasks",
+        "api.calls.voice_tasks",
     ],
 )
 

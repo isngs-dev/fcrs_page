@@ -53,6 +53,11 @@ def get_sqlalchemy_url() -> str:
             "DATABASE_URL_DIRECT is preferred (targets port 5432 directly); "
             "DATABASE_URL is used as a fallback. See .env.example for format."
         )
+    # Pin the driver we install (psycopg2-binary): SQLAlchemy 2.1 made psycopg
+    # (v3) the default for a bare postgresql:// URL.
+    for scheme in ("postgresql://", "postgres://"):
+        if url.startswith(scheme):
+            return "postgresql+psycopg2://" + url[len(scheme):]
     return url
 
 

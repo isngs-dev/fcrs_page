@@ -13,6 +13,7 @@ from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
+from api.calls.voice_repository import get_voice_call_enabled_by_tenant_id
 from api.config import get_api_settings
 from api.gateway.dependencies import get_visitor_claims
 from api.gateway.repository import (
@@ -24,6 +25,8 @@ from api.gateway.repository import (
 from api.gateway.sessions import mint_visitor_session, origin_allowed
 from api.ratelimit import client_ip, enforce_rate_limit
 from api.voice.factory import asr_configured, tts_configured
+from api.voice_agent.repository import get_voice_agent_config_by_tenant_id
+from api.voice_agent.routes import voice_agent_ready
 
 _log = get_logger(__name__)
 
@@ -87,6 +90,8 @@ async def widget_session(
     resume_enabled = await get_resume_enabled(db, tenant["id"])
     launcher_label = await get_launcher_label(db, tenant["id"])
     branding = await get_widget_branding(db, tenant["id"])
+    voice_call_enabled = await get_voice_call_enabled_by_tenant_id(db, tenant["id"])
+    voice_agent = await get_voice_agent_config_by_tenant_id(db, tenant["id"])
 
     _log.info(
         "visitor session minted",
@@ -104,6 +109,12 @@ async def widget_session(
         # needs to be spoken.
         "voice_asr_enabled": asr_configured(settings),
         "voice_tts_enabled": tts_configured(settings),
+        # AI voice confirmation call (api.calls.voice) switched on for this
+        # chatbot -> the booking card requires a phone + call consent.
+        "voice_call_enabled": voice_call_enabled,
+        # AI voice agent ("Call Us", api.voice_agent): on for this chatbot AND
+        # the platform's Plivo is set up for browser calls.
+        "voice_agent_enabled": voice_agent.enabled and voice_agent_ready(settings),
     }
     if launcher_label is not None:
         response["launcher_label"] = launcher_label

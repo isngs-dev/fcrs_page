@@ -360,6 +360,8 @@ async def test_widget_session_valid_key_and_origin_default_tenant_resume_disable
         )
     assert resp.status_code == 200
     body = resp.json()
+    assert body["voice_call_enabled"] is False  # no voice-call config -> off
+    assert body["voice_agent_enabled"] is False  # no voice-agent config -> off
     assert body["resume_enabled"] is False
     assert set(body.keys()) == {
         "visitor_token",
@@ -367,6 +369,8 @@ async def test_widget_session_valid_key_and_origin_default_tenant_resume_disable
         "resume_enabled",
         "voice_asr_enabled",
         "voice_tts_enabled",
+        "voice_call_enabled",
+        "voice_agent_enabled",
     }
 
 

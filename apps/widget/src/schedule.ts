@@ -35,6 +35,10 @@ import type { WidgetConfig } from "./config";
 export const SCHEDULE_CONSENT_PURPOSE = "appointment_booking";
 export const SCHEDULE_CONSENT_TEXT =
   "I agree to book this appointment and consent to my details being stored and to receiving reminders for it.";
+/** Used instead of SCHEDULE_CONSENT_TEXT when the chatbot places an AI
+ * confirmation call -- the consent must name the call it covers. */
+export const SCHEDULE_CALL_CONSENT_TEXT =
+  SCHEDULE_CONSENT_TEXT + " I also agree to receive an automated confirmation call at the phone number I provide.";
 
 // Raw ISO datetime strings, preserved verbatim from the wire — never
 // re-parsed into a Date and reformatted, so the exact server string can be
@@ -136,6 +140,8 @@ export interface BookSlotInput {
   email?: string;
   name?: string;
   phone?: string;
+  /** The visitor ticked SCHEDULE_CALL_CONSENT_TEXT -- the server only calls when true. */
+  voiceCallConsent?: boolean;
   /** Move the visitor's current upcoming booking to this slot (server cancels the old one). */
   reschedule?: boolean;
 }
@@ -397,6 +403,7 @@ export async function bookSlot(config: WidgetConfig, input: BookSlotInput): Prom
         ...(input.email ? { email: input.email } : {}),
         ...(input.name ? { name: input.name } : {}),
         ...(input.phone ? { phone: input.phone } : {}),
+        ...(input.voiceCallConsent ? { voice_call_consent: true } : {}),
         ...(input.reschedule ? { reschedule: true } : {}),
       }),
     });

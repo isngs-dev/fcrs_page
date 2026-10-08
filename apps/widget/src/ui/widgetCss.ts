@@ -413,6 +413,21 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-send-button:active:not(:disabled) { transform: scale(.95); }
 .cw-send-button:disabled { background: #bfdbfe; color: var(--cw-paper); cursor: not-allowed; }
 .cw-disclaimer { margin: 8px 0 0; color: var(--cw-muted); font-size: 11px; line-height: 1.3; text-align: center; }
+/* "Call Us" / "Schedule a Call": two compact pills above the message box. */
+.cw-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.cw-quick-action { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--cw-citron) 28%, white); border-radius: 999px; background: color-mix(in srgb, var(--cw-citron) 7%, white); color: var(--cw-citron); font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
+.cw-quick-action svg { width: 15px; height: 15px; flex: none; }
+.cw-quick-action:hover:not(:disabled) { border-color: color-mix(in srgb, var(--cw-citron) 50%, white); background: var(--cw-citron-soft); }
+.cw-quick-action:disabled { opacity: .5; cursor: not-allowed; }
+.cw-input-row .cw-voice-error { margin: 0 0 8px; }
+.cw-call-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; padding: 8px 10px; border: 1px solid #bbf7d0; border-radius: 12px; background: var(--cw-success-bg); }
+.cw-call-status { flex: 1; display: inline-flex; align-items: center; gap: 7px; color: var(--cw-ink); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cw-call-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cw-online); }
+.cw-call-button { min-height: 30px; padding: 0 12px; border: 1px solid var(--cw-line); border-radius: 999px; background: var(--cw-paper); color: var(--cw-ink); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.cw-call-button[aria-pressed="true"] { background: var(--cw-cool-paper); }
+.cw-call-button:disabled { opacity: .5; cursor: not-allowed; }
+.cw-call-hangup { border-color: #dc2626; background: #dc2626; color: #fff; }
+.cw-call-notice { flex-basis: 100%; margin: 0; color: var(--cw-muted); font-size: 11px; }
 .cw-privacy-link { color: #1d4ed8; }
 .cw-privacy-link:hover { color: #1e40af; }
 

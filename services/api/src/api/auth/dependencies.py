@@ -14,12 +14,15 @@ from typing import Any
 
 from common.auth import AuthClaims, Role
 from common.errors import AuthenticationError, NotFoundError
+from common.logging import get_logger
 from common.tenancy import require_role
 from fastapi import Depends, Request
 
 from api.auth.blacklist import get_token_blacklist
 from api.auth.tokens import claims_from_payload, decode_access_token
 from api.config import get_api_settings
+
+_log = get_logger(__name__)
 
 
 async def get_current_claims(request: Request) -> AuthClaims:
@@ -33,6 +36,20 @@ async def get_current_claims(request: Request) -> AuthClaims:
     settings = get_api_settings()
     token: str | None = request.cookies.get(settings.cookie_name)
     if token is None:
+        # TEMP diagnostic (SR-22 UNAUTHENTICATED-on-Google-callback investigation,
+        # 2026-09-24) -- never logs cookie/token VALUES, only whether a Cookie
+        # header arrived at all and which cookie NAMES Starlette parsed from it,
+        # to tell apart "browser never sent it" from "something between the
+        # browser and this handler dropped/renamed it". Remove once resolved.
+        _log.warning(
+            "no access_token cookie on request",
+            extra={
+                "event": "missing_auth_cookie",
+                "path": request.url.path,
+                "has_cookie_header": request.headers.get("cookie") is not None,
+                "parsed_cookie_names": sorted(request.cookies.keys()),
+            },
+        )
         raise AuthenticationError("Authentication is required.")
 
     payload = decode_access_token(token, secret=settings.jwt_secret)

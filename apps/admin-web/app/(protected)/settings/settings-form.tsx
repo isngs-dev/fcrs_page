@@ -77,6 +77,10 @@ import {
 import type { BotSettings } from "@/lib/settings";
 import { InstallSnippet } from "@/app/(protected)/settings/install-snippet";
 import { MissedCallConfig } from "@/app/(protected)/settings/missed-call-config";
+import { VoiceCallConfigCard } from "@/app/(protected)/settings/voice-call-config";
+import type { VoiceCallConfigResult } from "@/lib/voice-calls";
+import { VoiceAgentConfigCard } from "@/app/(protected)/settings/voice-agent-config";
+import type { VoiceAgentConfigResult } from "@/lib/voice-agent";
 import type { CallConfigResult } from "@/lib/calls";
 import { WidgetPreview } from "@/app/(protected)/settings/widget-preview";
 import { SetRow, SET_ROW_FIELD_CLASS } from "@/components/admin/set-row";
@@ -124,11 +128,16 @@ function PublishButton({ dirty }: { dirty: boolean }) {
 export function SettingsForm({
   currentSettings,
   callConfigResult,
+  voiceCallConfigResult,
+  voiceAgentConfigResult,
   ownTenantId,
   tenantId,
 }: {
   currentSettings: BotSettings;
   callConfigResult: CallConfigResult;
+  /** Optional so other callers keep working; the card renders only when given. */
+  voiceCallConfigResult?: VoiceCallConfigResult;
+  voiceAgentConfigResult?: VoiceAgentConfigResult;
   ownTenantId: string;
   tenantId?: string;
 }) {
@@ -546,6 +555,12 @@ export function SettingsForm({
               ownTenantId={ownTenantId}
               tenantId={tenantId}
             />
+            {voiceCallConfigResult ? (
+              <VoiceCallConfigCard result={voiceCallConfigResult} tenantId={tenantId} />
+            ) : null}
+            {voiceAgentConfigResult ? (
+              <VoiceAgentConfigCard result={voiceAgentConfigResult} tenantId={tenantId} />
+            ) : null}
           </div>
 
           <div className="scroll-mt-16 rounded-[14px] border border-[var(--line)] bg-card px-[22px] pb-2 pt-1" id="settings-appearance">

@@ -41,6 +41,10 @@ const SessionResponseSchema = z.object({
   accent_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   launcher_position: z.enum(["left", "right"]).optional(),
   suggested_questions: z.array(z.string().max(200)).max(5).optional(),
+  // AI voice confirmation call switched on for this chatbot -- absent -> false.
+  voice_call_enabled: z.boolean().optional(),
+  // AI voice agent ("Call Us") on for this chatbot -- absent -> false.
+  voice_agent_enabled: z.boolean().optional(),
 });
 
 export interface VisitorSession {
@@ -97,6 +101,8 @@ let resumeSeedConversationId: string | null = null;
 // this-existed backend leaves cloud voice off, never assumed on.
 let voiceAsrEnabled = false;
 let voiceTtsEnabled = false;
+let voiceCallEnabled = false;
+let voiceAgentEnabled = false;
 
 /** The in-memory visitor token, if a session has been minted successfully. */
 export function getVisitorSession(): VisitorSession | null {
@@ -138,6 +144,20 @@ export function isVoiceAsrEnabled(): boolean {
  * `isVoiceAsrEnabled`'s doc for the same "false until a fresh mint" caveat. */
 export function isVoiceTtsEnabled(): boolean {
   return voiceTtsEnabled;
+}
+
+/** Whether this chatbot places an AI confirmation call after a booking --
+ * the booking card then requires a phone and its consent covers the call.
+ * `false` until a fresh `mintVisitorSession` succeeds (a resumed session
+ * books without the call, never with it unconsented). */
+export function isVoiceCallEnabled(): boolean {
+  return voiceCallEnabled;
+}
+
+/** Whether the "Call Us" button (AI voice agent) is shown -- `false` until a
+ * fresh `mintVisitorSession` says this chatbot has it on. */
+export function isVoiceAgentEnabled(): boolean {
+  return voiceAgentEnabled;
 }
 
 /**
@@ -280,6 +300,8 @@ export async function mintVisitorSession(config: WidgetConfig): Promise<Admissio
   resumeSeedConversationId = null;
   voiceAsrEnabled = parsed.data.voice_asr_enabled ?? false;
   voiceTtsEnabled = parsed.data.voice_tts_enabled ?? false;
+  voiceCallEnabled = parsed.data.voice_call_enabled ?? false;
+  voiceAgentEnabled = parsed.data.voice_agent_enabled ?? false;
   if (resumeEnabled) {
     writeResumeRecord({
       token: currentSession.visitorToken,

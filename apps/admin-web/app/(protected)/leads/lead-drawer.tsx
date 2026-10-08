@@ -44,6 +44,7 @@ import type { LeadDetail, LeadDetailResult, LeadActivitiesResult } from "@/lib/l
 import { initialsFromName } from "@/lib/leads-presentation";
 import { addLeadNote, type AddNoteState } from "@/app/(protected)/leads/actions";
 import type { TimelineFetchResult } from "@/lib/timeline";
+import type { VoiceCallsResult } from "@/lib/voice-calls";
 import { RecordDrawerTimelinePanel } from "@/components/admin/record-drawer";
 import { cn } from "@/lib/utils";
 import { TABS, type Tab } from "@/app/(protected)/leads/lead-drawer-tabs";
@@ -52,6 +53,7 @@ const TAB_LABELS: Record<Tab, string> = {
   timeline: "Timeline",
   details: "Details",
   notes: "Notes",
+  calls: "AI call",
 };
 
 function formatDateTime(iso: string): string {
@@ -87,6 +89,8 @@ interface LeadDrawerProps {
    * `tab === "timeline"`; `null` otherwise. Rendered via the SAME
    * `RecordDrawerTimelinePanel` the Contact record drawer uses. */
   timelineResult: TimelineFetchResult | null;
+  /** The lead's AI confirmation calls, fetched only when `tab === "calls"`. */
+  voiceCallsResult?: VoiceCallsResult | null;
   /** Base path (`/leads` or `/clients/{tenantId}/leads`) the drawer's URL
    * params are read/written against -- mirrors `leads-filter.tsx`'s
    * `basePath` convention for the S13.7 platform-admin tenant-scoped view. */
@@ -100,6 +104,7 @@ export function LeadDrawer({
   detailResult,
   activitiesResult,
   timelineResult,
+  voiceCallsResult = null,
   basePath,
   tenantId,
 }: LeadDrawerProps) {
@@ -186,6 +191,7 @@ export function LeadDrawer({
           tab={tab}
           activitiesResult={activitiesResult}
           timelineResult={timelineResult}
+          voiceCallsResult={voiceCallsResult}
           onClose={close}
           onTabChange={(nextTab) => navigate(leadId, nextTab)}
           closeButtonRef={closeButtonRef}
@@ -252,6 +258,7 @@ function DrawerBody({
   tab,
   activitiesResult,
   timelineResult,
+  voiceCallsResult,
   onClose,
   onTabChange,
   closeButtonRef,
@@ -263,6 +270,7 @@ function DrawerBody({
   tab: Tab;
   activitiesResult: LeadActivitiesResult | null;
   timelineResult: TimelineFetchResult | null;
+  voiceCallsResult: VoiceCallsResult | null;
   onClose: () => void;
   onTabChange: (tab: Tab) => void;
   closeButtonRef: React.RefObject<HTMLButtonElement | null>;
@@ -325,6 +333,8 @@ function DrawerBody({
           <DetailsTab lead={lead} />
         ) : tab === "timeline" ? (
           <TimelineTab leadId={leadId} lead={lead} timelineResult={timelineResult} basePath={basePath} />
+        ) : tab === "calls" ? (
+          <CallsTab result={voiceCallsResult} />
         ) : (
           <NotesTab
             activitiesResult={activitiesResult}
@@ -411,6 +421,86 @@ function TimelineTab({
         <div>{buildSummary(lead)}</div>
       </div>
       <RecordDrawerTimelinePanel result={timelineResult} loadOlderHref={loadOlderHref} />
+    </div>
+  );
+}
+
+const CALL_STATUS_LABELS: Record<string, string> = {
+  queued: "Scheduled",
+  calling: "Calling…",
+  in_progress: "In progress",
+  completed: "Completed",
+  no_answer: "No answer",
+  busy: "Line busy",
+  failed: "Failed",
+};
+
+const ANSWER_LABELS: Record<string, string> = {
+  yes: "Yes",
+  no: "No",
+  unclear: "Unclear",
+  no_response: "No response",
+};
+
+/** The lead's AI confirmation call(s): status + each question with its yes/no answer. */
+function CallsTab({ result }: { result: VoiceCallsResult | null }) {
+  const panel = (children: React.ReactNode) => (
+    <div id="lead-tabpanel-calls" role="tabpanel" aria-labelledby="lead-tab-calls" className="px-[22px] py-[18px]">
+      {children}
+    </div>
+  );
+  if (result === null) {
+    return panel(<p className="text-sm text-muted-foreground">Loading calls…</p>);
+  }
+  if (result.status === "error") {
+    return panel(
+      <p role="alert" className="text-sm text-destructive">
+        {result.message}
+      </p>
+    );
+  }
+  if (result.calls.length === 0) {
+    return panel(
+      <p className="text-sm text-muted-foreground">
+        No AI confirmation call for this lead. A call is placed when a visitor books with a phone
+        number and &quot;AI confirmation call&quot; is switched on in Settings.
+      </p>
+    );
+  }
+  return panel(
+    <div className="flex flex-col gap-4">
+      {result.calls.map((call) => (
+        <div key={call.callId} className="rounded-[12px] border border-[var(--line)] bg-card p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 pb-2">
+            <span className="text-[13px] font-semibold text-foreground">
+              {CALL_STATUS_LABELS[call.status] ?? call.status}
+            </span>
+            <span className="text-[12px] text-muted-foreground">
+              {formatDateTime(call.createdAt)} · {call.toNumber}
+            </span>
+          </div>
+          {call.lastError ? (
+            <p className="pb-2 text-[12px] text-destructive">Reason: {call.lastError}</p>
+          ) : null}
+          {call.transcript.length === 0 ? (
+            <p className="text-[12.5px] text-muted-foreground">No answers recorded yet.</p>
+          ) : (
+            <ol className="flex flex-col gap-2.5">
+              {call.transcript.map((entry, i) => (
+                <li key={i} className="text-[12.5px] leading-[1.5]">
+                  <p className="text-foreground">{entry.question}</p>
+                  <p className="text-muted-foreground">
+                    <span className="font-semibold text-foreground">
+                      {ANSWER_LABELS[entry.answer] ?? entry.answer}
+                    </span>
+                    {entry.heard ? ` — heard: "${entry.heard}"` : ""}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

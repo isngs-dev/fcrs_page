@@ -65,6 +65,17 @@ vi.mock("../session", () => ({
   isResumeEnabled: () => isResumeEnabledMock(),
   isVoiceAsrEnabled: () => isVoiceAsrEnabledMock(),
   isVoiceCallEnabled: () => false,
+  isVoiceAgentEnabled: () => isVoiceAgentEnabledMock(),
+}));
+
+const isVoiceAgentEnabledMock = vi.fn(() => false);
+type CallEvents = { onConnected(): void; onEnded(): void };
+const startVoiceAgentCallMock = vi.fn<(config: WidgetConfig, conversationId: string | null, events: CallEvents) => Promise<unknown>>();
+const shouldOfferBookingAfterCallMock = vi.fn((_config: WidgetConfig, _callId: string) => Promise.resolve(false));
+vi.mock("../voiceAgent", () => ({
+  startVoiceAgentCall: (config: WidgetConfig, conversationId: string | null, events: CallEvents) =>
+    startVoiceAgentCallMock(config, conversationId, events),
+  shouldOfferBookingAfterCall: (config: WidgetConfig, callId: string) => shouldOfferBookingAfterCallMock(config, callId),
 }));
 
 // SR-3: mock resume.ts's write-side helpers so ChatWidget's touch/clear
@@ -3853,5 +3864,91 @@ describe("booking card opened from a chat turn", () => {
 
     expect(container.querySelector(".cw-bubble-row-bot .cw-sched-day-strip")).not.toBeNull();
     expect(fetchSlotsMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("Call Us / Schedule a Call buttons", () => {
+  afterEach(() => {
+    isVoiceAgentEnabledMock.mockReturnValue(false);
+    startVoiceAgentCallMock.mockReset();
+  });
+
+  function quickAction(label: string): HTMLButtonElement | undefined {
+    return Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-quick-action")).find(
+      (b) => b.textContent?.trim() === label,
+    );
+  }
+
+  it("shows Schedule a Call (opening the booking flow) and hides Call Us when the voice agent is off", async () => {
+    isVoiceAgentEnabledMock.mockReturnValue(false);
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+
+    expect(quickAction("Call Us")).toBeUndefined();
+    act(() => {
+      quickAction("Schedule a Call")!.click();
+    });
+    await flush();
+
+    expect(container.querySelector(".cw-bubble-row-user")?.textContent).toBe("Schedule a Call");
+    expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(2); // mount check + this click
+    expect(sendTurnMock).not.toHaveBeenCalled();
+  });
+
+  it("Call Us starts a call, shows the call bar, and offers booking when the team couldn't be reached", async () => {
+    isVoiceAgentEnabledMock.mockReturnValue(true);
+    let events: CallEvents | undefined;
+    const hangUp = vi.fn();
+    startVoiceAgentCallMock.mockImplementation((_config, _conv, ev) => {
+      events = ev;
+      return Promise.resolve({ ok: true, call: { callId: "call1", conversationId: "conv-1", hangUp, setMuted: vi.fn() } });
+    });
+    shouldOfferBookingAfterCallMock.mockResolvedValueOnce(true);
+
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+    act(() => {
+      quickAction("Call Us")!.click();
+    });
+    await flush();
+    act(() => events!.onConnected());
+
+    expect(container.querySelector(".cw-call-bar")?.textContent).toContain("On call 0:00");
+    expect(container.querySelector(".cw-quick-actions")).toBeNull();
+    act(() => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>(".cw-call-button"))
+        .find((b) => b.textContent === "Hang up")!
+        .click();
+    });
+    expect(hangUp).toHaveBeenCalledOnce();
+
+    act(() => events!.onEnded());
+    await flush();
+    await flush();
+
+    expect(container.querySelector(".cw-call-bar")).toBeNull();
+    expect(shouldOfferBookingAfterCallMock).toHaveBeenCalledWith(baseConfig, "call1");
+    expect(fetchAvailabilitySummaryMock).toHaveBeenCalledTimes(2); // booking card offered
+  });
+
+  it("shows why a call couldn't start and keeps the buttons", async () => {
+    isVoiceAgentEnabledMock.mockReturnValue(true);
+    startVoiceAgentCallMock.mockResolvedValueOnce({ ok: false, message: "Please allow microphone access" });
+
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+    act(() => {
+      quickAction("Call Us")!.click();
+    });
+    await flush();
+
+    expect(container.querySelector(".cw-voice-error")?.textContent).toContain("microphone");
+    expect(quickAction("Call Us")).toBeDefined();
   });
 });

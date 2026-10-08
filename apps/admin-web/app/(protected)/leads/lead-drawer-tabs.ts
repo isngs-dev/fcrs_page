@@ -12,7 +12,7 @@
  * in the server component. Keeping these in a plain module with no
  * directive makes them safely importable from both sides of the boundary.
  */
-export const TABS = ["timeline", "details", "notes"] as const;
+export const TABS = ["timeline", "details", "notes", "calls"] as const;
 export type Tab = (typeof TABS)[number];
 
 export function isTab(value: string | undefined): value is Tab {

@@ -38,7 +38,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { WidgetConfig } from "../config";
-import { SCHEDULE_CONSENT_PURPOSE, SCHEDULE_CONSENT_TEXT, bookSlot, fetchSlots, type AvailabilitySummary, type Slot } from "../schedule";
+import {
+  SCHEDULE_CALL_CONSENT_TEXT,
+  SCHEDULE_CONSENT_PURPOSE,
+  SCHEDULE_CONSENT_TEXT,
+  bookSlot,
+  fetchSlots,
+  type AvailabilitySummary,
+  type Slot,
+} from "../schedule";
+import { isVoiceCallEnabled } from "../session";
 import type { BookingPrefill } from "../turn";
 import { formatUsPhoneInput } from "../phoneFormat";
 
@@ -288,6 +297,11 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   const [email, setEmail] = useState(prefill?.email ?? "");
   const [name, setName] = useState(prefill?.name ?? "");
   const [phone, setPhone] = useState(prefill?.phone ?? "");
+  // AI confirmation call on for this chatbot: phone becomes required and the
+  // consent wording covers the call (sent as voiceCallConsent with the booking).
+  const callOn = isVoiceCallEnabled();
+  const consentText = callOn ? SCHEDULE_CALL_CONSENT_TEXT : SCHEDULE_CONSENT_TEXT;
+  const phoneOk = !callOn || phone.replace(/\D/g, "").length >= 10;
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [lastLoadedSlots, setLastLoadedSlots] = useState<Slot[]>([]);
@@ -401,7 +415,8 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
     const result = await bookSlot(config, {
       startsAt: slot.startsAt,
       timezone: timeZone,
-      consent: { granted: true, purpose: SCHEDULE_CONSENT_PURPOSE, text: SCHEDULE_CONSENT_TEXT },
+      consent: { granted: true, purpose: SCHEDULE_CONSENT_PURPOSE, text: consentText },
+      ...(callOn ? { voiceCallConsent: true } : {}),
       ...(prefill?.reschedule ? { reschedule: true } : {}),
       ...(leadId ? { leadId } : {}),
       ...(email.trim() ? { email: email.trim() } : {}),
@@ -663,7 +678,8 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             value={phone}
             onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))}
             disabled={submitting}
-            aria-label="Phone, optional"
+            aria-label={callOn ? "Phone" : "Phone, optional"}
+            required={callOn}
             placeholder="(555) 123-4567"
             autoComplete="tel"
           />
@@ -678,7 +694,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
               onChange={(e) => setConsentChecked(e.target.checked)}
             />
             <label className="cw-sched-consent-label" htmlFor="cw-sched-consent">
-              {SCHEDULE_CONSENT_TEXT}
+              {consentText}
             </label>
           </div>
 
@@ -696,7 +712,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             <button
               type="button"
               className="cw-sched-confirm-button"
-              disabled={!consentChecked || !email.trim() || !name.trim() || submitting}
+              disabled={!consentChecked || !email.trim() || !name.trim() || !phoneOk || submitting}
               onClick={() => void confirmBooking(step.slot)}
             >
               {submitting ? "Booking…" : "Confirm booking"}
@@ -714,13 +730,13 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
         <p>{label}</p>
         {prefill?.reschedule && <p className="cw-sched-reschedule-note">This replaces your current booking.</p>}
 
-        {prefill && (
+        {(prefill || callOn) && (
           <>
             {/* Details the visitor typed in chat -- shown so they can check or fix them. */}
             <input className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
             <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} aria-label="Name" placeholder="Name" autoComplete="name" />
-            {prefill?.phone && (
-              <input className="cw-input cw-sched-phone-input" type="tel" inputMode="numeric" value={phone} onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))} disabled={submitting} aria-label="Phone, optional" placeholder="(555) 123-4567" autoComplete="tel" />
+            {(callOn || prefill?.phone) && (
+              <input className="cw-input cw-sched-phone-input" type="tel" inputMode="numeric" value={phone} onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))} disabled={submitting} required aria-label="Phone" placeholder="(555) 123-4567" autoComplete="tel" />
             )}
           </>
         )}
@@ -735,7 +751,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             onChange={(e) => setConsentChecked(e.target.checked)}
           />
           <label className="cw-sched-consent-label" htmlFor="cw-sched-consent">
-            {SCHEDULE_CONSENT_TEXT}
+            {consentText}
           </label>
         </div>
 
@@ -749,7 +765,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
           <button
             type="button"
             className="cw-sched-confirm-button"
-            disabled={!consentChecked || ((summary !== undefined || prefill !== undefined) && !email.trim()) || submitting}
+            disabled={!consentChecked || ((summary !== undefined || prefill !== undefined) && !email.trim()) || !phoneOk || submitting}
             onClick={() => void confirmBooking(step.slot)}
           >
             {submitting ? "Booking…" : "Confirm"}
