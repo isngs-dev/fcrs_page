@@ -107,14 +107,22 @@ async def create_tenant_with_admin(
     """
     require_role(claims, Role.PLATFORM_ADMIN)
 
+    # A new client gets its own client_accounts row (NOT NULL since 0060),
+    # reusing the tenant id as the account id -- the same convention 0060's
+    # backfill used. One statement, so a slug collision rolls the account
+    # back too (no orphan account row).
     tenant_id = uuid4().hex
+    account_id = tenant_id
     try:
         await db.execute(
-            "INSERT INTO tenants (id, name, slug, enabled) VALUES ($1, $2, $3, $4)",
+            "WITH acct AS (INSERT INTO client_accounts (id, name) VALUES ($5, $2) RETURNING id) "
+            "INSERT INTO tenants (id, name, slug, enabled, client_account_id) "
+            "SELECT $1, $2, $3, $4, id FROM acct",
             tenant_id,
             name,
             slug,
             True,
+            account_id,
         )
     except asyncpg.UniqueViolationError as exc:
         raise ValidationError(
@@ -142,10 +150,11 @@ async def create_tenant_with_admin(
     admin_user_id = uuid4().hex
     try:
         await db.execute(
-            "INSERT INTO users (id, tenant_id, email, role, password_hash, name) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO users (id, tenant_id, client_account_id, email, role, "
+            "password_hash, name) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             admin_user_id,
             tenant_id,
+            account_id,
             admin_email,
             Role.CLIENT_ADMIN.value,
             password_hash,

@@ -231,6 +231,13 @@ async def test_create_tenant_with_admin_happy_path_sequential_inserts() -> None:
     assert "client_key_hash" in db.calls[1].query
     assert "INSERT INTO users" in db.calls[2].query
 
+    # Both rows carry client_account_id (NOT NULL / CHECK since 0060): the
+    # tenant gets its own new account, and the admin user joins it.
+    assert "INSERT INTO client_accounts" in db.calls[0].query
+    assert "client_account_id" in db.calls[0].query
+    assert "client_account_id" in db.calls[2].query
+    assert db.calls[2].params[2] == result["tenant_id"]  # account id = tenant id
+
     # Returned client_key is the RAW value, never the hash.
     raw_key = result["client_key"]
     assert raw_key.startswith("pk_")

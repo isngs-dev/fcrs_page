@@ -43,9 +43,11 @@ class TenantRepository:
         name: str = data["name"]
         slug: str = data["slug"]
         enabled: bool = data.get("enabled", True)
+        # Own client_accounts row (id = tenant id), same as admin onboarding.
         sql = (
-            "INSERT INTO tenants (id, name, slug, enabled) "
-            "VALUES ($1, $2, $3, $4) RETURNING *"
+            "WITH acct AS (INSERT INTO client_accounts (id, name) VALUES ($1, $2) RETURNING id) "
+            "INSERT INTO tenants (id, name, slug, enabled, client_account_id) "
+            "SELECT $1, $2, $3, $4, id FROM acct RETURNING *"
         )
         row = await self.db.fetchrow(sql, tenant_id, name, slug, enabled)
         assert row is not None  # noqa: S101

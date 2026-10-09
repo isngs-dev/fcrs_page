@@ -65,9 +65,14 @@ async def _seed() -> None:
     try:
         # -- Initial tenant -------------------------------------------------------
         tenant_id = uuid4().hex
+        # Own client_accounts row (id = tenant id); skipped when the slug
+        # already exists so re-runs don't leave orphan accounts.
         result = await conn.execute(
-            "INSERT INTO tenants (id, name, slug) VALUES ($1, $2, $3) "
-            "ON CONFLICT (slug) DO NOTHING",
+            "WITH acct AS ("
+            "  INSERT INTO client_accounts (id, name) SELECT $1, $2"
+            "  WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE slug = $3) RETURNING id"
+            ") INSERT INTO tenants (id, name, slug, client_account_id) "
+            "SELECT $1, $2, $3, id FROM acct",
             tenant_id,
             tenant_name,
             tenant_slug,
@@ -112,9 +117,9 @@ async def _seed() -> None:
 
         ca_hash = hash_password(ca_password)
         ca_result = await conn.execute(
-            "INSERT INTO users (id, tenant_id, email, role, password_hash) "
-            "SELECT $1, $2, $3, $4, $5 "
-            "WHERE NOT EXISTS (SELECT 1 FROM users WHERE lower(email) = lower($3))",
+            "INSERT INTO users (id, tenant_id, client_account_id, email, role, password_hash) "
+            "SELECT $1, $2, client_account_id, $3, $4, $5 FROM tenants WHERE id = $2 "
+            "AND NOT EXISTS (SELECT 1 FROM users WHERE lower(email) = lower($3))",
             uuid4().hex,
             actual_tenant_id,
             ca_email,
