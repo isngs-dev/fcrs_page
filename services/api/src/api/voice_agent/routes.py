@@ -203,9 +203,14 @@ async def start_call(
         )
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         await update_voice_agent_call(db, call_id, status="failed", ended=True)
+        # Plivo's own error text (e.g. bad credentials, unknown endpoint) --
+        # never contains our secrets. Only allowlisted log extras survive.
+        reason = exc.__class__.__name__
+        if isinstance(exc, httpx.HTTPStatusError):
+            reason = f"plivo {exc.response.status_code}: {exc.response.text[:300]}"
         _log.warning(
             "voice_agent_token_failed",
-            extra={"call_id": call_id, "error": exc.__class__.__name__},
+            extra={"event": "voice_agent_token_failed", "reason": reason},
         )
         raise InternalServerError(
             "Calls aren't available right now.", code="VOICE_AGENT_TOKEN_FAILED",

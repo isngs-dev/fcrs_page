@@ -445,9 +445,9 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-send-button:active:not(:disabled) { transform: scale(.95); }
 .cw-send-button:disabled { background: #bfdbfe; color: var(--cw-paper); cursor: not-allowed; }
 .cw-disclaimer { margin: 8px 0 0; color: var(--cw-muted); font-size: 11px; line-height: 1.3; text-align: center; }
-/* "Call Us" / "Schedule a Call": two compact pills above the message box. */
+/* "Call Us" / "Schedule a Call": pills sharing the row equally above the message box. */
 .cw-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.cw-quick-action { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--cw-citron) 28%, white); border-radius: 999px; background: color-mix(in srgb, var(--cw-citron) 7%, white); color: var(--cw-citron); font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
+.cw-quick-action { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--cw-citron) 28%, white); border-radius: 999px; background: color-mix(in srgb, var(--cw-citron) 7%, white); color: var(--cw-citron); font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
 .cw-quick-action svg { width: 15px; height: 15px; flex: none; }
 .cw-quick-action:hover:not(:disabled) { border-color: color-mix(in srgb, var(--cw-citron) 50%, white); background: var(--cw-citron-soft); }
 .cw-quick-action:disabled { opacity: .5; cursor: not-allowed; }
