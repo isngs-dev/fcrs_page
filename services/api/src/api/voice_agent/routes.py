@@ -259,7 +259,7 @@ async def answer(request: Request) -> Response:
         plivo_call_uuid=params.get("CallUUID") or None, started=True,
     )
     greeting = config.greeting or DEFAULT_GREETING
-    await _record(request, call, "assistant", greeting)
+    await _record(request, call, "bot", greeting)
     return _listen(greeting, settings, call.call_id)
 
 
@@ -286,9 +286,9 @@ async def _next_step(
     call_id = call.call_id
 
     async def hang_up(say: str, status: str, reason: str | None = None) -> Response:
-        await _record(request, call, "assistant", say)
+        await _record(request, call, "bot", say)
         if reason:
-            await _record(request, call, "assistant", _handoff_note(reason))
+            await _record(request, call, "bot", _handoff_note(reason))
         await update_voice_agent_call(
             db, call_id, status=status, transfer_reason=reason, ended=True,
         )
@@ -313,7 +313,7 @@ async def _next_step(
         else:
             line, reason = session.after_answer(prompt, reply)
     if reason is None:
-        await _record(request, call, "assistant", line)
+        await _record(request, call, "bot", line)
         return _listen(line, settings, call_id)
 
     # A question the agent can't answer always goes to the saved number (an
@@ -322,8 +322,8 @@ async def _next_step(
     cant_answer = reason in ("could_not_answer", "agent_error")
     if not cant_answer and not in_business_hours(config, datetime.now(UTC)):
         return await hang_up(AFTER_HOURS_LINE, "after_hours", reason)
-    await _record(request, call, "assistant", line)
-    await _record(request, call, "assistant", _handoff_note(reason))
+    await _record(request, call, "bot", line)
+    await _record(request, call, "bot", _handoff_note(reason))
     await update_voice_agent_call(db, call_id, status="transferring", transfer_reason=reason)
     return xml(
         _say(line, settings)
@@ -344,7 +344,7 @@ async def dial_status(call_id: str, request: Request) -> Response:
     )
     if answered:
         return xml("<Hangup/>")
-    await _record(request, call, "assistant", NO_ANSWER_LINE)
+    await _record(request, call, "bot", NO_ANSWER_LINE)
     return xml(_say(NO_ANSWER_LINE, settings) + "<Hangup/>")
 
 

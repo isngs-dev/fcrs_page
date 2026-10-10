@@ -331,7 +331,9 @@ async def test_answer_greets_and_listens_for_speech(env: None) -> None:
     assert "thanks for calling" in response.text
     assert update.await_args.kwargs["status"] == "in_progress"
     assert update.await_args.kwargs["plivo_call_uuid"] == "uuid-1"
-    assert record.await_args.kwargs["role"] == "assistant"
+    # messages.role CHECK allows only user/bot/system -- "assistant" was
+    # rejected by the database, so no agent line ever reached the transcript.
+    assert record.await_args.kwargs["role"] == "bot"
 
 
 async def test_webhooks_reject_a_bad_signature_or_ticket(env: None) -> None:
@@ -355,6 +357,7 @@ async def test_a_turn_answers_from_the_knowledge_base_and_keeps_listening(env: N
     assert "<GetInput" in response.text
     contents = [c.kwargs["content"] for c in record.await_args_list]
     assert contents == ["When do you inspect?", "We inspect roofs Monday to Friday."]
+    assert [c.kwargs["role"] for c in record.await_args_list] == ["user", "bot"]
     assert all(c.kwargs["intent"] == "voice_call" for c in record.await_args_list)
     assert save.await_args.args[2]["last_prompt"] == "When do you inspect?"
 
