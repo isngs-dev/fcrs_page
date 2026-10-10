@@ -8,8 +8,9 @@ inputType="speech">`` -> Plivo does the speech-to-text and posts each caller
 utterance to ``/public/voice-agent/calls/{call_id}/turn``; ``CallSession``
 (persisted on the call row between turns) answers it from the tenant's
 knowledge base (same retrieval as the chat) and listens again. When the agent
-can't help, the turn answers with ``<Dial>`` to the tenant's transfer number
--- inside business hours only.
+can't answer, the turn answers with ``<Dial>`` to the tenant's transfer number
+at any hour; other hand-offs (caller asked for a person, repeated question,
+time limit) dial inside business hours only.
 
 Everything here except ``answer_from_knowledge`` is pure, so the transfer
 rules are unit-testable without Plivo or an LLM.
@@ -27,6 +28,7 @@ from zoneinfo import ZoneInfo
 
 from common.auth import AuthClaims
 from common.db import Database
+from common.logging import get_logger
 
 from api.config import get_api_settings
 from api.llm.config_repository import get_llm_config
@@ -35,6 +37,8 @@ from api.llm.provider import ChatMessage, LLMError
 from api.orchestrator.guardrails import scan_output
 from api.rag.service import retrieve_hybrid
 from api.voice_agent.repository import VoiceAgentConfig
+
+_log = get_logger(__name__)
 
 DEFAULT_GREETING = (
     "Hi, thanks for calling. I'm an AI assistant and I can answer questions about "
@@ -45,10 +49,7 @@ AFTER_HOURS_LINE = (
     "Our team isn't available right now. I've opened the booking form in the chat "
     "so you can schedule a call at a time that suits you. Thanks for calling, goodbye."
 )
-MISS_LINE = (
-    "I'm sorry, I don't have that information. You can ask it another way, or I "
-    "can connect you with a member of our team. Would you like that?"
-)
+MISS_LINE = f"I'm sorry, I don't have that information. {TRANSFER_LINE}"
 GOODBYE_LINE = "Thanks for calling. Have a great day, goodbye."
 ERROR_LINE = "Sorry, I'm having trouble on my end."
 SILENCE_LINE = "Sorry, I didn't catch that. What can I help you with?"
@@ -60,7 +61,7 @@ TransferReason = Literal[
 ]
 REASON_TEXT: dict[str, str] = {
     "asked_for_person": "caller asked for a person",
-    "could_not_answer": "agent could not answer twice in a row",
+    "could_not_answer": "agent could not answer the question",
     "repeated_question": "caller repeated the same question",
     "time_limit": "call reached the time limit",
     "agent_error": "agent could not reach the knowledge base",
@@ -86,7 +87,6 @@ _PERSON_RE = re.compile(
     re.I,
 )
 _GOODBYE_RE = re.compile(r"\b(?:bye|goodbye|that's all|that is all|that's it|nothing else)\b", re.I)
-_YES_RE = re.compile(r"^\W*(?:yes|yeah|yep|sure|please|ok|okay|go ahead)\b", re.I)
 
 
 _FILLER = {
@@ -127,17 +127,13 @@ class CallSession:
 
     max_minutes: int
     started: float = field(default_factory=time.time)  # epoch seconds
-    misses: int = 0
     silences: int = 0
-    offered_transfer: bool = False
     last_prompt: str | None = None
     history: list[ChatMessage] = field(default_factory=list)
 
     def to_state(self) -> dict[str, Any]:
         return {
-            "misses": self.misses,
             "silences": self.silences,
-            "offered_transfer": self.offered_transfer,
             "last_prompt": self.last_prompt,
             "history": [[m.role, m.content] for m in self.history],
         }
@@ -150,9 +146,7 @@ class CallSession:
         return cls(
             max_minutes=max_minutes,
             started=started,
-            misses=int(state.get("misses", 0)),
             silences=int(state.get("silences", 0)),
-            offered_transfer=bool(state.get("offered_transfer", False)),
             last_prompt=state.get("last_prompt"),
             history=[ChatMessage(role=r, content=c) for r, c in state.get("history", [])],
         )
@@ -167,7 +161,7 @@ class CallSession:
         self.silences = 0
         repeat = is_repeat(self.last_prompt, prompt)
         self.last_prompt = prompt
-        if _PERSON_RE.search(prompt) or (self.offered_transfer and _YES_RE.search(prompt)):
+        if _PERSON_RE.search(prompt):
             return "transfer", "asked_for_person"
         if _GOODBYE_RE.search(prompt):
             return "goodbye", None
@@ -177,17 +171,11 @@ class CallSession:
 
     def after_answer(self, prompt: str, reply: str | None) -> tuple[str, TransferReason | None]:
         """The line to speak for ``reply`` (``None`` = not in the knowledge base),
-        plus a transfer reason when the call should now go to the team."""
+        plus a transfer reason when the call should now go to the team. A question
+        the knowledge base can't answer goes straight to the team."""
         self.history += [ChatMessage(role="user", content=prompt)]
         if reply is None:
-            self.misses += 1
-            if self.misses >= 2:
-                return TRANSFER_LINE, "could_not_answer"
-            self.offered_transfer = True
-            self.history.append(ChatMessage(role="assistant", content=MISS_LINE))
-            return MISS_LINE, None
-        self.misses = 0
-        self.offered_transfer = False
+            return MISS_LINE, "could_not_answer"
         self.history.append(ChatMessage(role="assistant", content=reply))
         if time.time() - self.started > self.max_minutes * 60:
             return f"{reply} We've been talking for a while. {TRANSFER_LINE}", "time_limit"
@@ -206,6 +194,10 @@ async def answer_from_knowledge(
     settings = get_api_settings()
     result = await retrieve_hybrid(db, claims, question, k=settings.orchestrator_rag_k)
     if not result.chunks:
+        _log.info(
+            "voice agent could not answer",
+            extra={"event": "voice_agent_miss", "reason": "no knowledge base matches"},
+        )
         return None
     context = "\n".join(f"[{c.chunk_id}] {c.content}" for c in result.chunks)
     prompt = [
@@ -215,13 +207,25 @@ async def answer_from_knowledge(
     ]
     provider = provider_for(config)
     try:
-        completion = await provider.generate(prompt, model=config.model, max_tokens=200)
+        # The chat's budget, not a smaller voice cap: reasoning models (gpt-oss)
+        # spend part of it thinking, and a tight cap left an empty reply -- every
+        # question "missed". The prompt itself keeps the spoken answer short.
+        completion = await provider.generate(
+            prompt, model=config.model, max_tokens=settings.llm_max_tokens,
+        )
     finally:
         await provider.aclose()
     reply = completion.text.strip()
-    if not reply or _NO_ANSWER in reply or not scan_output(reply).ok:
-        return None
-    return reply
+    if not reply:
+        miss = f"empty reply (stop_reason={completion.stop_reason})"
+    elif _NO_ANSWER in reply:
+        miss = "not in the knowledge base"
+    elif not scan_output(reply).ok:
+        miss = "reply failed the output guardrails"
+    else:
+        return reply
+    _log.info("voice agent could not answer", extra={"event": "voice_agent_miss", "reason": miss})
+    return None
 
 
 # -- call ticket ----------------------------------------------------------------

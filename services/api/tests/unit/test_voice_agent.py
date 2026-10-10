@@ -8,6 +8,7 @@ import hmac
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
@@ -23,6 +24,7 @@ from api.voice_agent.agent import (
     MISS_LINE,
     TRANSFER_LINE,
     CallSession,
+    answer_from_knowledge,
     call_ticket,
     in_business_hours,
     is_repeat,
@@ -108,25 +110,17 @@ def test_goodbye_ends_the_call() -> None:
     assert CallSession(max_minutes=10).before_answer("ok thanks, bye") == ("goodbye", None)
 
 
-def test_one_miss_offers_the_transfer_and_yes_accepts_it() -> None:
+def test_a_question_it_cant_answer_transfers_right_away() -> None:
     session = CallSession(max_minutes=10)
-    assert session.after_answer("do you do pools?", None) == (MISS_LINE, None)
-    assert session.before_answer("yes please") == ("transfer", "asked_for_person")
+    assert session.after_answer("do you do pools?", None) == (MISS_LINE, "could_not_answer")
+    assert MISS_LINE.endswith(TRANSFER_LINE)
 
 
-def test_two_misses_in_a_row_transfer() -> None:
+def test_an_answered_question_keeps_the_conversation_going() -> None:
     session = CallSession(max_minutes=10)
-    session.after_answer("do you do pools?", None)
-    assert session.after_answer("what about fences?", None) == (TRANSFER_LINE, "could_not_answer")
-
-
-def test_an_answer_resets_the_miss_count() -> None:
-    session = CallSession(max_minutes=10)
-    session.after_answer("do you do pools?", None)
     assert session.after_answer("do you fix roofs?", "Yes, we repair roofs.") == (
         "Yes, we repair roofs.", None,
     )
-    assert session.after_answer("what about fences?", None) == (MISS_LINE, None)
 
 
 def test_asking_the_same_question_again_transfers() -> None:
@@ -140,11 +134,12 @@ def test_asking_the_same_question_again_transfers() -> None:
 
 def test_session_state_round_trips_between_turns() -> None:
     session = CallSession(max_minutes=10)
-    session.before_answer("do you do pools?")
-    session.after_answer("do you do pools?", None)
+    session.before_answer("do you fix roofs?")
+    session.after_answer("do you fix roofs?", "Yes, we repair roofs.")
+    session.on_silence()
     restored = CallSession.from_state(session.to_state(), max_minutes=10, started=session.started)
     assert restored.to_state() == session.to_state()
-    assert restored.before_answer("yes") == ("transfer", "asked_for_person")
+    assert restored.history == session.history
 
 
 def test_two_silences_in_a_row_end_the_call() -> None:
@@ -160,6 +155,42 @@ def test_the_time_limit_hands_over_after_answering() -> None:
     line, reason = session.after_answer("one more thing", "Sure, we do that.")
     assert reason == "time_limit"
     assert line.startswith("Sure, we do that.")
+
+
+async def _answer_with(completion_text: str, stop_reason: str = "stop") -> tuple[str | None, AsyncMock]:
+    from api.llm.provider import Completion
+
+    generate = AsyncMock(return_value=Completion(
+        text=completion_text, model="gpt-oss:20b", input_tokens=1, output_tokens=1,
+        stop_reason=stop_reason,
+    ))
+    provider = SimpleNamespace(generate=generate, aclose=AsyncMock())
+    chunk = SimpleNamespace(chunk_id="c1", content="We repair roofs.")
+    with (
+        patch("api.voice_agent.agent.get_llm_config", AsyncMock(return_value=SimpleNamespace(
+            embedding_model="emb", model="gpt-oss:20b",
+        ))),
+        patch("api.voice_agent.agent.retrieve_hybrid", AsyncMock(return_value=SimpleNamespace(chunks=[chunk]))),
+        patch("api.voice_agent.agent.provider_for", return_value=provider),
+    ):
+        reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [])  # type: ignore[arg-type]
+    return reply, generate
+
+
+async def test_the_spoken_answer_gets_the_same_token_budget_as_the_chat(env: None) -> None:
+    from api.config import get_api_settings
+
+    reply, generate = await _answer_with("Yes, we repair roofs.")
+
+    assert reply == "Yes, we repair roofs."
+    # Reasoning models (gpt-oss) spend part of max_tokens thinking -- a small
+    # voice-only cap left nothing for the answer, so every question "missed".
+    assert generate.await_args.kwargs["max_tokens"] == get_api_settings().llm_max_tokens
+
+
+async def test_an_empty_or_cut_off_completion_counts_as_a_miss(env: None) -> None:
+    reply, _ = await _answer_with("", stop_reason="length")
+    assert reply is None
 
 
 @pytest.mark.parametrize(
@@ -328,19 +359,29 @@ async def test_a_turn_answers_from_the_knowledge_base_and_keeps_listening(env: N
     assert save.await_args.args[2]["last_prompt"] == "When do you inspect?"
 
 
-async def test_a_miss_then_yes_transfers_using_the_saved_session(env: None) -> None:
-    session = CallSession(max_minutes=10)
-    session.after_answer("do you do pools?", None)
+@pytest.mark.parametrize("open_", [True, False])
+async def test_a_question_it_cant_answer_dials_the_saved_number_at_any_hour(
+    env: None, open_: bool,
+) -> None:
     response, update, _, record = await _post(
-        _turn(), {"Speech": "yes please"}, call=_call(session=session.to_state()),
+        _turn(), {"Speech": "do you do pools?"}, answer=AsyncMock(return_value=None), open_=open_,
     )
 
+    assert "don't have that information" in _unxml(response.text)
     assert "<Number>+17868233553</Number>" in response.text
     assert 'callerId="+15005550006"' in response.text
     assert "dial-status" in response.text
     assert update.await_args.kwargs["status"] == "transferring"
-    assert update.await_args.kwargs["transfer_reason"] == "asked_for_person"
+    assert update.await_args.kwargs["transfer_reason"] == "could_not_answer"
     assert any(c.kwargs["content"].startswith("[Call handed to the team") for c in record.await_args_list)
+
+
+async def test_a_knowledge_base_failure_dials_the_saved_number_after_hours(env: None) -> None:
+    broken = AsyncMock(side_effect=RuntimeError("LLM down"))
+    response, update, *_ = await _post(_turn(), {"Speech": "do you do pools?"}, answer=broken, open_=False)
+
+    assert "<Number>+17868233553</Number>" in response.text
+    assert update.await_args.kwargs["transfer_reason"] == "agent_error"
 
 
 async def test_a_transfer_outside_business_hours_offers_booking_instead(env: None) -> None:

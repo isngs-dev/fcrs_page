@@ -114,7 +114,7 @@ export function VoiceAgentConfigCard({
         </div>
 
         <fieldset className="flex flex-col gap-1.5">
-          <legend className={label}>Team hours (transfers only ring during these hours)</legend>
+          <legend className={label}>Team hours</legend>
           <div className="flex flex-wrap gap-1.5 pt-1">
             {DAYS.map((day, index) => (
               <label key={day} className="flex items-center gap-1 rounded-md border border-[var(--line)] px-2 py-1 text-[12px]">
@@ -133,8 +133,9 @@ export function VoiceAgentConfigCard({
             <Input id={ids.zone} value={timezone} onChange={(e) => setTimezone(e.target.value)} className="w-[190px] text-[13px]" />
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Outside these hours the agent offers Schedule a Call instead of transferring. Time zone
-            as a name like America/New_York.
+            A question the agent can&apos;t answer is transferred at any hour. Outside these hours,
+            a caller asking for a person is offered Schedule a Call instead. Time zone as a name
+            like America/New_York.
           </p>
         </fieldset>
 

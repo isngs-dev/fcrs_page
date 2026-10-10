@@ -316,7 +316,11 @@ async def _next_step(
         await _record(request, call, "assistant", line)
         return _listen(line, settings, call_id)
 
-    if not in_business_hours(config, datetime.now(UTC)):
+    # A question the agent can't answer always goes to the saved number (an
+    # unanswered dial still offers the booking form); other hand-offs respect
+    # business hours.
+    cant_answer = reason in ("could_not_answer", "agent_error")
+    if not cant_answer and not in_business_hours(config, datetime.now(UTC)):
         return await hang_up(AFTER_HOURS_LINE, "after_hours", reason)
     await _record(request, call, "assistant", line)
     await _record(request, call, "assistant", _handoff_note(reason))

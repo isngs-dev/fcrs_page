@@ -62,10 +62,12 @@ class _StubDatabase:
 
     async def execute(self, query: str, *args: Any) -> str:
         q = query.strip().upper()
-        if q.startswith("INSERT INTO TENANTS"):
+        # The tenant row is inserted together with its client_accounts row
+        # (one `WITH acct AS (...) INSERT INTO tenants` statement).
+        if "INSERT INTO TENANTS" in q:
             if self.fail_tenant_insert:
                 raise asyncpg.UniqueViolationError()
-            tenant_id, name, slug, enabled = args
+            tenant_id, name, slug, enabled, _account_id = args
             if slug in self._slugs:
                 raise asyncpg.UniqueViolationError()
             self._slugs.add(slug)
@@ -86,7 +88,7 @@ class _StubDatabase:
         if q.startswith("INSERT INTO USERS"):
             if self.fail_user_insert:
                 raise asyncpg.UniqueViolationError()
-            _id, _tenant_id, email, _role, _password_hash, _name = args
+            _id, _tenant_id, _account_id, email, _role, _password_hash, _name = args
             email_lower = email.lower()
             if email_lower in self._emails_lower:
                 raise asyncpg.UniqueViolationError()
