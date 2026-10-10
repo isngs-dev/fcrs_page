@@ -210,8 +210,10 @@ async def answer_from_knowledge(
         # The chat's budget, not a smaller voice cap: reasoning models (gpt-oss)
         # spend part of it thinking, and a tight cap left an empty reply -- every
         # question "missed". The prompt itself keeps the spoken answer short.
+        # Low reasoning: the caller is waiting on the line (gpt-oss ~7s -> ~4s).
         completion = await provider.generate(
             prompt, model=config.model, max_tokens=settings.llm_max_tokens,
+            reasoning_effort="low",
         )
     finally:
         await provider.aclose()

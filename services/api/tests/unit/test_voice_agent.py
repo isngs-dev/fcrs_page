@@ -186,6 +186,8 @@ async def test_the_spoken_answer_gets_the_same_token_budget_as_the_chat(env: Non
     # Reasoning models (gpt-oss) spend part of max_tokens thinking -- a small
     # voice-only cap left nothing for the answer, so every question "missed".
     assert generate.await_args.kwargs["max_tokens"] == get_api_settings().llm_max_tokens
+    # Callers wait on the line: low reasoning roughly halves gpt-oss reply time.
+    assert generate.await_args.kwargs["reasoning_effort"] == "low"
 
 
 async def test_an_empty_or_cut_off_completion_counts_as_a_miss(env: None) -> None:

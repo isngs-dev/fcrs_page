@@ -57,6 +57,7 @@ class AnthropicProvider:
         *,
         model: str,
         max_tokens: int,
+        reasoning_effort: str | None = None,  # noqa: ARG002 -- no such knob here
     ) -> Completion:
         try:
             resp = await self._client.messages.create(

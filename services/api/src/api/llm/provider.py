@@ -42,7 +42,11 @@ class LLMProvider(Protocol):
         *,
         model: str,
         max_tokens: int,
-    ) -> Completion: ...
+        reasoning_effort: str | None = None,
+    ) -> Completion:
+        """``reasoning_effort`` ("low"/"medium"/"high") is a latency hint for
+        reasoning models; providers/models without that knob ignore it."""
+        ...
 
     async def embed(
         self,

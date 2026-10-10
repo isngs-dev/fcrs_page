@@ -415,3 +415,25 @@ async def test_metered_aclose_delegates_to_delegate_aclose_exactly_once() -> Non
     await metered.aclose()
 
     assert stub.aclose_calls == 1
+
+
+async def test_metered_generate_forwards_reasoning_effort_only_when_set() -> None:
+    """The hint reaches the delegate when a caller sets it; otherwise the call
+    is unchanged (delegates that predate the hint never see the keyword)."""
+    seen: list[dict[str, object]] = []
+
+    class _Recording(_StubProvider):
+        async def generate(  # type: ignore[override]
+            self, messages: list[ChatMessage], **kwargs: object,
+        ) -> Completion:
+            seen.append(kwargs)
+            return self._completion
+
+    metered = MeteredProvider(_Recording(), provider="openai")
+    msgs = [ChatMessage(role="user", content="hi")]
+
+    await metered.generate(msgs, model="gpt-oss:20b", max_tokens=10, reasoning_effort="low")
+    await metered.generate(msgs, model="gpt-oss:20b", max_tokens=10)
+
+    assert seen[0]["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in seen[1]

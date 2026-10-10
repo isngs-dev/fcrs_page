@@ -206,6 +206,23 @@ async def test_generate_does_not_send_forbidden_params() -> None:
         assert forbidden not in stub.last_kwargs
 
 
+@pytest.mark.parametrize(
+    ("model", "sent"),
+    [("gpt-oss:20b", True), ("gpt-oss:20b-cloud", True), ("o3-mini", True), ("gpt-4o", False)],
+)
+async def test_generate_sends_reasoning_effort_only_to_reasoning_models(model: str, sent: bool) -> None:
+    """The hint speeds up reasoning models; non-reasoning models reject the
+    param outright, so it must never reach them."""
+    stub = _StubCompletions()
+    provider = OpenAICompatibleProvider(client=_make_stub_client(stub))
+
+    await provider.generate(
+        [ChatMessage("user", "Hello")], model=model, max_tokens=512, reasoning_effort="low",
+    )
+
+    assert stub.last_kwargs.get("reasoning_effort") == ("low" if sent else None)
+
+
 async def test_generate_content_none_yields_empty_text() -> None:
     """When message.content is None, text should be empty string."""
     stub = _StubCompletions(content_none=True)

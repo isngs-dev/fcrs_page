@@ -27,6 +27,10 @@ _log = get_logger(__name__)
 
 _CLASSIFY_MAX_TOKENS = 256
 _CLASSIFY_REPLY_LOG_LIMIT = 120
+# Model families that accept ``reasoning_effort``. ponytail: name-prefix match --
+# an Azure deployment with a custom name won't get the hint; add a per-tenant
+# flag if one ever needs it.
+_REASONING_MODEL_PREFIXES = ("gpt-oss", "o1", "o3", "o4", "gpt-5")
 
 
 class OpenAICompatibleProvider:
@@ -103,12 +107,20 @@ class OpenAICompatibleProvider:
         *,
         model: str,
         max_tokens: int,
+        reasoning_effort: str | None = None,
     ) -> Completion:
+        # Non-reasoning models (gpt-4o, ...) reject reasoning_effort outright.
+        hint = (
+            {"reasoning_effort": reasoning_effort}
+            if reasoning_effort and model.startswith(_REASONING_MODEL_PREFIXES)
+            else {}
+        )
         try:
             resp = await self._client.chat.completions.create(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[{"role": m.role, "content": m.content} for m in messages],
+                **hint,
             )
         except APIError as exc:
             _log.warning(

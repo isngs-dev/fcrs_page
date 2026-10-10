@@ -33,13 +33,16 @@ class MeteredProvider:
         *,
         model: str,
         max_tokens: int,
+        reasoning_effort: str | None = None,
     ) -> Completion:
+        # Forwarded only when set, so an unset call is exactly what it was.
+        hint = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
         try:
             with LLM_REQUEST_DURATION.labels(
                 provider=self._provider, op="generate",
             ).time():
                 completion = await self._delegate.generate(
-                    messages, model=model, max_tokens=max_tokens,
+                    messages, model=model, max_tokens=max_tokens, **hint,
                 )
         except Exception:
             LLM_ERRORS.labels(provider=self._provider, op="generate").inc()
