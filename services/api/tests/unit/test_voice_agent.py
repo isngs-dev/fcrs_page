@@ -484,6 +484,22 @@ async def test_start_call_returns_a_token_and_ticket_on_the_visitors_conversatio
     assert mint.await_args.kwargs["endpoint_username"] == "voiceagent"
 
 
+@pytest.mark.parametrize(("override", "limit"), [(None, 20), ("7", 7)])
+async def test_start_call_rate_limit_comes_from_settings(
+    env: None, override: str | None, limit: int,
+) -> None:
+    limiter = AsyncMock()
+    extra = {"VOICE_AGENT_CALLS_PER_HOUR": override} if override else {}
+    with patch.dict("os.environ", extra), patch("api.voice_agent.routes.enforce_rate_limit", limiter):
+        _reset_settings()
+        response = await _start(AsyncMock(return_value="jwt"))
+
+    assert response.status_code == 200
+    scopes = {c.kwargs["scope"]: c.kwargs for c in limiter.await_args_list}
+    assert set(scopes) == {"voice_agent_visitor", "voice_agent_ip"}
+    assert all(k["limit"] == limit and k["window_seconds"] == 3600 for k in scopes.values())
+
+
 async def test_start_call_fails_loudly_when_plivo_refuses_the_token(env: None) -> None:
     update = AsyncMock()
     response = await _start(AsyncMock(side_effect=httpx.ConnectError("down")), update)

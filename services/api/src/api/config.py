@@ -312,6 +312,9 @@ class ApiSettings(Settings):
     platform_plivo_endpoint_username: str | None = None
     # Plivo <Speak> voice: WOMAN or MAN.
     voice_agent_tts_voice: str = "WOMAN"
+    # Max "Call Us" calls per visitor, and per IP, per hour -- each call costs
+    # Plivo minutes + LLM time.
+    voice_agent_calls_per_hour: int = 20
 
     # Notifications (S9.3).
     # notification_twilio_timeout_seconds: the httpx.AsyncClient timeout used

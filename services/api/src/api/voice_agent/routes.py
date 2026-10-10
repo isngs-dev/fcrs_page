@@ -179,14 +179,15 @@ async def start_call(
     request: Request,
     claims: AuthClaims = Depends(get_visitor_claims),  # noqa: B008
 ) -> StartCallResponse:
-    # Each call costs Plivo + LLM minutes: a few per visitor (and per IP) an hour.
+    settings = get_api_settings()
+    # Each call costs Plivo + LLM minutes: capped per visitor (and per IP) an hour.
     limits = (("voice_agent_visitor", claims.subject), ("voice_agent_ip", client_ip(request)))
     for scope, identifier in limits:
         await enforce_rate_limit(
-            request, scope=scope, identifier=identifier, limit=5, window_seconds=3600,
+            request, scope=scope, identifier=identifier,
+            limit=settings.voice_agent_calls_per_hour, window_seconds=3600,
         )
     db = request.app.state.db
-    settings = get_api_settings()
     config = await get_voice_agent_config(db, claims)
     if not config.enabled or not voice_agent_ready(settings):
         raise ValidationError("Calls aren't available right now.", code="VOICE_AGENT_UNAVAILABLE")
