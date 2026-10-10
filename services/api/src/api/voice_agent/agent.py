@@ -8,9 +8,9 @@ inputType="speech">`` -> Plivo does the speech-to-text and posts each caller
 utterance to ``/public/voice-agent/calls/{call_id}/turn``; ``CallSession``
 (persisted on the call row between turns) answers it from the tenant's
 knowledge base (same retrieval as the chat) and listens again. When the agent
-can't answer, the turn answers with ``<Dial>`` to the tenant's transfer number
-at any hour; other hand-offs (caller asked for a person, repeated question,
-time limit) dial inside business hours only.
+can't answer, or the caller asks for a person, the turn answers with ``<Dial>``
+to the tenant's transfer number at any hour; the agent's own hand-offs
+(repeated question, time limit) dial inside business hours only.
 
 Everything here except ``answer_from_knowledge`` is pure, so the transfer
 rules are unit-testable without Plivo or an LLM.

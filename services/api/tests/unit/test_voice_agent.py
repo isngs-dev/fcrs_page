@@ -387,12 +387,26 @@ async def test_a_knowledge_base_failure_dials_the_saved_number_after_hours(env: 
     assert update.await_args.kwargs["transfer_reason"] == "agent_error"
 
 
-async def test_a_transfer_outside_business_hours_offers_booking_instead(env: None) -> None:
+async def test_asking_for_a_person_dials_the_saved_number_after_hours(env: None) -> None:
     response, update, *_ = await _post(_turn(), {"Speech": "Transfer me to a human"}, open_=False)
+
+    assert "<Number>+17868233553</Number>" in response.text
+    assert update.await_args.kwargs["status"] == "transferring"
+    assert update.await_args.kwargs["transfer_reason"] == "asked_for_person"
+
+
+async def test_a_repeated_question_outside_business_hours_offers_booking_instead(env: None) -> None:
+    session = CallSession(max_minutes=10)
+    session.before_answer("how long does a roof inspection take")
+    response, update, *_ = await _post(
+        _turn(), {"Speech": "how long does the roof inspection take"},
+        call=_call(session=session.to_state()), open_=False,
+    )
 
     assert AFTER_HOURS_LINE in _unxml(response.text)
     assert "<Hangup/>" in response.text
     assert update.await_args.kwargs["status"] == "after_hours"
+    assert update.await_args.kwargs["transfer_reason"] == "repeated_question"
 
 
 async def test_silence_reprompts_once_then_hangs_up(env: None) -> None:

@@ -133,9 +133,9 @@ export function VoiceAgentConfigCard({
             <Input id={ids.zone} value={timezone} onChange={(e) => setTimezone(e.target.value)} className="w-[190px] text-[13px]" />
           </div>
           <p className="text-[11px] text-muted-foreground">
-            A question the agent can&apos;t answer is transferred at any hour. Outside these hours,
-            a caller asking for a person is offered Schedule a Call instead. Time zone as a name
-            like America/New_York.
+            Callers who ask for a person, and questions the agent can&apos;t answer, are transferred
+            at any hour. Outside these hours, other hand-offs (a repeated question, a long call)
+            offer Schedule a Call instead. Time zone as a name like America/New_York.
           </p>
         </fieldset>
 
