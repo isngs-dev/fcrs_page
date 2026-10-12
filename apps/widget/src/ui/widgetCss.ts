@@ -31,6 +31,10 @@ export const widgetCss = `
      --cw-citron resolves to (default or a tenant's inline override on the
      shadow host), so a custom accent color never needs a second field. */
   --cw-citron-soft: color-mix(in srgb, var(--cw-citron) 18%, white);
+  /* Text ON the accent / the accent AS text on white. ChatWidget overrides
+     both with readable values for a tenant accent (ui/contrast.ts). */
+  --cw-on-citron: var(--cw-paper);
+  --cw-citron-text: var(--cw-citron);
   --cw-paper: #ffffff;
   --cw-cool-paper: #f8fafc;
   --cw-line: #e5e7eb;
@@ -74,7 +78,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   border: none;
   border-radius: 999px;
   background: var(--cw-citron);
-  color: var(--cw-paper);
+  color: var(--cw-on-citron);
   box-shadow: 0 14px 30px -8px rgba(37, 99, 235, .6);
   font-size: 14px;
   font-weight: 700;
@@ -235,7 +239,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-confirm-close-no, .cw-confirm-close-yes { flex: 1 1 0; min-height: 44px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
 .cw-confirm-close-no { border: 1px solid #d8dce2; background: var(--cw-paper); color: var(--cw-text-secondary); }
 .cw-confirm-close-no:hover { background: var(--cw-cool-paper); }
-.cw-confirm-close-yes { border: 1px solid var(--cw-citron); background: var(--cw-citron); color: var(--cw-paper); }
+.cw-confirm-close-yes { border: 1px solid var(--cw-citron); background: var(--cw-citron); color: var(--cw-on-citron); }
 .cw-confirm-close-yes:hover { background: #1d4ed8; border-color: #1d4ed8; }
 
 /* Offline / connection-status banner — #fff9ec/#f0e2bd/#6a4e00 + bordered "Retry now" pill */
@@ -274,7 +278,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-suggestion:hover { border-color: #93c5fd; background: #f0f6ff; }
 .cw-suggestion-selected, .cw-suggestion-selected:hover { border: 2px solid #e59500; padding: 11px 13px; background: var(--cw-paper); }
 .cw-suggestion:active { transform: scale(.985); }
-.cw-suggestion-icon { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--cw-citron); }
+.cw-suggestion-icon { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--cw-citron-text); }
 
 /* Bubbles — user ink/white 14/14/4/14; bot white/1px border 14/14/14/4 */
 .cw-bubble-row { display: flex; width: 100%; animation: cw-message-in 280ms ease-out both; }
@@ -293,7 +297,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-bot-stack { width: calc(100% - 35px); min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .cw-bot-stack > .cw-bubble-bot { max-width: 100%; }
 .cw-bubble { max-width: 82%; padding: 11px 14px; border-radius: 14px; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
-.cw-bubble-user { border-radius: 14px 4px 14px 14px; background: var(--cw-citron); color: var(--cw-visitor-text, var(--cw-paper)); }
+.cw-bubble-user { border-radius: 14px 4px 14px 14px; background: var(--cw-citron); color: var(--cw-visitor-text, var(--cw-on-citron)); }
 .cw-bubble-bot { max-width: calc(92% - 35px); border: 1px solid var(--cw-line); border-radius: 4px 14px 14px 14px; background: var(--cw-paper); color: var(--cw-bot-text, var(--cw-text-secondary)); }
 .cw-md-paragraph { margin: 0; }
 .cw-md-paragraph + .cw-md-paragraph { margin-top: 8px; }
@@ -329,7 +333,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   cursor: pointer;
   transition: border-color .18s ease, background-color .18s ease, color .18s ease, opacity .18s ease;
 }
-.cw-handoff-talk { border: 1px solid var(--cw-citron); background: var(--cw-citron); color: var(--cw-paper); }
+.cw-handoff-talk { border: 1px solid var(--cw-citron); background: var(--cw-citron); color: var(--cw-on-citron); }
 .cw-handoff-stay { border: 1px solid #d8dce2; background: var(--cw-paper); color: #475569; }
 .cw-handoff-stay-selected, .cw-handoff-stay-selected:disabled { border: 2px solid #e59500; color: #475569; opacity: 1; }
 .cw-handoff-talk:hover:not(:disabled) { background: #1d4ed8; border-color: #1d4ed8; }
@@ -377,7 +381,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   border: none;
   border-radius: 9px;
   background: var(--cw-citron);
-  color: var(--cw-paper);
+  color: var(--cw-on-citron);
   cursor: pointer;
   transition: transform 160ms ease, background 160ms ease;
 }
@@ -402,7 +406,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 /* Voice-only composer (no text input): the mic is the sole control, so it's
    bigger and centered rather than sitting beside a now-absent input field. */
 .cw-composer-voice-only { justify-content: center; padding: 8px; }
-.cw-composer-voice-only .cw-voice-button { width: 56px; height: 56px; border-radius: 50%; background: var(--cw-citron); color: var(--cw-paper); }
+.cw-composer-voice-only .cw-voice-button { width: 56px; height: 56px; border-radius: 50%; background: var(--cw-citron); color: var(--cw-on-citron); }
 .cw-composer-voice-only .cw-voice-button:hover { background: #1d4ed8; }
 .cw-composer-voice-only .cw-voice-button-active { background: #dc2626; color: #fff; }
 .cw-composer-voice-only .cw-voice-button svg { width: 22px; height: 22px; }
@@ -415,7 +419,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-disclaimer { margin: 8px 0 0; color: var(--cw-muted); font-size: 11px; line-height: 1.3; text-align: center; }
 /* "Call Us" / "Schedule a Call": pills sharing the row equally above the message box. */
 .cw-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.cw-quick-action { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--cw-citron) 28%, white); border-radius: 999px; background: color-mix(in srgb, var(--cw-citron) 7%, white); color: var(--cw-citron); font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
+.cw-quick-action { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--cw-citron) 28%, white); border-radius: 999px; background: color-mix(in srgb, var(--cw-citron) 7%, white); color: var(--cw-citron-text); font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
 .cw-quick-action svg { width: 15px; height: 15px; flex: none; }
 .cw-quick-action:hover:not(:disabled) { border-color: color-mix(in srgb, var(--cw-citron) 50%, white); background: var(--cw-citron-soft); }
 .cw-quick-action:disabled { opacity: .5; cursor: not-allowed; }
@@ -465,7 +469,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   border: none;
   border-radius: 9px;
   background: var(--cw-citron);
-  color: var(--cw-paper);
+  color: var(--cw-on-citron);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;

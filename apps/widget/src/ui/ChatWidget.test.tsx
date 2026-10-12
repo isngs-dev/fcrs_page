@@ -137,6 +137,7 @@ vi.mock("../lead", async () => {
 
 import { ChatWidget, SALES_CTA_ENABLED, VOICE_MODE_ENABLED } from "./ChatWidget";
 import { widgetCss } from "./widgetCss";
+import { contrastRatio } from "./contrast";
 
 const baseConfig: WidgetConfig = {
   clientKey: "pk_test_123",
@@ -908,6 +909,34 @@ describe("ChatWidget", () => {
       }
     });
 
+    it("picks readable text colors for a light (cream) accent", () => {
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const shadowRoot = host.attachShadow({ mode: "open" });
+      const shadowContainer = document.createElement("div");
+      shadowRoot.appendChild(shadowContainer);
+      const shadowReactRoot = createRoot(shadowContainer);
+
+      try {
+        act(() => {
+          shadowReactRoot.render(
+            <ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" accentColor="#f5e6c8" />,
+          );
+        });
+
+        // Dark text on the cream launcher/send button/visitor bubble...
+        expect(host.style.getPropertyValue("--cw-on-citron")).toBe("#0f172a");
+        // ...and a darkened cream (brown) for accent text on white.
+        const accentText = host.style.getPropertyValue("--cw-citron-text");
+        expect(contrastRatio(accentText, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+      } finally {
+        act(() => {
+          shadowReactRoot.unmount();
+        });
+        host.remove();
+      }
+    });
+
     it("does not touch the shadow host's accent color/position when unconfigured", () => {
       const host = document.createElement("div");
       document.body.appendChild(host);
@@ -925,6 +954,8 @@ describe("ChatWidget", () => {
 
         expect(host.style.getPropertyValue("--cw-citron")).toBe("");
         expect(host.hasAttribute("data-position")).toBe(false);
+        expect(host.style.getPropertyValue("--cw-on-citron")).toBe("");
+        expect(host.style.getPropertyValue("--cw-citron-text")).toBe("");
         expect(host.style.getPropertyValue("--cw-bot-text")).toBe("");
         expect(host.style.getPropertyValue("--cw-visitor-text")).toBe("");
       } finally {
@@ -936,9 +967,22 @@ describe("ChatWidget", () => {
     });
   });
 
+  it("draws text on accent surfaces with --cw-on-citron and accent-colored text with --cw-citron-text", () => {
+    for (const selector of [".cw-placeholder", ".cw-send-button", ".cw-lead-submit, .cw-sched-confirm-button"]) {
+      const start = widgetCss.indexOf(`${selector} {`);
+      expect(start, selector).toBeGreaterThanOrEqual(0);
+      const rule = widgetCss.slice(start, widgetCss.indexOf("}", start));
+      expect(rule, selector).toContain("color: var(--cw-on-citron)");
+    }
+    expect(widgetCss).toMatch(/\.cw-quick-action \{[^}]*; color: var\(--cw-citron-text\)/);
+    expect(widgetCss).toMatch(/\.cw-suggestion-icon \{[^}]*color: var\(--cw-citron-text\)/);
+    expect(widgetCss).toMatch(/--cw-on-citron: var\(--cw-paper\)/);
+    expect(widgetCss).toMatch(/--cw-citron-text: var\(--cw-citron\)/);
+  });
+
   it("colors bot and visitor bubble text from the tenant's text colors, with the built-in defaults as fallback", () => {
     expect(widgetCss).toMatch(/\.cw-bubble-bot \{[^}]*color: var\(--cw-bot-text, var\(--cw-text-secondary\)\)/);
-    expect(widgetCss).toMatch(/\.cw-bubble-user \{[^}]*color: var\(--cw-visitor-text, var\(--cw-paper\)\)/);
+    expect(widgetCss).toMatch(/\.cw-bubble-user \{[^}]*color: var\(--cw-visitor-text, var\(--cw-on-citron\)\)/);
   });
 
   it("ships a self-contained floating Rebecca panel CSS contract", () => {

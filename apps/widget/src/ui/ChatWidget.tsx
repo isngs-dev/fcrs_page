@@ -95,6 +95,7 @@ import * as tts from "../tts";
 import type { ChatMessage } from "./Bubble";
 import { MessageList, BOOK_CALL_SUGGESTION_MESSAGE } from "./MessageList";
 import { ConnectionStatus, type ConnectionState } from "./ConnectionStatus";
+import { accentTextColor, onAccentColor } from "./contrast";
 
 const LOG_PREFIX = "[chatbot-widget]";
 const PANEL_HEADER_ID = "cw-panel-header";
@@ -618,6 +619,9 @@ export function ChatWidget({
     if (!(host instanceof HTMLElement)) return;
     if (accentColor) {
       host.style.setProperty("--cw-citron", accentColor);
+      // A light accent (cream...) would leave white-on-cream / cream-on-white text.
+      host.style.setProperty("--cw-on-citron", onAccentColor(accentColor));
+      host.style.setProperty("--cw-citron-text", accentTextColor(accentColor));
     }
     if (launcherPosition) {
       host.setAttribute("data-position", launcherPosition);

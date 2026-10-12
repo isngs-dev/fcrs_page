@@ -42,3 +42,23 @@ describe("WidgetPreview text colors", () => {
     expect(visitor).not.toMatch(/(^|[;"])color:/);
   });
 });
+
+describe("WidgetPreview on a light accent", () => {
+  it("uses dark text on a cream accent so the launcher and visitor bubble stay readable", () => {
+    const html = renderToStaticMarkup(
+      <WidgetPreview greeting="" tone="" launcherLabel="Ask Rene" accentColor="#f5e6c8" />,
+    );
+    const launcher = html.match(/<div[^>]*>(?:(?!<div)[\s\S])*?data-testid="widget-preview-launcher-label"/)?.[0] ?? "";
+
+    expect(bubbles(html).visitor).toContain("color:#0f172a");
+    expect(launcher).toContain("color:#0f172a");
+  });
+
+  it("keeps white text on a dark accent", () => {
+    const html = renderToStaticMarkup(
+      <WidgetPreview greeting="" tone="" launcherLabel="" accentColor="#1e3a8a" />,
+    );
+
+    expect(bubbles(html).visitor).toContain("color:#ffffff");
+  });
+});
