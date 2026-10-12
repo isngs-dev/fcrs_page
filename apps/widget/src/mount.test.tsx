@@ -43,6 +43,30 @@ describe("mountWidget", () => {
     expect(inLightDom).toBeNull();
   });
 
+  it("keeps wheel/touch scrolling inside the widget away from the host page's smooth-scroll script", () => {
+    // Smooth-scroll libraries (Lenis, Locomotive) listen on window and
+    // preventDefault every wheel -- which kills the chat's own scrolling.
+    const { host, shadowRoot } = mountWidget(null);
+    const list = document.createElement("div");
+    shadowRoot.appendChild(list);
+    const seen: string[] = [];
+    const pageScroller = (e: Event) => seen.push(e.type);
+    window.addEventListener("wheel", pageScroller);
+    window.addEventListener("touchmove", pageScroller);
+
+    try {
+      list.dispatchEvent(new Event("wheel", { bubbles: true, composed: true }));
+      list.dispatchEvent(new Event("touchmove", { bubbles: true, composed: true }));
+      document.body.dispatchEvent(new Event("wheel", { bubbles: true }));
+
+      expect(seen).toEqual(["wheel"]); // only the page's own wheel got through
+      expect(host.hasAttribute("data-lenis-prevent")).toBe(true);
+    } finally {
+      window.removeEventListener("wheel", pageScroller);
+      window.removeEventListener("touchmove", pageScroller);
+    }
+  });
+
   it("is idempotent: calling mountWidget twice does not create a second host or root", () => {
     const first = mountWidget(null);
     const second = mountWidget(null);

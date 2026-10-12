@@ -70,6 +70,16 @@ export function mountWidget(
   const host = resolveHostElement(mountSelector, doc);
   host.setAttribute("data-position", position);
 
+  // Host pages with a smooth-scroll library (Lenis, Locomotive...) listen on
+  // window and preventDefault every wheel/touch scroll, so the chat couldn't
+  // scroll and the page moved instead. Keep these events inside the widget
+  // (its own scrolling is native and unaffected); `data-lenis-prevent` is
+  // Lenis's own opt-out for libraries that listen in the capture phase.
+  host.setAttribute("data-lenis-prevent", "");
+  for (const type of ["wheel", "touchmove"]) {
+    host.addEventListener(type, (event) => event.stopPropagation(), { passive: true });
+  }
+
   // A shadow root can only be attached once per element — if one already
   // exists (e.g. re-entrant call on a reused host), reuse it rather than
   // throwing.
