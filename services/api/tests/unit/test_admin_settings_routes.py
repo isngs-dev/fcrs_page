@@ -95,6 +95,8 @@ class _StubDatabase:
                 accent_color,
                 launcher_position,
                 suggested_questions,
+                bot_text_color,
+                visitor_text_color,
             ) = args
             self._bot_settings[tenant_id] = {
                 "greeting": greeting,
@@ -108,6 +110,8 @@ class _StubDatabase:
                 "accent_color": accent_color,
                 "launcher_position": launcher_position,
                 "suggested_questions": suggested_questions,
+                "bot_text_color": bot_text_color,
+                "visitor_text_color": visitor_text_color,
             }
             self.updated_tables.append("tenant_bot_settings")
             return "INSERT 0 1"
@@ -759,3 +763,51 @@ async def test_put_settings_low_confidence_streak_cap_client_agent_403(app: Any)
         )
 
     assert response.status_code == 403
+
+
+async def test_put_settings_text_colors_round_trip(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        token = _token(Role.CLIENT_ADMIN)
+        put_response = await client.put(
+            "/admin/settings",
+            json={"bot_text_color": "#111827", "visitor_text_color": "#FEFCE8"},
+            cookies={"access_token": token},
+        )
+        get_response = await client.get("/admin/settings", cookies={"access_token": token})
+
+    assert put_response.status_code == 200
+    assert put_response.json()["bot_text_color"] == "#111827"
+    assert put_response.json()["visitor_text_color"] == "#FEFCE8"
+    assert get_response.json()["bot_text_color"] == "#111827"
+    assert get_response.json()["visitor_text_color"] == "#FEFCE8"
+
+
+async def test_text_colors_are_tenant_isolated(app: Any, db: _StubDatabase) -> None:
+    """Tenant A's text colors must never leak into tenant B's GET (CLAUDE.md Sec.3)."""
+    tenant_b = "tenant-b-456"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.put(
+            "/admin/settings",
+            json={"bot_text_color": "#111827", "visitor_text_color": "#fefce8"},
+            cookies={"access_token": _token(Role.CLIENT_ADMIN, _TENANT_ID)},
+        )
+        tenant_b_response = await client.get(
+            "/admin/settings", cookies={"access_token": _token(Role.CLIENT_ADMIN, tenant_b)},
+        )
+
+    assert tenant_b_response.status_code == 200
+    assert tenant_b_response.json()["bot_text_color"] is None
+    assert tenant_b_response.json()["visitor_text_color"] is None
+    assert db._bot_settings[_TENANT_ID]["bot_text_color"] == "#111827"
+
+
+@pytest.mark.parametrize("field", ["bot_text_color", "visitor_text_color"])
+async def test_put_settings_bad_text_color_422(app: Any, field: str) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.put(
+            "/admin/settings",
+            json={field: "red; background:url(x)"},
+            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
+        )
+
+    assert response.status_code == 422

@@ -410,6 +410,44 @@ describe("mintVisitorSession", () => {
     expect(result.session.suggestedQuestions).toBeUndefined();
   });
 
+  it("parses the bot and visitor text colors when configured, and omits them when not", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        bot_text_color: "#111827",
+        visitor_text_color: "#fefce8",
+      }),
+    );
+    expect(await mintVisitorSession(baseConfig)).toMatchObject({
+      ok: true,
+      session: { botTextColor: "#111827", visitorTextColor: "#fefce8" },
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, { visitor_token: "jwt.abc.def", expires_at: "2026-07-16T12:30:00Z" }),
+    );
+    const bare = await mintVisitorSession(baseConfig);
+    if (!bare.ok) throw new Error("expected ok result");
+    expect(bare.session.botTextColor).toBeUndefined();
+    expect(bare.session.visitorTextColor).toBeUndefined();
+  });
+
+  it("rejects a text color that is not a hex string (never reaches the page's CSS)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        visitor_token: "jwt.abc.def",
+        expires_at: "2026-07-16T12:30:00Z",
+        bot_text_color: "red;background:url(x)",
+      }),
+    );
+
+    expect(await mintVisitorSession(baseConfig)).toMatchObject({
+      ok: false,
+      error: { errorCode: "INVALID_RESPONSE_SHAPE" },
+    });
+  });
+
   it("returns a typed invalid-response error for a malformed accent_color (not a hex string)", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, {

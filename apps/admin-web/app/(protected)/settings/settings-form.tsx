@@ -112,6 +112,51 @@ const APPEARANCE_ICON = (
   </svg>
 );
 
+/** A swatch + hex text box pair (same shape as the Accent color row). */
+function ColorField({
+  name,
+  label,
+  value,
+  fallback,
+  error,
+  onChange,
+}: {
+  name: string;
+  label: string;
+  value: string;
+  fallback: string;
+  error?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-2.5">
+        <input
+          type="color"
+          aria-label={`${label} picker`}
+          value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback}
+          onChange={(e) => onChange(e.target.value)}
+          className="size-9 shrink-0 cursor-pointer rounded-md border border-border bg-transparent p-0.5"
+        />
+        <input
+          id={name}
+          name={name}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          maxLength={7}
+          placeholder={fallback}
+          className={SET_ROW_FIELD_CLASS}
+        />
+      </div>
+      {error ? (
+        <p role="alert" className="mt-1.5 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 function PublishButton({ dirty }: { dirty: boolean }) {
   const { pending } = useFormStatus();
   return (
@@ -188,6 +233,8 @@ export function SettingsForm({
     fields.botName !== serverFields.botName ||
     fields.accentColor !== serverFields.accentColor ||
     fields.launcherPosition !== serverFields.launcherPosition ||
+    fields.botTextColor !== serverFields.botTextColor ||
+    fields.visitorTextColor !== serverFields.visitorTextColor ||
     fields.suggestedQuestionsText !== serverFields.suggestedQuestionsText ||
     fields.businessHoursText !== serverFields.businessHoursText ||
     fields.escalationPolicy !== serverFields.escalationPolicy ||
@@ -593,6 +640,36 @@ export function SettingsForm({
             </SetRow>
 
             <SetRow
+              label="Bot text color"
+              description="Text in the chatbot's replies. Leave blank for the default dark slate."
+              htmlFor="botTextColor"
+            >
+              <ColorField
+                name="botTextColor"
+                label="Bot text color"
+                value={fields.botTextColor}
+                fallback="#1e293b"
+                error={fieldErrors.botTextColor}
+                onChange={(value) => setFields((f) => ({ ...f, botTextColor: value }))}
+              />
+            </SetRow>
+
+            <SetRow
+              label="Visitor text color"
+              description="Text in the visitor's own messages, shown on the accent color. Leave blank for white."
+              htmlFor="visitorTextColor"
+            >
+              <ColorField
+                name="visitorTextColor"
+                label="Visitor text color"
+                value={fields.visitorTextColor}
+                fallback="#ffffff"
+                error={fieldErrors.visitorTextColor}
+                onChange={(value) => setFields((f) => ({ ...f, visitorTextColor: value }))}
+              />
+            </SetRow>
+
+            <SetRow
               label="Launcher position"
               description="Which side of the visitor's screen the chat launcher appears on."
               htmlFor="launcherPosition"
@@ -625,6 +702,8 @@ export function SettingsForm({
             launcherLabel={fields.launcherLabel}
             botName={fields.botName}
             accentColor={fields.accentColor}
+            botTextColor={fields.botTextColor}
+            visitorTextColor={fields.visitorTextColor}
             launcherPosition={fields.launcherPosition === "left" ? "left" : "right"}
             suggestedQuestions={fields.suggestedQuestionsText
               .split("\n")

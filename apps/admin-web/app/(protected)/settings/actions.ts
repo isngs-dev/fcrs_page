@@ -34,6 +34,8 @@ export interface SaveFieldErrors {
   accentColor?: string;
   launcherPosition?: string;
   suggestedQuestionsText?: string;
+  botTextColor?: string;
+  visitorTextColor?: string;
   escalationPolicy?: string;
   tone?: string;
   businessHoursText?: string;
@@ -69,6 +71,8 @@ interface AdminBotSettingsResponseBody {
   accent_color: string | null;
   launcher_position: "left" | "right" | null;
   suggested_questions: string[] | null;
+  bot_text_color?: string | null;
+  visitor_text_color?: string | null;
   business_hours: Record<string, unknown> | null;
   escalation_policy: string | null;
   tone: string | null;
@@ -90,6 +94,8 @@ function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
     accentColor: body.accent_color ?? null,
     launcherPosition: body.launcher_position ?? null,
     suggestedQuestions: body.suggested_questions ?? null,
+    botTextColor: body.bot_text_color ?? null,
+    visitorTextColor: body.visitor_text_color ?? null,
     businessHours: body.business_hours,
     escalationPolicy: body.escalation_policy,
     tone: body.tone,
@@ -133,6 +139,8 @@ export async function saveSettings(
     accentColor: nullToUndefined(formData.get("accentColor")),
     launcherPosition: nullToUndefined(formData.get("launcherPosition")),
     suggestedQuestionsText: String(formData.get("suggestedQuestionsText") ?? ""),
+    botTextColor: nullToUndefined(formData.get("botTextColor")),
+    visitorTextColor: nullToUndefined(formData.get("visitorTextColor")),
     escalationPolicy: nullToUndefined(formData.get("escalationPolicy")),
     tone: nullToUndefined(formData.get("tone")),
     businessHoursText: String(formData.get("businessHoursText") ?? ""),
@@ -151,6 +159,8 @@ export async function saveSettings(
       else if (key === "botName") fieldErrors.botName ??= issue.message;
       else if (key === "accentColor") fieldErrors.accentColor ??= issue.message;
       else if (key === "launcherPosition") fieldErrors.launcherPosition ??= issue.message;
+      else if (key === "botTextColor") fieldErrors.botTextColor ??= issue.message;
+      else if (key === "visitorTextColor") fieldErrors.visitorTextColor ??= issue.message;
       else if (key === "escalationPolicy") fieldErrors.escalationPolicy ??= issue.message;
       else if (key === "tone") fieldErrors.tone ??= issue.message;
       else if (key === "turnCap") fieldErrors.turnCap ??= issue.message;
@@ -174,6 +184,8 @@ export async function saveSettings(
     accentColor,
     launcherPosition,
     suggestedQuestionsText,
+    botTextColor,
+    visitorTextColor,
     escalationPolicy,
     tone,
     businessHoursText,
@@ -210,6 +222,8 @@ export async function saveSettings(
     accent_color: accentColor ?? null,
     launcher_position: launcherPosition ?? null,
     suggested_questions: suggestedQuestionsResult.value,
+    bot_text_color: botTextColor ?? null,
+    visitor_text_color: visitorTextColor ?? null,
     escalation_policy: escalationPolicy ?? null,
     tone: tone ?? null,
     business_hours: businessHoursResult.value,

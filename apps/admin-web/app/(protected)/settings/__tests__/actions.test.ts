@@ -233,6 +233,77 @@ describe("saveSettings", () => {
     expect(adminApiFetchMock).not.toHaveBeenCalled();
   });
 
+  it("submits bot_text_color/visitor_text_color and reflects the response's saved values", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          greeting: "Hi there!",
+          bot_text_color: "#111827",
+          visitor_text_color: "#fefce8",
+          business_hours: null,
+          escalation_policy: "Escalate on refunds.",
+          tone: "friendly",
+          answer_threshold: 0.7,
+          escalate_threshold: 0.4,
+          turn_cap: 7,
+          low_confidence_streak_cap: 7,
+          llm_provider: null,
+          llm_model: null,
+        },
+        200
+      )
+    );
+
+    const state = await saveSettings(
+      undefined,
+      { status: "idle" },
+      buildFormData({ botTextColor: "#111827", visitorTextColor: "#fefce8" })
+    );
+
+    expect(state.status).toBe("saved");
+    if (state.status === "saved") {
+      expect(state.settings.botTextColor).toBe("#111827");
+      expect(state.settings.visitorTextColor).toBe("#fefce8");
+    }
+    expect(JSON.parse(adminApiFetchMock.mock.calls[0][1].body)).toMatchObject({
+      bot_text_color: "#111827",
+      visitor_text_color: "#fefce8",
+    });
+  });
+
+  it("sends blank text colors as null (back to the widget's default colors)", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          greeting: null, business_hours: null, escalation_policy: null, tone: null,
+          answer_threshold: 0.7, escalate_threshold: 0.4, turn_cap: 7,
+          low_confidence_streak_cap: 7, llm_provider: null, llm_model: null,
+        },
+        200
+      )
+    );
+
+    await saveSettings(undefined, { status: "idle" }, buildFormData({ botTextColor: "", visitorTextColor: "" }));
+
+    expect(JSON.parse(adminApiFetchMock.mock.calls[0][1].body)).toMatchObject({
+      bot_text_color: null,
+      visitor_text_color: null,
+    });
+  });
+
+  it.each(["botTextColor", "visitorTextColor"])(
+    "rejects a non-hex %s client-side without calling adminApiFetch",
+    async (field) => {
+      const state = await saveSettings(undefined, { status: "idle" }, buildFormData({ [field]: "red" }));
+
+      expect(state.status).toBe("error");
+      if (state.status === "error") {
+        expect(state.fieldErrors[field as "botTextColor" | "visitorTextColor"]).toMatch(/hex color/i);
+      }
+      expect(adminApiFetchMock).not.toHaveBeenCalled();
+    }
+  );
+
   it("rejects an invalid launcher position client-side without calling adminApiFetch", async () => {
     const state = await saveSettings(
       undefined,

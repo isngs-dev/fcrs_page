@@ -46,6 +46,8 @@ class AdminBotSettingsRequest(BaseModel):
     accent_color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     launcher_position: Literal["left", "right"] | None = None
     suggested_questions: list[str] | None = Field(default=None, max_length=5)
+    bot_text_color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    visitor_text_color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     # Tier 2: the turn-count cap is now settable from this same screen.
     # `None` (the default, e.g. an admin-web submission that omits it) means
     # "leave it as-is" -- `_put_settings` below only touches
@@ -92,6 +94,8 @@ class AdminBotSettingsResponse(BaseModel):
     accent_color: str | None
     launcher_position: str | None
     suggested_questions: list[str] | None
+    bot_text_color: str | None
+    visitor_text_color: str | None
     answer_threshold: float
     escalate_threshold: float
     turn_cap: int
@@ -113,6 +117,8 @@ def _to_response(settings: BotSettings) -> AdminBotSettingsResponse:
         accent_color=settings.accent_color,
         launcher_position=settings.launcher_position,
         suggested_questions=settings.suggested_questions,
+        bot_text_color=settings.bot_text_color,
+        visitor_text_color=settings.visitor_text_color,
         answer_threshold=settings.answer_threshold,
         escalate_threshold=settings.escalate_threshold,
         turn_cap=settings.turn_cap,
@@ -164,6 +170,8 @@ async def _put_settings(
         accent_color=body.accent_color,
         launcher_position=body.launcher_position,
         suggested_questions=body.suggested_questions,
+        bot_text_color=body.bot_text_color,
+        visitor_text_color=body.visitor_text_color,
     )
 
     if body.turn_cap is not None or body.low_confidence_streak_cap is not None:

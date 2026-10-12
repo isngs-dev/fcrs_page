@@ -122,6 +122,8 @@ class _StubDatabase:
                 accent_color,
                 launcher_position,
                 suggested_questions,
+                bot_text_color,
+                visitor_text_color,
             ) = args
             self._bot_settings[tenant_id] = {
                 "greeting": greeting, "business_hours": business_hours,
@@ -133,6 +135,8 @@ class _StubDatabase:
                 "accent_color": accent_color,
                 "launcher_position": launcher_position,
                 "suggested_questions": suggested_questions,
+                "bot_text_color": bot_text_color,
+                "visitor_text_color": visitor_text_color,
             }
             return "INSERT 0 1"
         if q.startswith("INSERT INTO AUDIT_EVENTS"):
@@ -348,6 +352,8 @@ async def test_platform_admin_workspace_labels_only_change_the_target_tenant(
         "accent_color": None,
         "launcher_position": None,
         "suggested_questions": None,
+        "bot_text_color": None,
+        "visitor_text_color": None,
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         token = _token(Role.PLATFORM_ADMIN, subject="pa-1")

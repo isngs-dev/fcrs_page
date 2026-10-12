@@ -46,6 +46,8 @@ class BotSettings:
     accent_color: str | None
     launcher_position: str | None
     suggested_questions: list[str] | None
+    bot_text_color: str | None
+    visitor_text_color: str | None
     answer_threshold: float
     escalate_threshold: float
     turn_cap: int
@@ -77,7 +79,7 @@ async def get_bot_settings(db: Database, claims: AuthClaims) -> BotSettings:
     settings_row = await db.fetchrow(
         "SELECT greeting, business_hours, escalation_policy, tone, launcher_label, "
         "sidebar_workspace_label, dashboard_title, bot_name, accent_color, "
-        "launcher_position, suggested_questions "
+        "launcher_position, suggested_questions, bot_text_color, visitor_text_color "
         "FROM tenant_bot_settings WHERE tenant_id = $1",
         claims.tenant_id,
     )
@@ -113,6 +115,10 @@ async def get_bot_settings(db: Database, claims: AuthClaims) -> BotSettings:
         suggested_questions=(
             settings_row["suggested_questions"] if settings_row is not None else None
         ),
+        bot_text_color=settings_row["bot_text_color"] if settings_row is not None else None,
+        visitor_text_color=(
+            settings_row["visitor_text_color"] if settings_row is not None else None
+        ),
         answer_threshold=orchestrator_config.answer_threshold,
         escalate_threshold=orchestrator_config.escalate_threshold,
         turn_cap=orchestrator_config.turn_cap,
@@ -137,6 +143,8 @@ async def upsert_bot_settings(
     accent_color: str | None,
     launcher_position: str | None,
     suggested_questions: list[str] | None,
+    bot_text_color: str | None,
+    visitor_text_color: str | None,
 ) -> None:
     """Insert or update ONLY the qualitative columns for the caller's tenant.
 
@@ -149,13 +157,14 @@ async def upsert_bot_settings(
         "INSERT INTO tenant_bot_settings "
         "(tenant_id, greeting, business_hours, escalation_policy, tone, launcher_label, "
         "sidebar_workspace_label, dashboard_title, bot_name, accent_color, "
-        "launcher_position, suggested_questions) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) "
+        "launcher_position, suggested_questions, bot_text_color, visitor_text_color) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) "
         "ON CONFLICT (tenant_id) DO UPDATE SET "
         "greeting = $2, business_hours = $3, escalation_policy = $4, tone = $5, "
         "launcher_label = $6, sidebar_workspace_label = $7, dashboard_title = $8, "
         "bot_name = $9, accent_color = $10, launcher_position = $11, "
-        "suggested_questions = $12, updated_at = now()",
+        "suggested_questions = $12, bot_text_color = $13, visitor_text_color = $14, "
+        "updated_at = now()",
         claims.tenant_id,
         greeting,
         business_hours,
@@ -168,4 +177,6 @@ async def upsert_bot_settings(
         accent_color,
         launcher_position,
         suggested_questions,
+        bot_text_color,
+        visitor_text_color,
     )

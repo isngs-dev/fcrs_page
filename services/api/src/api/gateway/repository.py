@@ -41,6 +41,8 @@ class WidgetBranding:
     accent_color: str | None
     launcher_position: str | None
     suggested_questions: list[str] | None
+    bot_text_color: str | None = None
+    visitor_text_color: str | None = None
 
 
 async def get_tenant_by_client_key(db: Database, client_key: str) -> Row | None:
@@ -104,11 +106,12 @@ async def get_widget_branding(db: Database, tenant_id: str) -> WidgetBranding:
     """Read a resolved tenant's optional widget branding during admission.
 
     Same pre-auth, unscoped-by-``AuthClaims`` reasoning as ``get_launcher_label``
-    -- bundled into one query since all four fields are needed on every
-    session mint.
+    -- bundled into one query since every field is needed on every session
+    mint.
     """
     row = await db.fetchrow(
-        "SELECT bot_name, accent_color, launcher_position, suggested_questions "
+        "SELECT bot_name, accent_color, launcher_position, suggested_questions, "
+        "bot_text_color, visitor_text_color "
         "FROM tenant_bot_settings WHERE tenant_id = $1",
         tenant_id,
     )
@@ -126,4 +129,10 @@ async def get_widget_branding(db: Database, tenant_id: str) -> WidgetBranding:
         suggested_questions=(
             suggested_questions if isinstance(suggested_questions, list) else None
         ),
+        bot_text_color=_str_or_none(row["bot_text_color"]),
+        visitor_text_color=_str_or_none(row["visitor_text_color"]),
     )
+
+
+def _str_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) else None

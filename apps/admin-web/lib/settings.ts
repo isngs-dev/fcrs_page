@@ -22,6 +22,8 @@ export interface BotSettings {
   accentColor: string | null;
   launcherPosition: "left" | "right" | null;
   suggestedQuestions: string[] | null;
+  botTextColor: string | null;
+  visitorTextColor: string | null;
   businessHours: Record<string, unknown> | null;
   escalationPolicy: string | null;
   tone: string | null;
@@ -42,6 +44,8 @@ interface AdminBotSettingsResponseBody {
   accent_color: string | null;
   launcher_position: "left" | "right" | null;
   suggested_questions: string[] | null;
+  bot_text_color?: string | null;
+  visitor_text_color?: string | null;
   business_hours: Record<string, unknown> | null;
   escalation_policy: string | null;
   tone: string | null;
@@ -67,6 +71,8 @@ function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
     accentColor: body.accent_color ?? null,
     launcherPosition: body.launcher_position ?? null,
     suggestedQuestions: body.suggested_questions ?? null,
+    botTextColor: body.bot_text_color ?? null,
+    visitorTextColor: body.visitor_text_color ?? null,
     businessHours: body.business_hours,
     escalationPolicy: body.escalation_policy,
     tone: body.tone,

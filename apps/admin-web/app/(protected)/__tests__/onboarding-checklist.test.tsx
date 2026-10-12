@@ -20,6 +20,8 @@ const BLANK_SETTINGS: BotSettings = {
   accentColor: null,
   launcherPosition: null,
   suggestedQuestions: null,
+  botTextColor: null,
+  visitorTextColor: null,
   businessHours: null,
   escalationPolicy: null,
   tone: null,

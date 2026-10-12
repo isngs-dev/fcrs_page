@@ -15,6 +15,18 @@
 import { z } from "zod";
 import type { BotSettings } from "@/lib/settings";
 
+/** Blank -> undefined (the widget's built-in color); otherwise a #rrggbb hex. */
+function optionalHexColor(label: string) {
+  return z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined))
+    .refine((value) => value === undefined || /^#[0-9a-fA-F]{6}$/.test(value), {
+      message: `${label} must be a hex color like #1e293b.`,
+    });
+}
+
 export const settingsFormSchema = z.object({
   greeting: z
     .string()
@@ -68,6 +80,8 @@ export const settingsFormSchema = z.object({
   // separately by `parseSuggestedQuestions` (mirrors `businessHoursText`'s
   // own split between raw form field and a pure parser).
   suggestedQuestionsText: z.string(),
+  botTextColor: optionalHexColor("Bot text color"),
+  visitorTextColor: optionalHexColor("Visitor text color"),
   escalationPolicy: z
     .string()
     .trim()
@@ -232,6 +246,8 @@ export interface SettingsFieldValues {
   accentColor: string;
   launcherPosition: string;
   suggestedQuestionsText: string;
+  botTextColor: string;
+  visitorTextColor: string;
   businessHoursText: string;
   escalationPolicy: string;
   tone: string;
@@ -253,6 +269,8 @@ export function fieldValuesFromSettings(settings: BotSettings): SettingsFieldVal
     accentColor: settings.accentColor ?? "",
     launcherPosition: settings.launcherPosition ?? "",
     suggestedQuestionsText: stringifySuggestedQuestions(settings.suggestedQuestions),
+    botTextColor: settings.botTextColor ?? "",
+    visitorTextColor: settings.visitorTextColor ?? "",
     businessHoursText: stringifyBusinessHours(settings.businessHours),
     escalationPolicy: settings.escalationPolicy ?? "",
     tone: settings.tone ?? "",

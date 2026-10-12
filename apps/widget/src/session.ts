@@ -41,6 +41,9 @@ const SessionResponseSchema = z.object({
   accent_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   launcher_position: z.enum(["left", "right"]).optional(),
   suggested_questions: z.array(z.string().max(200)).max(5).optional(),
+  // Hex only: these land in the widget's CSS custom properties.
+  bot_text_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  visitor_text_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   // AI voice confirmation call switched on for this chatbot -- absent -> false.
   voice_call_enabled: z.boolean().optional(),
   // AI voice agent ("Call Us") on for this chatbot -- absent -> false.
@@ -55,6 +58,8 @@ export interface VisitorSession {
   accentColor?: string;
   launcherPosition?: "left" | "right";
   suggestedQuestions?: string[];
+  botTextColor?: string;
+  visitorTextColor?: string;
 }
 
 /** The typed shape of the backend's central error envelope. */
@@ -289,6 +294,10 @@ export async function mintVisitorSession(config: WidgetConfig): Promise<Admissio
     ...(parsed.data.suggested_questions === undefined
       ? {}
       : { suggestedQuestions: parsed.data.suggested_questions }),
+    ...(parsed.data.bot_text_color === undefined ? {} : { botTextColor: parsed.data.bot_text_color }),
+    ...(parsed.data.visitor_text_color === undefined
+      ? {}
+      : { visitorTextColor: parsed.data.visitor_text_color }),
   };
 
   // SR-3 decision 8: a fresh mint (as opposed to a hydrated resume) resets

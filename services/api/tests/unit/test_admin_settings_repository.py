@@ -83,6 +83,8 @@ async def test_get_bot_settings_merges_row_orchestrator_and_llm_config() -> None
             "accent_color": "#16a34a",
             "launcher_position": "left",
             "suggested_questions": ["Do you serve my area?"],
+            "bot_text_color": "#111827",
+            "visitor_text_color": "#fefce8",
         },
         {"provider": "anthropic", "model": "claude-sonnet"},
     ]
@@ -100,6 +102,8 @@ async def test_get_bot_settings_merges_row_orchestrator_and_llm_config() -> None
     assert result.accent_color == "#16a34a"
     assert result.launcher_position == "left"
     assert result.suggested_questions == ["Do you serve my area?"]
+    assert result.bot_text_color == "#111827"
+    assert result.visitor_text_color == "#fefce8"
     assert result.answer_threshold == 0.8
     assert result.escalate_threshold == 0.3
     assert result.turn_cap == 6
@@ -125,6 +129,8 @@ async def test_get_bot_settings_no_row_yet_qualitative_fields_none_thresholds_po
     assert result.accent_color is None
     assert result.launcher_position is None
     assert result.suggested_questions is None
+    assert result.bot_text_color is None
+    assert result.visitor_text_color is None
     assert result.answer_threshold == 0.8
     assert result.escalate_threshold == 0.3
     assert result.turn_cap == 6
@@ -174,6 +180,8 @@ async def test_upsert_bot_settings_binds_on_conflict_upsert_qualitative_only() -
         accent_color="#16a34a",
         launcher_position="left",
         suggested_questions=["Do you serve my area?"],
+        bot_text_color="#111827",
+        visitor_text_color="#fefce8",
     )
 
     assert len(db.calls) == 1
@@ -193,6 +201,9 @@ async def test_upsert_bot_settings_binds_on_conflict_upsert_qualitative_only() -
     assert "#16a34a" in params
     assert "left" in params
     assert ["Do you serve my area?"] in params
+    assert "#111827" in params
+    assert "#fefce8" in params
+    assert "bot_text_color" in query and "visitor_text_color" in query
 
     # No threshold/provider param anywhere in the captured SQL/params.
     assert "answer_threshold" not in query
@@ -221,6 +232,8 @@ async def test_upsert_bot_settings_rejects_global_caller() -> None:
             accent_color=None,
             launcher_position=None,
             suggested_questions=None,
+            bot_text_color=None,
+            visitor_text_color=None,
         )
 
     assert exc_info.value.code == "GLOBAL_CALLER_NOT_PERMITTED"

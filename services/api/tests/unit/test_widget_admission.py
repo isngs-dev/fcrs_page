@@ -85,6 +85,8 @@ class _StubDatabase:
                     "accent_color": row.get("accent_color"),
                     "launcher_position": row.get("launcher_position"),
                     "suggested_questions": row.get("suggested_questions"),
+                    "bot_text_color": row.get("bot_text_color"),
+                    "visitor_text_color": row.get("visitor_text_color"),
                 }
                 if row is not None
                 else None
@@ -478,8 +480,8 @@ async def test_widget_session_branding_fields_are_tenant_isolated() -> None:
     multi-tenant isolation coverage, CLAUDE.md Sec.3)."""
     app = _build_app(
         bot_settings={
-            _TENANT_A_ID: {"bot_name": "Aria", "accent_color": "#16a34a"},
-            _TENANT_B_ID: {"bot_name": "Nova", "accent_color": "#dc2626"},
+            _TENANT_A_ID: {"bot_name": "Aria", "accent_color": "#16a34a", "bot_text_color": "#111827"},
+            _TENANT_B_ID: {"bot_name": "Nova", "accent_color": "#dc2626", "bot_text_color": "#7c2d12"},
         },
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -495,6 +497,7 @@ async def test_widget_session_branding_fields_are_tenant_isolated() -> None:
     assert body["accent_color"] == "#16a34a"
     assert body["bot_name"] != "Nova"
     assert body["accent_color"] != "#dc2626"
+    assert body["bot_text_color"] == "#111827"
 
 
 async def test_widget_session_echoes_configured_branding_fields() -> None:
@@ -505,6 +508,8 @@ async def test_widget_session_echoes_configured_branding_fields() -> None:
                 "accent_color": "#16a34a",
                 "launcher_position": "left",
                 "suggested_questions": ["Do you serve my area?", "How much does it cost?"],
+                "bot_text_color": "#111827",
+                "visitor_text_color": "#fefce8",
             },
         },
     )
@@ -521,6 +526,8 @@ async def test_widget_session_echoes_configured_branding_fields() -> None:
     assert body["accent_color"] == "#16a34a"
     assert body["launcher_position"] == "left"
     assert body["suggested_questions"] == ["Do you serve my area?", "How much does it cost?"]
+    assert body["bot_text_color"] == "#111827"
+    assert body["visitor_text_color"] == "#fefce8"
 
 
 async def test_widget_session_omits_branding_fields_when_tenant_has_none() -> None:
@@ -538,6 +545,8 @@ async def test_widget_session_omits_branding_fields_when_tenant_has_none() -> No
     assert "accent_color" not in body
     assert "launcher_position" not in body
     assert "suggested_questions" not in body
+    assert "bot_text_color" not in body
+    assert "visitor_text_color" not in body
 
 
 async def test_widget_branding_repository_query_is_tenant_scoped_and_parameterized() -> None:
@@ -556,6 +565,8 @@ async def test_widget_branding_repository_query_is_tenant_scoped_and_parameteriz
                 "accent_color": "#16a34a",
                 "launcher_position": "left",
                 "suggested_questions": ["Q1"],
+                "bot_text_color": "#111827",
+                "visitor_text_color": "#fefce8",
             }
 
     db = _RecordingDatabase()
@@ -564,6 +575,8 @@ async def test_widget_branding_repository_query_is_tenant_scoped_and_parameteriz
     assert branding.accent_color == "#16a34a"
     assert branding.launcher_position == "left"
     assert branding.suggested_questions == ["Q1"]
+    assert branding.bot_text_color == "#111827"
+    assert branding.visitor_text_color == "#fefce8"
     assert "WHERE tenant_id = $1" in db.query
     assert db.args == (_TENANT_A_ID,)
 

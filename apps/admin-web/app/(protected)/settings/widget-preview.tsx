@@ -17,6 +17,12 @@
 const FALLBACK_BOT_NAME = "Your Assistant";
 const FALLBACK_GREETING = "Hi! How can I help you today?";
 const FALLBACK_LAUNCHER_LABEL = "Chat with us";
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/** Inline `color` only for a complete hex -- a half-typed value keeps the default. */
+function textColorStyle(color: string): { color: string } | undefined {
+  return HEX_COLOR.test(color.trim()) ? { color: color.trim() } : undefined;
+}
 
 export function WidgetPreview({
   greeting,
@@ -26,6 +32,8 @@ export function WidgetPreview({
   accentColor = "",
   launcherPosition = "right",
   suggestedQuestions = [],
+  botTextColor = "",
+  visitorTextColor = "",
 }: {
   greeting: string;
   tone: string;
@@ -37,6 +45,8 @@ export function WidgetPreview({
   accentColor?: string;
   launcherPosition?: "left" | "right";
   suggestedQuestions?: string[];
+  botTextColor?: string;
+  visitorTextColor?: string;
 }) {
   const displayGreeting = greeting.trim().length > 0 ? greeting : FALLBACK_GREETING;
   const displayLauncherLabel =
@@ -98,6 +108,24 @@ export function WidgetPreview({
               ))}
             </div>
           ) : null}
+        </div>
+
+        {/* Sample exchange -- shows the bot/visitor text colors. */}
+        <div className="flex flex-col gap-2 bg-secondary px-[15px] pb-[15px]">
+          <p
+            className="max-w-[80%] self-end rounded-[12px] rounded-tr-[4px] bg-primary px-3 py-2 text-[11.5px] text-primary-foreground"
+            style={{ ...accentStyle, ...textColorStyle(visitorTextColor) }}
+            data-testid="widget-preview-visitor-bubble"
+          >
+            Do you serve my area?
+          </p>
+          <p
+            className="max-w-[85%] self-start rounded-[12px] rounded-tl-[4px] border border-border bg-card px-3 py-2 text-[11.5px] text-foreground"
+            style={textColorStyle(botTextColor)}
+            data-testid="widget-preview-bot-bubble"
+          >
+            Yes, we cover the whole metro area.
+          </p>
         </div>
 
         {/* Composer */}

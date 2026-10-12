@@ -890,12 +890,16 @@ describe("ChatWidget", () => {
               expiresAt="2026-07-16T12:30:00Z"
               accentColor="#16a34a"
               launcherPosition="left"
+              botTextColor="#111827"
+              visitorTextColor="#fefce8"
             />,
           );
         });
 
         expect(host.style.getPropertyValue("--cw-citron")).toBe("#16a34a");
         expect(host.getAttribute("data-position")).toBe("left");
+        expect(host.style.getPropertyValue("--cw-bot-text")).toBe("#111827");
+        expect(host.style.getPropertyValue("--cw-visitor-text")).toBe("#fefce8");
       } finally {
         act(() => {
           shadowReactRoot.unmount();
@@ -921,6 +925,8 @@ describe("ChatWidget", () => {
 
         expect(host.style.getPropertyValue("--cw-citron")).toBe("");
         expect(host.hasAttribute("data-position")).toBe(false);
+        expect(host.style.getPropertyValue("--cw-bot-text")).toBe("");
+        expect(host.style.getPropertyValue("--cw-visitor-text")).toBe("");
       } finally {
         act(() => {
           shadowReactRoot.unmount();
@@ -928,6 +934,11 @@ describe("ChatWidget", () => {
         host.remove();
       }
     });
+  });
+
+  it("colors bot and visitor bubble text from the tenant's text colors, with the built-in defaults as fallback", () => {
+    expect(widgetCss).toMatch(/\.cw-bubble-bot \{[^}]*color: var\(--cw-bot-text, var\(--cw-text-secondary\)\)/);
+    expect(widgetCss).toMatch(/\.cw-bubble-user \{[^}]*color: var\(--cw-visitor-text, var\(--cw-paper\)\)/);
   });
 
   it("ships a self-contained floating Rebecca panel CSS contract", () => {

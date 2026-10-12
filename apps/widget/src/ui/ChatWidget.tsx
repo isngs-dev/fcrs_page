@@ -171,6 +171,9 @@ export interface ChatWidgetProps {
   accentColor?: string;
   launcherPosition?: "left" | "right";
   suggestedQuestions?: string[];
+  /** Text color of the bot's reply bubbles / the visitor's own bubbles. */
+  botTextColor?: string;
+  visitorTextColor?: string;
   /** SR-3 decision 4: seeds the conversation thread from a resumed
    * sessionStorage record's `conversationId`. `null` on a fresh boot (no
    * resume in play) -- unchanged S14.2 behavior. */
@@ -369,6 +372,8 @@ export function ChatWidget({
   accentColor,
   launcherPosition,
   suggestedQuestions,
+  botTextColor,
+  visitorTextColor,
   resumeConversationId = null,
 }: ChatWidgetProps) {
   const resolvedBotName = botName?.trim() ? botName.trim() : tts.DEFAULT_BOT_NAME;
@@ -617,7 +622,13 @@ export function ChatWidget({
     if (launcherPosition) {
       host.setAttribute("data-position", launcherPosition);
     }
-  }, [accentColor, launcherPosition]);
+    if (botTextColor) {
+      host.style.setProperty("--cw-bot-text", botTextColor);
+    }
+    if (visitorTextColor) {
+      host.style.setProperty("--cw-visitor-text", visitorTextColor);
+    }
+  }, [accentColor, launcherPosition, botTextColor, visitorTextColor]);
 
   // "Hear it back": speak each new bot reply once, gated on !muted AND on
   // voice mode -- typing a message never triggers spoken output, only

@@ -126,6 +126,10 @@ async def widget_session(
         response["launcher_position"] = branding.launcher_position
     if branding.suggested_questions is not None:
         response["suggested_questions"] = branding.suggested_questions
+    if branding.bot_text_color is not None:
+        response["bot_text_color"] = branding.bot_text_color
+    if branding.visitor_text_color is not None:
+        response["visitor_text_color"] = branding.visitor_text_color
     return response
 
 

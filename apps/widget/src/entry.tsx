@@ -118,6 +118,12 @@ async function boot(): Promise<void> {
       {...(admission.session.accentColor === undefined
         ? {}
         : { accentColor: admission.session.accentColor })}
+      {...(admission.session.botTextColor === undefined
+        ? {}
+        : { botTextColor: admission.session.botTextColor })}
+      {...(admission.session.visitorTextColor === undefined
+        ? {}
+        : { visitorTextColor: admission.session.visitorTextColor })}
       {...(admission.session.launcherPosition === undefined
         ? {}
         : { launcherPosition: admission.session.launcherPosition })}
