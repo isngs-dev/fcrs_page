@@ -67,6 +67,8 @@ Error generating stack: `+y.message+`
      both with readable values for a tenant accent (ui/contrast.ts). */
   --cw-on-citron: var(--cw-paper);
   --cw-citron-text: var(--cw-citron);
+  /* Hover shade of the accent itself (default blue -> ~#1d4ed8). */
+  --cw-citron-hover: color-mix(in srgb, var(--cw-citron) 85%, black);
   --cw-paper: #ffffff;
   --cw-cool-paper: #f8fafc;
   --cw-line: #e5e7eb;
@@ -119,7 +121,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   animation: cw-launcher-pop 300ms ease-out;
   transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
 }
-.cw-placeholder:hover { background: #1d4ed8; box-shadow: 0 16px 34px -8px rgba(37, 99, 235, .7); }
+.cw-placeholder:hover { background: var(--cw-citron-hover); box-shadow: 0 16px 34px -8px rgba(37, 99, 235, .7); }
 .cw-placeholder:active { transform: scale(0.97); }
 .cw-placeholder[aria-expanded="true"] { visibility: hidden; opacity: 0; pointer-events: none; }
 .cw-launcher-orb {
@@ -137,7 +139,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-launcher-label {
   min-width: 0;
   overflow: hidden;
-  color: var(--cw-paper);
+  color: var(--cw-on-citron);
   font-size: 15.5px;
   font-weight: 600;
   line-height: 1;
@@ -272,7 +274,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-confirm-close-no { border: 1px solid #d8dce2; background: var(--cw-paper); color: var(--cw-text-secondary); }
 .cw-confirm-close-no:hover { background: var(--cw-cool-paper); }
 .cw-confirm-close-yes { border: 1px solid var(--cw-citron); background: var(--cw-citron); color: var(--cw-on-citron); }
-.cw-confirm-close-yes:hover { background: #1d4ed8; border-color: #1d4ed8; }
+.cw-confirm-close-yes:hover { background: var(--cw-citron-hover); border-color: var(--cw-citron-hover); }
 
 /* Offline / connection-status banner — #fff9ec/#f0e2bd/#6a4e00 + bordered "Retry now" pill */
 .cw-status { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-bottom: 1px solid var(--cw-warning-line); background: var(--cw-warning-bg); color: var(--cw-warning-ink); font-size: 12px; }
@@ -368,7 +370,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-handoff-talk { border: 1px solid var(--cw-citron); background: var(--cw-citron); color: var(--cw-on-citron); }
 .cw-handoff-stay { border: 1px solid #d8dce2; background: var(--cw-paper); color: #475569; }
 .cw-handoff-stay-selected, .cw-handoff-stay-selected:disabled { border: 2px solid #e59500; color: #475569; opacity: 1; }
-.cw-handoff-talk:hover:not(:disabled) { background: #1d4ed8; border-color: #1d4ed8; }
+.cw-handoff-talk:hover:not(:disabled) { background: var(--cw-citron-hover); border-color: var(--cw-citron-hover); }
 .cw-handoff-stay:hover:not(:disabled) { border-color: #e59500; background: #fffbeb; }
 .cw-handoff-talk:disabled, .cw-handoff-stay:disabled { cursor: default; opacity: .66; }
 .cw-handoff-talk:focus-visible, .cw-handoff-stay:focus-visible { outline: 3px solid var(--cw-focus); outline-offset: 2px; }
@@ -439,11 +441,11 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
    bigger and centered rather than sitting beside a now-absent input field. */
 .cw-composer-voice-only { justify-content: center; padding: 8px; }
 .cw-composer-voice-only .cw-voice-button { width: 56px; height: 56px; border-radius: 50%; background: var(--cw-citron); color: var(--cw-on-citron); }
-.cw-composer-voice-only .cw-voice-button:hover { background: #1d4ed8; }
+.cw-composer-voice-only .cw-voice-button:hover { background: var(--cw-citron-hover); }
 .cw-composer-voice-only .cw-voice-button-active { background: #dc2626; color: #fff; }
 .cw-composer-voice-only .cw-voice-button svg { width: 22px; height: 22px; }
 .cw-send-button svg { width: 16px; height: 16px; }
-.cw-send-button:hover:not(:disabled) { background: #1d4ed8; }
+.cw-send-button:hover:not(:disabled) { background: var(--cw-citron-hover); }
 .cw-stop-button { background: #111827; }
 .cw-stop-button:hover:not(:disabled) { background: #374151; }
 .cw-send-button:active:not(:disabled) { transform: scale(.95); }
@@ -520,7 +522,9 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   cursor: pointer;
   transition: background 160ms ease;
 }
-.cw-lead-submit:hover:not(:disabled), .cw-sched-confirm-button:hover:not(:disabled), .cw-sched-retry:hover { background: #1d4ed8; }
+.cw-lead-submit:hover:not(:disabled), .cw-sched-confirm-button:hover:not(:disabled) { background: var(--cw-citron-hover); }
+/* Dark button with accent text: darken the ink, never swap in the accent. */
+.cw-sched-retry:hover { background: #30312c; }
 .cw-lead-submit:disabled, .cw-sched-confirm-button:disabled { background: var(--cw-line); color: var(--cw-dim); cursor: not-allowed; }
 .cw-lead-confirmation, .cw-sched-confirmation { margin-top: 10px; padding: 10px 0 0; border-top: 1px dashed var(--cw-line); color: var(--cw-success); font-size: 12px; font-weight: 650; }
 

@@ -976,6 +976,14 @@ describe("ChatWidget", () => {
     }
     expect(widgetCss).toMatch(/\.cw-quick-action \{[^}]*; color: var\(--cw-citron-text\)/);
     expect(widgetCss).toMatch(/\.cw-suggestion-icon \{[^}]*color: var\(--cw-citron-text\)/);
+    // Text nested inside an accent surface must not pin its own white either
+    // (the launcher label did, so "Ask Rene" stayed white on a cream accent).
+    expect(widgetCss).toMatch(/\.cw-launcher-label \{[^}]*color: var\(--cw-on-citron\)/);
+    // Accent buttons darken their OWN accent on hover -- never a fixed blue,
+    // which turned a cream button blue under its dark text.
+    expect(widgetCss).not.toMatch(/background: #1d4ed8/);
+    expect(widgetCss).toMatch(/--cw-citron-hover: color-mix\(in srgb, var\(--cw-citron\) 85%, black\)/);
+    expect(widgetCss).toMatch(/\.cw-placeholder:hover \{ background: var\(--cw-citron-hover\)/);
     expect(widgetCss).toMatch(/--cw-on-citron: var\(--cw-paper\)/);
     expect(widgetCss).toMatch(/--cw-citron-text: var\(--cw-citron\)/);
   });
