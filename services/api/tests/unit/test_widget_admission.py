@@ -13,6 +13,7 @@ import datetime as _dt
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from common.auth import AuthClaims, Role
 from common.cache import InMemoryCache
 from httpx import ASGITransport, AsyncClient
@@ -647,3 +648,38 @@ async def test_widget_whoami_expired_token() -> None:
         )
     assert resp.status_code == 401
     assert resp.json()["error_code"] == "UNAUTHENTICATED"
+
+
+async def test_rejected_request_body_is_logged_without_the_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A body FastAPI rejects (422) used to leave no log line at all -- a
+    booking that failed on a name typed into the email box was invisible in
+    `docker logs`. It now logs WHICH field failed and why, but never the value
+    (often PII: a name, an email)."""
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    app = _build_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        response = await c.post(
+            "/widget/session",
+            json={"client_key": {"typed": "Sainath-private-value"}},
+            headers={"Origin": "http://localhost:3000"},
+        )
+
+    # The reply is unchanged: FastAPI's own {"detail": [...]} shape.
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "client_key"]
+
+    logged = [r for r in caplog.records if getattr(r, "event", None) == "request_validation_error"]
+    assert len(logged) == 1
+    record = logged[0]
+    assert record.levelno == logging.WARNING
+    assert "body.client_key" in record.reason  # type: ignore[attr-defined]
+    assert "string_type" in record.reason  # type: ignore[attr-defined]
+    assert record.endpoint == "/widget/session"  # type: ignore[attr-defined]
+    assert record.status_code == 422  # type: ignore[attr-defined]
+    for any_record in caplog.records:
+        assert "Sainath-private-value" not in any_record.getMessage()
+        assert "Sainath-private-value" not in str(vars(any_record))

@@ -18,6 +18,8 @@ from common.logging import get_logger, log_context
 from common.pgvector import register_vector_init
 from common.ratelimit import build_rate_limiter
 from fastapi import FastAPI, Request, Response
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from api.config import ApiSettings, get_api_settings
@@ -174,6 +176,33 @@ def create_app() -> FastAPI:
             extra={"status_code": exc.http_status, "event": "app_error"},
         )
         return _error_response(exc, cid)
+
+    # -- FastAPI's own request validation (422) ---------------------------------
+    # These bypass the AppException handler, so a rejected body used to leave
+    # no log line at all. Log WHICH fields failed and why -- locations and
+    # error types only: the values (and some messages, e.g. "invalid IANA
+    # timezone: <value>") can be visitor PII. The reply is FastAPI's own,
+    # unchanged, so nothing that reads `detail` breaks.
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_handler(
+        request: Request, exc: RequestValidationError,
+    ) -> Response:
+        reason = "; ".join(
+            ".".join(str(part) for part in error.get("loc", ()))
+            + f": {error.get('type', 'invalid')}"
+            for error in exc.errors()
+        )
+        _log.warning(
+            "request validation failed",
+            extra={
+                "event": "request_validation_error",
+                "reason": reason,
+                "endpoint": request.url.path,
+                "method": request.method,
+                "status_code": 422,
+            },
+        )
+        return await request_validation_exception_handler(request, exc)
 
     # -- Routers ---------------------------------------------------------------
     from api.accounts.admin_routes import router as accounts_admin_router
