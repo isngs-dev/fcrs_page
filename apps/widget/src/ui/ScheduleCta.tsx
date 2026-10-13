@@ -302,6 +302,15 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   const callOn = isVoiceCallEnabled();
   const consentText = callOn ? SCHEDULE_CALL_CONSENT_TEXT : SCHEDULE_CONSENT_TEXT;
   const phoneOk = !callOn || phone.replace(/\D/g, "").length >= 10;
+  // A name typed into the email box used to reach the server and come back
+  // as a generic "couldn't confirm" -- check the shape here and say so.
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const emailRequired = summary !== undefined || prefill !== undefined;
+  const emailBlocksBooking = email.trim() === "" ? emailRequired : !emailOk;
+  const emailHint =
+    email.trim() !== "" && !emailOk ? (
+      <p className="cw-sched-field-hint" role="alert">Please enter a valid email address.</p>
+    ) : null;
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [lastLoadedSlots, setLastLoadedSlots] = useState<Slot[]>([]);
@@ -668,9 +677,10 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
           </div>
           {prefill?.reschedule && <p className="cw-sched-reschedule-note">This replaces your current booking.</p>}
 
+          <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} required aria-label="Name" placeholder="Name" autoComplete="name" />
           <label className="cw-sched-email-label" htmlFor="cw-sched-email">Where should we send the invite?</label>
           <input id="cw-sched-email" className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
-          <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} required aria-label="Name" placeholder="Name" autoComplete="name" />
+          {emailHint}
           <input
             className="cw-input cw-sched-phone-input"
             type="tel"
@@ -712,7 +722,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             <button
               type="button"
               className="cw-sched-confirm-button"
-              disabled={!consentChecked || !email.trim() || !name.trim() || !phoneOk || submitting}
+              disabled={!consentChecked || emailBlocksBooking || !name.trim() || !phoneOk || submitting}
               onClick={() => void confirmBooking(step.slot)}
             >
               {submitting ? "Booking…" : "Confirm booking"}
@@ -733,8 +743,9 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
         {(prefill || callOn) && (
           <>
             {/* Details the visitor typed in chat -- shown so they can check or fix them. */}
-            <input className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
             <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} aria-label="Name" placeholder="Name" autoComplete="name" />
+            <input className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
+            {emailHint}
             {(callOn || prefill?.phone) && (
               <input className="cw-input cw-sched-phone-input" type="tel" inputMode="numeric" value={phone} onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))} disabled={submitting} required aria-label="Phone" placeholder="(555) 123-4567" autoComplete="tel" />
             )}
@@ -765,7 +776,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
           <button
             type="button"
             className="cw-sched-confirm-button"
-            disabled={!consentChecked || ((summary !== undefined || prefill !== undefined) && !email.trim()) || !phoneOk || submitting}
+            disabled={!consentChecked || emailBlocksBooking || !phoneOk || submitting}
             onClick={() => void confirmBooking(step.slot)}
           >
             {submitting ? "Booking…" : "Confirm"}

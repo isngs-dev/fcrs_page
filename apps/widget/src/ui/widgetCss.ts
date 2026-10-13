@@ -461,6 +461,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 }
 .cw-lead-consent-label, .cw-sched-consent-label { color: #5a5b54; font-size: 11px; line-height: 1.45; }
 .cw-lead-error, .cw-sched-error, .cw-voice-error { padding: 7px 8px; border-radius: 7px; font-size: 11px; }
+.cw-sched-field-hint { margin: -4px 0 0; color: var(--cw-danger-ink); font-size: 11px; }
 .cw-voice-error { margin: 8px 18px 0; }
 
 .cw-lead-submit, .cw-sched-confirm-button {

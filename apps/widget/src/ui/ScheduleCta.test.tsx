@@ -978,6 +978,51 @@ describe("ScheduleCta pre-filled from chat", () => {
     expect(input).toMatchObject({ startsAt: SLOT_A.startsAt, email: "jane@example.com", name: "Jane Smith" });
   });
 
+  it("asks for Name before Email (the order the bot asks for them in chat)", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={PREFILL} />);
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+
+    const fields = [...container.querySelectorAll<HTMLInputElement>(".cw-sched-name-input, .cw-sched-email-input")];
+    expect(fields.map((f) => f.className.includes("name") ? "name" : "email")).toEqual(["name", "email"]);
+  });
+
+  it("won't book a non-email in the email box -- says so instead of a generic server error", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={PREFILL} />);
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+    const emailInput = container.querySelector<HTMLInputElement>(".cw-sched-email-input")!;
+    act(() => {
+      setNativeInputValue(emailInput, "Sainath"); // a name typed into the email box
+    });
+    act(() => {
+      getConsentCheckbox().click();
+    });
+
+    expect(getConfirmButton().disabled).toBe(true);
+    expect(container.querySelector(".cw-sched-field-hint")?.textContent).toMatch(/valid email/i);
+    act(() => {
+      getConfirmButton().click();
+    });
+    expect(bookSlotMock).not.toHaveBeenCalled();
+
+    act(() => {
+      setNativeInputValue(emailInput, "sainath@example.com");
+    });
+    expect(getConfirmButton().disabled).toBe(false);
+    expect(container.querySelector(".cw-sched-field-hint")).toBeNull();
+  });
+
   it("keeps the typed day when it has no openings, and only shows other days on request", async () => {
     fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [] });
     fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
