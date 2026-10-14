@@ -26,11 +26,12 @@ subject, or body.
 """
 from __future__ import annotations
 
+import html
 import re
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formataddr, formatdate, make_msgid
 from typing import Protocol
 from uuid import uuid4
 
@@ -63,7 +64,36 @@ class Notification:
     channel: str             # "email" | "sms" | "whatsapp"
     recipient: str          # the "to" address/number; PII -- never logged
     subject: str            # PII/content -- never logged; ignored for sms/whatsapp
-    body: str                # plain text this sprint; PII/content -- never logged
+    body: str                # plain text (SMTP adds an HTML copy); PII -- never logged
+    # Email only. `from_name` replaces the config's sender name for this one
+    # message (the chatbot's business on the shared platform sender);
+    # `reply_to` sets Reply-To (e.g. the connected calendar's owner).
+    from_name: str | None = None
+    reply_to: str | None = None
+
+
+_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
+def _text_to_html(text: str) -> str:
+    """A minimal HTML twin of a plain-text email: escaped, links clickable,
+    blank lines -> paragraphs. Spam filters score text-only mail worse."""
+    def linkify(block: str) -> str:
+        # Find links in the raw text, then escape each piece on its own.
+        out, last = [], 0
+        for match in _URL_RE.finditer(block):
+            url = html.escape(match.group(0))
+            out += [html.escape(block[last:match.start()]), f'<a href="{url}">{url}</a>']
+            last = match.end()
+        return "".join([*out, html.escape(block[last:])])
+
+    paragraphs = [linkify(block).replace("\n", "<br>\n") for block in text.strip().split("\n\n")]
+    body = "\n".join(f'<p style="margin:0 0 14px">{p}</p>' for p in paragraphs)
+    return (
+        '<!doctype html><html><body style="margin:0;padding:24px;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1e293b">'
+        f"{body}</body></html>"
+    )
 
 
 @dataclass(frozen=True)
@@ -172,19 +202,22 @@ class SmtpEmailProvider:
         return await asyncio.to_thread(self._send_sync, message)
 
     def _send_sync(self, message: Notification) -> DeliveryRef:
-        from_header = (
-            f"{self._from_name} <{self._from_address}>" if self._from_name else self._from_address
-        )
+        # formataddr quotes names with commas etc.; CR/LF are stripped so a
+        # name can never smuggle in extra headers.
+        name = re.sub(r"[\r\n]+", " ", message.from_name or self._from_name or "").strip()
         msg = EmailMessage()
-        msg["From"] = from_header
+        msg["From"] = formataddr((name, self._from_address)) if name else self._from_address
         msg["To"] = message.recipient
         msg["Subject"] = message.subject
+        if message.reply_to:
+            msg["Reply-To"] = message.reply_to
         # Spam filters penalise a missing Date and a Message-Id on a bare
         # container hostname, so stamp both on the sender's own domain.
         message_id = make_msgid(domain=self._from_address.rpartition("@")[2] or None)
         msg["Message-Id"] = message_id
         msg["Date"] = formatdate(usegmt=True)
         msg.set_content(message.body)
+        msg.add_alternative(_text_to_html(message.body), subtype="html")
 
         try:
             with smtplib.SMTP(self._host, self._port, timeout=self._timeout) as smtp:

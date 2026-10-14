@@ -235,6 +235,10 @@ class _StubDatabase:
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         q = query.strip().upper()
+        if "FROM TENANTS" in q:
+            # Business name for the confirmation email; tests opt in via `tenant_names`.
+            name = getattr(self, "tenant_names", {}).get(args[0])
+            return {"id": args[0], "name": name} if name else None
         if "FROM LEADS" in q and "VISITOR_ID = $2" in q:
             tenant_id, visitor_id = args
             matches = [
@@ -939,6 +943,65 @@ async def test_post_book_resolvable_recipient_enqueues_confirmation_and_delays_o
     mock_task.delay.assert_called_once()
     _, delay_kwargs = mock_task.delay.call_args
     assert delay_kwargs["job_id"] == "job-confirm-1"
+
+
+async def test_post_book_confirmation_is_branded_and_personal() -> None:
+    """The visitor's confirmation names the business (subject + sender name) and
+    greets them -- a generic unbranded email from 'Bookings' was landing in spam."""
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    db.tenant_names = {_TENANT_ID: "Acme Roofing"}
+    app = _build_app(db)
+
+    with (
+        patch("api.scheduling.routes.resolve_event_recipient", new=AsyncMock(return_value="jane@example.com")),
+        patch("api.scheduling.routes.enqueue_notification", new=AsyncMock(return_value="job-1")) as mock_enqueue,
+        patch("api.scheduling.routes.send_notification"),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/public/schedule/book", json={**_book_body(), "name": "Jane Smith"},
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    assert response.status_code == 201
+    confirm = mock_enqueue.call_args.kwargs
+    assert confirm["subject"] == "Your call with Acme Roofing is confirmed"
+    assert confirm["body"].startswith("Hi Jane,")
+    assert confirm["payload"]["from_name"] == "Acme Roofing"
+    assert "reply_to" not in confirm["payload"]  # no calendar -> nobody to reply to
+
+
+async def test_post_book_confirmation_replies_go_to_the_calendar_owner() -> None:
+    from api.scheduling.calendar import CalendarRef
+
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    fake_provider = AsyncMock()
+    fake_provider.create_event.return_value = CalendarRef(
+        provider="google", external_id="g-1", meet_url="https://meet.google.com/abc",
+        organizer_email="rep@example.com",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await _configure_calendar(client, _admin_token())
+        with (
+            patch("api.scheduling.routes.calendar_provider_for_async", new=AsyncMock(return_value=fake_provider)),
+            patch("api.scheduling.routes.resolve_event_recipient", new=AsyncMock(return_value="lead@example.com")),
+            patch(
+                "api.scheduling.routes.enqueue_notification",
+                new=AsyncMock(side_effect=["job-visitor", "job-rep"]),
+            ) as mock_enqueue,
+            patch("api.scheduling.routes.send_notification"),
+        ):
+            await client.post(
+                "/public/schedule/book", json=_book_body(),
+                headers={"Authorization": f"Bearer {_visitor_token()}"},
+            )
+
+    visitor_call = mock_enqueue.call_args_list[0].kwargs
+    assert visitor_call["payload"]["reply_to"] == "rep@example.com"
 
 
 async def test_post_book_emails_calendar_organizer_a_rep_notice() -> None:

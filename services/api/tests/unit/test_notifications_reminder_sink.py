@@ -43,6 +43,16 @@ def _contact() -> EventContact:
 
 
 class _StubDatabase:
+    """Answers the business-name lookup (tenants) only; nothing else is read here."""
+
+    def __init__(self, tenant_name: str | None = None) -> None:
+        self._tenant_name = tenant_name
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, object] | None:
+        if "FROM tenants" in query and self._tenant_name:
+            return {"id": args[0], "name": self._tenant_name}
+        return None
+
     async def close(self) -> None:
         pass
 
@@ -187,3 +197,31 @@ def test_reminder_sink_for_unknown_raises_config_error() -> None:
     except ReminderSinkConfigError:
         raised = True
     assert raised
+
+
+async def test_dispatch_brands_the_reminder_with_the_business_and_visitor_name() -> None:
+    """Reminders landed in spam like the old confirmation: generic text from
+    a shared 'Bookings' sender. Same branding as the booking confirmation."""
+    sink = NotificationReminderSink(_StubDatabase(tenant_name="Acme Roofing"))  # type: ignore[arg-type]
+    contact = EventContact(
+        lead_id=None, visitor_id="visitor-1", timezone="UTC", starts_at=_NOW, status="booked",
+        name="Jane Smith",
+    )
+    with (
+        patch(
+            "api.notifications.reminder_sink.resolve_event_recipient",
+            AsyncMock(return_value="jane@example.com"),
+        ),
+        patch("api.notifications.reminder_sink.get_event_contact", AsyncMock(return_value=contact)),
+        patch(
+            "api.notifications.reminder_sink.enqueue_notification",
+            AsyncMock(return_value="job-1"),
+        ) as mock_enqueue,
+        patch("api.notifications.reminder_sink.send_notification"),
+    ):
+        await sink.dispatch(_claims(), _dispatch(offset="24h"))
+
+    kwargs = mock_enqueue.call_args.kwargs
+    assert kwargs["subject"] == "Reminder: your call with Acme Roofing is in 24 hours"
+    assert kwargs["body"].startswith("Hi Jane,")
+    assert kwargs["payload"]["from_name"] == "Acme Roofing"

@@ -24,6 +24,8 @@ autolink degraded; that is passed through as-is, never fabricated.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from common.auth import AuthClaims
 from common.db import Database
 from common.logging import _correlation_id
@@ -37,6 +39,7 @@ from api.notifications.tasks import send_notification
 from api.notifications.templates import reminder_message
 from api.scheduling.reminders import DispatchRef, ReminderDispatch
 from api.scheduling.repository import get_event_contact
+from api.tenants.repository import TenantRepository
 
 
 class NotificationReminderSink:
@@ -59,12 +62,23 @@ class NotificationReminderSink:
         contact = await get_event_contact(self._db, claims, reminder.event_id)
         timezone = contact.timezone if contact is not None else "UTC"
 
+        # Same branding as the booking confirmation: the chatbot's client
+        # (business) name in the subject, body and sender name.
+        tenant = await TenantRepository(self._db).get(claims, str(claims.tenant_id))
+        business_name = tenant.get("name") if tenant is not None else None
         subject, body = reminder_message(
             offset=reminder.offset,
             starts_at=reminder.starts_at,
             timezone=timezone,
             meet_url=contact.meet_url if contact is not None else None,
+            business_name=business_name,
+            visitor_name=contact.name if contact is not None else None,
         )
+        payload: dict[str, Any] = {
+            "kind": "reminder", "event_id": reminder.event_id, "offset": reminder.offset,
+        }
+        if business_name:
+            payload["from_name"] = business_name
 
         dedupe_key = f"reminder:{reminder.event_id}:{reminder.offset}"
 
@@ -76,7 +90,7 @@ class NotificationReminderSink:
             subject=subject,
             body=body,
             dedupe_key=dedupe_key,
-            payload={"kind": "reminder", "event_id": reminder.event_id, "offset": reminder.offset},
+            payload=payload,
             lead_id=contact.lead_id if contact is not None else None,
         )
 

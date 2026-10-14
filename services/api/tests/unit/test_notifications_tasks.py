@@ -570,3 +570,40 @@ async def test_sent_sms_job_is_no_op_provider_not_called() -> None:
 
     assert result["status"] == "no_op"
     fake_provider.send.assert_not_called()
+
+
+# ==============================================================================
+# Business sender name + Reply-To carried on the job payload
+# ==============================================================================
+
+_BRANDING = {"from_name": "Acme Roofing", "reply_to": "rep@acme.test"}
+
+
+async def test_platform_sender_uses_the_jobs_business_name_and_reply_to(
+    platform_smtp: Any,
+) -> None:
+    """The shared platform sender ('Bookings') sends as the chatbot's business."""
+    job = {**_job_row(status="pending"), "payload": {"kind": "booking_confirm", **_BRANDING}}
+    db = _StubDatabase(job=job, config=None)
+    fake_provider = AsyncMock()
+    fake_provider.send.return_value = DeliveryRef(provider="smtp", ref="<m@x>")
+
+    with patch("api.notifications.tasks.notification_provider_for", return_value=fake_provider):
+        await _execute(db, job_id="job-1", tenant_id=_TENANT_A, smtp_timeout=5.0)
+
+    sent = fake_provider.send.call_args.args[1]
+    assert (sent.from_name, sent.reply_to) == ("Acme Roofing", "rep@acme.test")
+
+
+async def test_a_chatbots_own_sender_name_is_kept_but_reply_to_still_applies() -> None:
+    job = {**_job_row(status="pending"), "payload": {"kind": "booking_confirm", **_BRANDING}}
+    db = _StubDatabase(job=job, config=_smtp_config_row())  # from_name "Chatbot"
+    fake_provider = AsyncMock()
+    fake_provider.send.return_value = DeliveryRef(provider="smtp", ref="<m@x>")
+
+    with patch("api.notifications.tasks.notification_provider_for", return_value=fake_provider):
+        await _execute(db, job_id="job-1", tenant_id=_TENANT_A, smtp_timeout=5.0)
+
+    sent = fake_provider.send.call_args.args[1]
+    assert sent.from_name is None  # the configured "Chatbot" stays the sender name
+    assert sent.reply_to == "rep@acme.test"

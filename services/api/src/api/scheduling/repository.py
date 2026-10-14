@@ -60,6 +60,7 @@ class EventContact:
     status: str
     email: str | None = None
     meet_url: str | None = None
+    name: str | None = None  # the visitor's name -- greets them in reminder emails
 
 
 @dataclass(frozen=True)
@@ -312,7 +313,7 @@ async def get_event_contact(
     _reject_global(claims)
 
     row = await db.fetchrow(
-        "SELECT lead_id, visitor_id, email, timezone, starts_at, status, meet_url "
+        "SELECT lead_id, visitor_id, email, timezone, starts_at, status, meet_url, name "
         "FROM schedule_events WHERE tenant_id = $1 AND event_id = $2",
         claims.tenant_id,
         event_id,
@@ -327,6 +328,7 @@ async def get_event_contact(
         status=str(row["status"]),
         email=row["email"],
         meet_url=row["meet_url"],
+        name=row["name"],
     )
 
 

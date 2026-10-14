@@ -557,3 +557,65 @@ def test_notification_provider_for_twilio_missing_fields_raises_config_error(
     config = _twilio_config(**overrides)
     with pytest.raises(NotificationConfigError):
         notification_provider_for(config, timeout=5.0)
+
+
+# ==============================================================================
+# SmtpEmailProvider -- HTML alternative, business sender name, Reply-To
+# ==============================================================================
+
+
+def _smtp_capture() -> tuple[MagicMock, SmtpEmailProvider]:
+    smtp = MagicMock()
+    smtp.__enter__ = MagicMock(return_value=smtp)
+    smtp.__exit__ = MagicMock(return_value=False)
+    provider = SmtpEmailProvider(
+        host="localhost", port=1025, use_tls=False, username=None, password="",
+        from_address="bot@dev.local", from_name="Bookings", timeout=5.0,
+    )
+    return smtp, provider
+
+
+async def test_smtp_provider_sends_text_and_html_with_business_name_and_reply_to() -> None:
+    """Plain-text-only mail from a generic 'Bookings' sender scored as spam."""
+    smtp, provider = _smtp_capture()
+    message = Notification(
+        channel="email", recipient="alice@example.com", subject="Your call is confirmed",
+        body="Hi Alice,\n\nJoin: https://meet.google.com/abc-defg-hij\n\nThanks <team>",
+        from_name="Acme, Inc.", reply_to="rep@acme.test",
+    )
+    with patch("smtplib.SMTP", return_value=smtp):
+        await provider.send(_CLAIMS, message)
+    sent = smtp.send_message.call_args[0][0]
+
+    assert sent["From"] == '"Acme, Inc." <bot@dev.local>'  # quoted: the comma is safe
+    assert sent["Reply-To"] == "rep@acme.test"
+    assert sent.get_content_type() == "multipart/alternative"
+    text = sent.get_body(preferencelist=("plain",)).get_content()
+    html = sent.get_body(preferencelist=("html",)).get_content()
+    assert text.strip() == message.body.strip()
+    assert '<a href="https://meet.google.com/abc-defg-hij">' in html
+    assert "&lt;team&gt;" in html and "<team>" not in html  # text is escaped
+
+
+async def test_smtp_provider_keeps_config_sender_and_no_reply_to_by_default() -> None:
+    smtp, provider = _smtp_capture()
+    with patch("smtplib.SMTP", return_value=smtp):
+        await provider.send(_CLAIMS, _MESSAGE)
+    sent = smtp.send_message.call_args[0][0]
+
+    assert sent["From"] == "Bookings <bot@dev.local>"
+    assert sent["Reply-To"] is None
+
+
+async def test_smtp_provider_sender_name_cannot_inject_headers() -> None:
+    smtp, provider = _smtp_capture()
+    message = Notification(
+        channel="email", recipient="alice@example.com", subject="s", body="b",
+        from_name="Evil\r\nBcc: victim@example.com",
+    )
+    with patch("smtplib.SMTP", return_value=smtp):
+        await provider.send(_CLAIMS, message)
+    sent = smtp.send_message.call_args[0][0]
+
+    assert sent["Bcc"] is None
+    assert "\n" not in sent["From"] and "\r" not in sent["From"]

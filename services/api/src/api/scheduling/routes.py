@@ -15,6 +15,7 @@ request body. The response is leak-free -- no ``tenant_id``/``visitor_id``.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from common.auth import AuthClaims
@@ -54,6 +55,7 @@ from api.scheduling.repository import (
     update_event_calendar_ref,
 )
 from api.scheduling.slots import Slot, compute_slots
+from api.tenants.repository import TenantRepository
 
 _log = get_logger(__name__)
 
@@ -629,13 +631,26 @@ async def book_slot(
                 and calendar_config.scheduling_url
                 else None
             )
+            # The chatbot's client (business) name brands the email; a generic
+            # unbranded one from the shared "Bookings" sender landed in spam.
+            tenant = await TenantRepository(db).get(claims, str(claims.tenant_id))
+            business_name = tenant.get("name") if tenant is not None else None
             confirm_subject, confirm_body = booking_confirmation_message(
                 starts_at=event.starts_at,
                 timezone=event.timezone,
                 calendly_link=calendly_link,
                 meet_url=meet_url,
                 rescheduled_from=previous.starts_at if previous is not None else None,
+                business_name=business_name,
+                visitor_name=body.name,
             )
+            confirm_payload: dict[str, Any] = {
+                "kind": "booking_confirm", "event_id": event.event_id,
+            }
+            if business_name:
+                confirm_payload["from_name"] = business_name
+            if organizer_email:
+                confirm_payload["reply_to"] = organizer_email
             job_id = await enqueue_notification(
                 db,
                 claims,
@@ -644,7 +659,7 @@ async def book_slot(
                 subject=confirm_subject,
                 body=confirm_body,
                 dedupe_key=f"booking_confirm:{event.event_id}",
-                payload={"kind": "booking_confirm", "event_id": event.event_id},
+                payload=confirm_payload,
                 lead_id=lead_id,
             )
             if job_id is not None:

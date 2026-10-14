@@ -1,9 +1,9 @@
 """Plain-text notification message builders (S9.2, Scope §1).
 
 Pure, no I/O -- each function returns ``(subject, body)``. No templating
-engine, no branding, no HTML (deferred to a later sprint per S9.2's "isn't"
-list). Times are rendered in the event's stored IANA ``timezone`` via
-``zoneinfo`` -- times are stored UTC, displayed local.
+engine; the SMTP provider derives the HTML part from this plain text. Times
+are rendered in the event's stored IANA ``timezone`` via ``zoneinfo`` --
+times are stored UTC, displayed local.
 """
 from __future__ import annotations
 
@@ -31,8 +31,15 @@ def booking_confirmation_message(
     calendly_link: str | None = None,
     meet_url: str | None = None,
     rescheduled_from: datetime | None = None,
+    business_name: str | None = None,
+    visitor_name: str | None = None,
 ) -> tuple[str, str]:
     """Build the ``(subject, body)`` for a booking-confirmation email.
+
+    ``business_name`` (the chatbot's client) and ``visitor_name`` make it a
+    personal, branded transactional email -- the bare unbranded version from a
+    shared "Bookings" sender was landing in Gmail spam. Both are optional;
+    without them the wording stays natural ("Hi there", no "with X").
 
     ``rescheduled_from``: the old slot's start when this booking replaces an
     earlier one -- the email then says so.
@@ -45,7 +52,14 @@ def booking_confirmation_message(
     that doesn't exist.
     """
     when = _local_wall_clock(starts_at, timezone)
-    subject = "Your call has been rescheduled" if rescheduled_from else "Your call is confirmed"
+    business = (business_name or "").strip()
+    with_business = f" with {business}" if business else ""
+    first_name = (visitor_name or "").strip().split(" ")[0]
+    subject = (
+        f"Your call{with_business} has been rescheduled"
+        if rescheduled_from
+        else f"Your call{with_business} is confirmed"
+    )
     moved_line = (
         f"\nThis replaces your earlier booking on {_local_wall_clock(rescheduled_from, timezone)}."
         if rescheduled_from
@@ -57,12 +71,15 @@ def booking_confirmation_message(
         else "If you need to reschedule, please contact us."
     )
     meet_line = f"\n\nJoin the call: {meet_url}" if meet_url else ""
+    sign_off = f"Thanks,\n{business}" if business else "Thanks!"
     body = (
-        "Your call is confirmed.\n\n"
+        f"Hi {first_name or 'there'},\n\n"
+        f"Your call{with_business} is confirmed.\n\n"
         f"When: {when}"
         f"{moved_line}"
         f"{meet_line}\n\n"
-        f"{reschedule_line}"
+        f"{reschedule_line}\n\n"
+        f"{sign_off}"
     )
     return subject, body
 
@@ -103,22 +120,37 @@ def rep_booking_notification_message(
 
 
 def reminder_message(
-    *, offset: str, starts_at: datetime, timezone: str, meet_url: str | None = None
+    *,
+    offset: str,
+    starts_at: datetime,
+    timezone: str,
+    meet_url: str | None = None,
+    business_name: str | None = None,
+    visitor_name: str | None = None,
 ) -> tuple[str, str]:
     """Build the ``(subject, body)`` for a reminder email at ``offset`` before the call.
 
     ``meet_url`` (SR-22): same omit-if-absent rule as
     ``booking_confirmation_message`` -- a reminder with nowhere to click
     would be worse than one that just states the time.
+
+    ``business_name``/``visitor_name``: same personal, branded wording as
+    ``booking_confirmation_message`` (both optional).
     """
     when = _local_wall_clock(starts_at, timezone)
     label = _OFFSET_LABELS.get(offset, offset)
-    subject = f"Reminder: your call is in {label} ({offset})"
+    business = (business_name or "").strip()
+    with_business = f" with {business}" if business else ""
+    first_name = (visitor_name or "").strip().split(" ")[0]
+    subject = f"Reminder: your call{with_business} is in {label}"
     meet_line = f"\n\nJoin the call: {meet_url}" if meet_url else ""
+    sign_off = f"Thanks,\n{business}" if business else "Thanks!"
     body = (
-        f"This is a reminder that your call is coming up in {label}.\n\n"
+        f"Hi {first_name or 'there'},\n\n"
+        f"This is a reminder that your call{with_business} is coming up in {label}.\n\n"
         f"When: {when}"
-        f"{meet_line}"
+        f"{meet_line}\n\n"
+        f"{sign_off}"
     )
     return subject, body
 

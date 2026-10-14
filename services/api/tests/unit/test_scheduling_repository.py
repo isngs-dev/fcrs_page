@@ -551,12 +551,14 @@ async def test_get_event_contact_returns_contact_fields(stub_db: _StubDatabase) 
             starts_at=datetime(2026, 1, 5, 14, 0, tzinfo=UTC),
             ends_at=datetime(2026, 1, 5, 14, 30, tzinfo=UTC),
             timezone="America/New_York", visitor_id="visitor-1", lead_id="lead-1",
+            name="Jane Smith",
             consent={"granted": True, "purpose": "booking", "text": "OK", "captured_at": "x"},
         )
 
         contact = await get_event_contact(stub_db, claims, event.event_id)
 
         assert isinstance(contact, EventContact)
+        assert contact.name == "Jane Smith"  # greets the visitor in reminder emails
         assert contact.lead_id == "lead-1"
         assert contact.visitor_id == "visitor-1"
         assert contact.timezone == "America/New_York"

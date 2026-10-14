@@ -48,7 +48,8 @@ def test_reminder_message_renders_local_time() -> None:
 
 def test_reminder_message_mentions_offset() -> None:
     subject, body = reminder_message(offset="3d", starts_at=_STARTS_AT_UTC, timezone=_TZ)
-    assert "3d" in subject or "3d" in body
+    assert "3 days" in subject and "3 days" in body
+    assert "(3d)" not in subject  # the internal code is not customer-facing
 
 
 def test_reminder_message_different_timezone_renders_different_local_time() -> None:
@@ -121,3 +122,64 @@ def test_reminder_message_no_meet_url_omits_join_line() -> None:
     _subject, body = reminder_message(offset="1h", starts_at=_STARTS_AT_UTC, timezone=_TZ)
     assert "Join the call:" not in body
     assert "meet.google.com" not in body
+
+
+# -- Personal, branded confirmation (spam scoring) ----------------------------
+
+
+def test_booking_confirmation_is_personal_and_branded() -> None:
+    """A bare unbranded 3-liner from 'Bookings' read as bulk mail to Gmail;
+    the business name and the visitor's name make it a real transactional email."""
+    subject, body = booking_confirmation_message(
+        starts_at=_STARTS_AT_UTC, timezone=_TZ,
+        business_name="Acme Roofing", visitor_name="Jane Smith",
+        meet_url="https://meet.google.com/abc-defg-hij",
+    )
+
+    assert subject == "Your call with Acme Roofing is confirmed"
+    assert body.startswith("Hi Jane,\n")
+    assert "with Acme Roofing" in body
+    assert "https://meet.google.com/abc-defg-hij" in body
+    assert body.rstrip().endswith("Acme Roofing")  # signed by the business
+
+
+def test_booking_confirmation_without_names_still_reads_naturally() -> None:
+    subject, body = booking_confirmation_message(starts_at=_STARTS_AT_UTC, timezone=_TZ)
+
+    assert subject == "Your call is confirmed"
+    assert body.startswith("Hi there,\n")
+    assert "None" not in subject + body
+
+
+def test_rescheduled_confirmation_names_the_business() -> None:
+    subject, _body = booking_confirmation_message(
+        starts_at=_STARTS_AT_UTC, timezone=_TZ, business_name="Acme Roofing",
+        rescheduled_from=datetime(2026, 7, 19, 14, 0, 0, tzinfo=UTC),
+    )
+
+    assert subject == "Your call with Acme Roofing has been rescheduled"
+
+
+# -- Personal, branded reminders ----------------------------------------------
+
+
+def test_reminder_is_personal_and_branded() -> None:
+    subject, body = reminder_message(
+        offset="24h", starts_at=_STARTS_AT_UTC, timezone=_TZ,
+        business_name="Acme Roofing", visitor_name="Jane Smith",
+        meet_url="https://meet.google.com/abc-defg-hij",
+    )
+
+    assert subject == "Reminder: your call with Acme Roofing is in 24 hours"
+    assert body.startswith("Hi Jane,\n")
+    assert "your call with Acme Roofing is coming up in 24 hours" in body
+    assert "https://meet.google.com/abc-defg-hij" in body
+    assert body.rstrip().endswith("Acme Roofing")
+
+
+def test_reminder_without_names_still_reads_naturally() -> None:
+    subject, body = reminder_message(offset="24h", starts_at=_STARTS_AT_UTC, timezone=_TZ)
+
+    assert subject == "Reminder: your call is in 24 hours"
+    assert body.startswith("Hi there,\n")
+    assert "None" not in subject + body

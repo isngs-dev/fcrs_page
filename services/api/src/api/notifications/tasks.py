@@ -175,8 +175,10 @@ async def _execute(
         return {"job_id": job_id, "status": "no_op"}
 
     config = await get_notification_config(db, claims, job.channel)
+    platform_sender = False
     if config is None and job.channel == "email":
         config = _platform_email_config()
+        platform_sender = config is not None
         if config is not None:
             _log.info(
                 "notification_platform_default_used",
@@ -224,8 +226,17 @@ async def _execute(
         )
         return {"job_id": job_id, "status": "failed"}
 
+    # Branding the booking route put on the job: the business name replaces the
+    # SHARED platform sender's name ("Bookings"), never a name a chatbot set on
+    # its own email config; Reply-To applies either way.
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    from_name = payload.get("from_name")
+    reply_to = payload.get("reply_to")
+    use_business_name = isinstance(from_name, str) and (platform_sender or not config.from_name)
     message = Notification(
-        channel=job.channel, recipient=job.recipient, subject=job.subject, body=job.body
+        channel=job.channel, recipient=job.recipient, subject=job.subject, body=job.body,
+        from_name=from_name if use_business_name else None,
+        reply_to=reply_to if isinstance(reply_to, str) else None,
     )
 
     try:
