@@ -3960,6 +3960,85 @@ describe("Call Us / Schedule a Call buttons", () => {
     expect(sendTurnMock).not.toHaveBeenCalled();
   });
 
+  async function bookACallInThisChat(): Promise<void> {
+    sendTurnMock.mockResolvedValueOnce({
+      ok: true,
+      turn: {
+        conversationId: "conv-1", messageId: "msg-1", reply: "Let's find a time.",
+        decision: "answer", confidence: 0.9, sources: [], action: "schedule_cta",
+      },
+    });
+    fetchSlotsMock.mockResolvedValueOnce({
+      ok: true,
+      slots: [{ startsAt: "2026-07-22T14:00:00Z", endsAt: "2026-07-22T14:30:00Z" }],
+    });
+    bookSlotMock.mockResolvedValueOnce({
+      ok: true,
+      booking: { eventId: "evt-1", startsAt: "2026-07-22T14:00:00Z", endsAt: "2026-07-22T14:30:00Z", status: "booked" },
+    });
+    typeAndSend("Can we book a call?");
+    await flush();
+    act(() => {
+      container.querySelector<HTMLButtonElement>(".cw-sched-slot")?.click();
+    });
+    await flush();
+    act(() => {
+      container.querySelector<HTMLInputElement>("#cw-sched-consent")?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>(".cw-sched-confirm-button")?.click();
+    });
+    await flush();
+    await flush();
+    expect(container.querySelector(".cw-sched-confirmation")).not.toBeNull();
+  }
+
+  it("disables Schedule a Call once a call is booked in this chat, until a new chat starts", async () => {
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+    expect(quickAction("Schedule a Call")!.disabled).toBe(false);
+
+    await bookACallInThisChat();
+    // Keep chatting: the booking card is no longer the last message.
+    sendTurnMock.mockResolvedValueOnce({
+      ok: true,
+      turn: {
+        conversationId: "conv-1", messageId: "msg-2", reply: "We run inspection-focused campaigns.",
+        decision: "answer", confidence: 0.9, sources: [], action: null,
+      },
+    });
+    typeAndSend("How do you get me more roof inspections?");
+    await flush();
+
+    expect(quickAction("Schedule a Call")!.disabled).toBe(true);
+    expect(quickAction("Schedule a Call")!.title).toMatch(/already booked/i);
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('.cw-reset-button[aria-label="Start a new chat"]')!.click();
+    });
+    expect(quickAction("Schedule a Call")!.disabled).toBe(false);
+  });
+
+  it("does not disable Schedule a Call for a booking made in an earlier chat", async () => {
+    fetchAvailabilitySummaryMock.mockReset();
+    fetchAvailabilitySummaryMock.mockResolvedValueOnce({
+      ok: true,
+      summary: {
+        action: "schedule_cta", timezone: "UTC", days: [], transitionMessage: "Pick a time.",
+        existingBooking: { startsAt: "2026-07-22T09:00:00+00:00", endsAt: "2026-07-22T09:30:00+00:00", timezone: "UTC" },
+      },
+    });
+    act(() => {
+      root.render(<ChatWidget config={baseConfig} expiresAt="2026-07-16T12:30:00Z" />);
+    });
+    openPanel();
+    await flush();
+
+    expect(quickAction("Schedule a Call")!.disabled).toBe(false);
+  });
+
   it("Call Us starts a call, shows the call bar, and offers booking when the team couldn't be reached", async () => {
     isVoiceAgentEnabledMock.mockReturnValue(true);
     let events: CallEvents | undefined;

@@ -406,7 +406,14 @@ export function ChatWidget({
   //      what correctly reflects a booking made in a PRIOR session on
   //      reopen/reload for either backend.
   const [hasBooking, setHasBooking] = useState(false);
-  const handleBooked = useCallback(() => setHasBooking(true), []);
+  // A call booked in THIS chat: disables "Schedule a Call" until the chat
+  // ends (New chat / close). Unlike hasBooking it ignores bookings from
+  // earlier chats, so a fresh chat can always book again.
+  const [bookedThisChat, setBookedThisChat] = useState(false);
+  const handleBooked = useCallback(() => {
+    setHasBooking(true);
+    setBookedThisChat(true);
+  }, []);
   // The lead form's counterpart: once contact details are in, the
   // persistent CTA stays visible but DISABLED (a second request would
   // just duplicate the lead).
@@ -703,6 +710,7 @@ export function ChatWidget({
    */
   const confirmCloseYes = useCallback(() => {
     setMessages([]);
+    setBookedThisChat(false);
     setInputValue("");
     setPending(false);
     setSchedulePending(false);
@@ -1396,6 +1404,7 @@ export function ChatWidget({
     stopVoiceCapture();
     setVoiceError(null);
     setMessages([]);
+    setBookedThisChat(false);
     setInputValue("");
     setPending(false);
     setSchedulePending(false);
@@ -1563,7 +1572,8 @@ export function ChatWidget({
                         <button
                           type="button"
                           className="cw-quick-action"
-                          disabled={pending || schedulePending || schedulingUiActive}
+                          disabled={pending || schedulePending || schedulingUiActive || bookedThisChat}
+                          title={bookedThisChat ? "Your call is already booked" : undefined}
                           onClick={() => void startScheduling("Schedule a Call")}
                         >
                           <ChatGlyph name="calendar" />
