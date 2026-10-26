@@ -677,7 +677,7 @@ async def inbound_answer(db: Database, claims: AuthClaims, *, caller: str, calle
 
     config = await repo.get_call_config(db, claims)
     if config is None or not config.enabled or not config.inbound_enabled:
-        voice = config.voice if config else "Polly.Joanna-Neural"
+        voice = config.voice if config else "Polly.Joanna"
         return _hangup(script.INBOUND_OFF_LINE, voice)
     contact_id = await get_contact_id_by_identity(db, claims, identity_type="phone",
                                                   identity_value=caller)
@@ -702,14 +702,14 @@ async def whisper_xml(db: Database, claims: AuthClaims, session: repo.CallSessio
     asked = next((t for r, t in reversed(state.history)
                   if r == "user" and script.classify(t) == "other"), None)
     text = script.whisper(caller=caller, asked=asked[:160] if asked else None)
-    return speak(text, config.voice if config else "Polly.Joanna-Neural")
+    return speak(text, config.voice if config else "Polly.Joanna")
 
 
 async def transfer_missed(db: Database, claims: AuthClaims, session: repo.CallSessionRow) -> str:
     """Nobody picked up the transfer (N6): tell the caller and flag it for the team."""
     config = await repo.get_call_config(db, claims)
     await _handoff(db, claims, session, "transfer_unanswered")
-    return _hangup(script.TRANSFER_MISSED_LINE, config.voice if config else "Polly.Joanna-Neural")
+    return _hangup(script.TRANSFER_MISSED_LINE, config.voice if config else "Polly.Joanna")
 
 
 async def schedule_callback(db: Database, claims: AuthClaims, session: repo.CallSessionRow

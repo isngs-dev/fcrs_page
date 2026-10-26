@@ -44,7 +44,7 @@ class CallConfigBody(BaseModel):
     from_number: str = Field(min_length=7, max_length=30)
     transfer_number: str | None = Field(default=None, max_length=30)
     company_name: str = Field(min_length=1, max_length=80)
-    voice: str = Field(default="Polly.Joanna-Neural", max_length=60)
+    voice: str = Field(default="Polly.Joanna", max_length=60)
     voice_model: str | None = Field(default=None, max_length=100)
     voicemail_policy: Literal["hangup", "leave_message"] = "hangup"
     voicemail_message: str | None = Field(default=None, max_length=600)

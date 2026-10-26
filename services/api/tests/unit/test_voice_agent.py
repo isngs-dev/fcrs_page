@@ -518,3 +518,17 @@ async def test_start_call_is_refused_when_the_chatbot_has_it_off(env: None) -> N
 
     assert response.status_code == 422
     assert response.json()["error_code"] == "VOICE_AGENT_UNAVAILABLE"
+
+
+@pytest.mark.parametrize(("stored", "spoken"), [
+    ("Polly.Joanna-Neural", "Polly.Joanna"),  # Twilio's name: Plivo stays SILENT on it
+    ("Polly.Joanna", "Polly.Joanna"),
+    ("Polly.Raveena", "Polly.Raveena"),
+    ("WOMAN", "WOMAN"),
+])
+def test_speak_uses_a_voice_name_plivo_knows(stored: str, spoken: str) -> None:
+    """Plivo documents Polly voices as ``Polly.<Name>`` with no ``-Neural`` variants; a
+    live call with ``Polly.Joanna-Neural`` was answered but completely silent."""
+    from api.voice_agent.plivo import speak  # noqa: PLC0415
+
+    assert speak("Hi", stored) == f'<Speak voice="{spoken}">Hi</Speak>'

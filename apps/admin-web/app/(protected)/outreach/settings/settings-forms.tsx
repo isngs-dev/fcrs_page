@@ -273,7 +273,7 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
         inbound_enabled: data.get("inbound") === "on",
         recording_retention_days: Number(text(data, "retention_days")),
         // Not editable here; send the stored values back so a save never resets them.
-        voice: config.voice ?? "Polly.Joanna-Neural",
+        voice: config.voice ?? "Polly.Joanna",
         voice_model: config.voiceModel ?? null,
         ...(token ? { plivo_auth_token: token } : {}),
       })

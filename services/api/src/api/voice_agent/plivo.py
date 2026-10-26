@@ -95,6 +95,10 @@ def xml(body: str) -> Response:
 
 
 def speak(text: str, voice: str) -> str:
+    # Plivo names Polly voices "Polly.<Name>" and has no "-Neural" variants (that suffix is
+    # Twilio's naming); given one it says nothing at all, so map it to the plain voice.
+    if voice.startswith("Polly.") and voice.endswith("-Neural"):
+        voice = voice.removesuffix("-Neural")
     return f"<Speak voice={quoteattr(voice)}>{escape(text)}</Speak>"
 
 
