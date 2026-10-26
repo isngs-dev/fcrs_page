@@ -228,12 +228,20 @@ async def whisper(call_id: str, request: Request) -> Response:
 # -- Inbound (A7): static URLs on the Plivo Application attached to the number ----------
 
 
+def _plivo_number(value: str) -> str | None:
+    """Plivo posts full international numbers WITHOUT '+' ("912264233234"). ``to_e164``
+    only reads US-shaped digits that way (it serves typed-in numbers), so a non-US number
+    resolved to nothing and every call to it was rejected."""
+    digits = "".join(ch for ch in value if ch.isdigit())
+    return f"+{digits}" if 8 <= len(digits) <= 15 else to_e164(value)
+
+
 async def _verified_inbound(request: Request) -> tuple[dict[str, str], AuthClaims]:
     """Tenant from the called number, then Plivo's signature with THAT tenant's token."""
     db = request.app.state.db
     form = await request.form()
     params = {key: str(value) for key, value in form.items()}
-    called = to_e164(params.get("To", ""))
+    called = _plivo_number(params.get("To", ""))
     tenant_id = await repo.tenant_for_number_system(db, called) if called else None
     if tenant_id is None:
         raise PlivoSignatureInvalidError()
@@ -249,9 +257,9 @@ async def _verified_inbound(request: Request) -> tuple[dict[str, str], AuthClaim
 @public_router.post("/inbound/answer")
 async def inbound_answer(request: Request) -> Response:
     params, claims = await _verified_inbound(request)
-    caller = to_e164(params.get("From", "")) or params.get("From", "unknown")
+    caller = _plivo_number(params.get("From", "")) or params.get("From", "unknown")
     return xml(await service.inbound_answer(
-        request.app.state.db, claims, caller=caller, called=to_e164(params["To"]) or "",
+        request.app.state.db, claims, caller=caller, called=_plivo_number(params["To"]) or "",
         call_uuid=params.get("CallUUID") or None))
 
 

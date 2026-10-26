@@ -85,6 +85,24 @@ async def test_known_caller_is_greeted_by_name(routed: dict[str, Any]) -> None:
     assert session is not None and session.direction == "inbound" and session.contact_id
 
 
+async def test_non_us_numbers_in_plivos_format_are_routed(routed: dict[str, Any]) -> None:
+    """Plivo posts full international numbers WITHOUT '+' ("912264233234"). A live Indian
+    number got 401 on every call (caller heard "busy") because only US-shaped numbers
+    were understood without the '+'."""
+    db, a = routed["db"], _claims(routed["a"])
+    await repo.register_number(db, a, "+912264233234")
+    r = await _inbound(routed, "answer", {"From": "919812345591", "To": "912264233234",
+                                          "CallUUID": "in-india"})
+    assert r.status_code == 200, r.text
+    caller = await db.fetchval(
+        "SELECT from_e164 FROM call_sessions WHERE provider_call_uuid = 'in-india'")
+    assert caller == "+919812345591"
+    # Same tenant check as for US numbers: B's token can't answer for A's Indian number.
+    forged = await _inbound(routed, "answer", {"From": "919812345591", "To": "912264233234",
+                                               "CallUUID": "x2"}, token=_TOKENS["b"])
+    assert forged.status_code == 401
+
+
 async def test_routing_needs_a_registered_number_and_that_tenants_signature(
     routed: dict[str, Any],
 ) -> None:
