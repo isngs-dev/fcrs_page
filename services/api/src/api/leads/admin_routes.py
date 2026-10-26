@@ -30,7 +30,7 @@ from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
 from api.auth.repository import get_user_by_id
 from api.contacts.repository import add_identity as add_contact_identity
-from api.contacts.repository import create_contact
+from api.contacts.repository import create_contact, get_contact_by_lead_id, update_contact
 from api.leads.pipeline import (
     _STATUS_BY_STAGE,
     STAGE_ORDER,
@@ -909,27 +909,15 @@ async def _convert_lead(
 
         account_id = await create_account(db, claims, name=body.account_name)
 
-    # -- Create the Contact, carrying the Lead's consent verbatim (D7) ------
-    contact_id = await create_contact(
-        db,
-        claims,
-        account_id=account_id,
-        lead_id=lead_id,
-        name=lead.name,
-        email=lead.email,
-        phone=lead.phone,
-        consent=lead.consent,
-    )
-
-    # -- Identity rows (D4): email + visitor_id where present, never NULL ---
-    if lead.email:
-        await add_contact_identity(
-            db, claims, contact_id, identity_type="email", identity_value=lead.email,
-        )
-    if lead.visitor_id:
-        await add_contact_identity(
-            db, claims, contact_id, identity_type="visitor_id", identity_value=lead.visitor_id,
-        )
+    # -- A4 H5: inbound automation may already have linked a contact to this
+    # lead (outreach runs on contacts). Converting reuses it -- no duplicate.
+    linked = await get_contact_by_lead_id(db, claims, lead_id)
+    if linked is not None:
+        if account_id is not None:
+            await update_contact(db, claims, linked.contact_id, account_id=account_id)
+        contact_id = linked.contact_id
+    else:
+        contact_id = await _create_contact_from_lead(db, claims, lead, account_id)
 
     # -- Tombstone the Lead (D1/D5/D6) ---------------------------------------
     converted = await mark_lead_converted(db, claims, lead_id, contact_id=contact_id)
@@ -1008,3 +996,29 @@ async def convert_lead_for_tenant(
 ) -> LeadConvertResponse | JSONResponse:
     """PLATFORM_ADMIN super-user variant of ``POST /admin/leads/{lead_id}/convert``."""
     return await _convert_lead(lead_id, body, request, claims)
+
+
+async def _create_contact_from_lead(
+    db: Any, claims: AuthClaims, lead: Any, account_id: str | None,
+) -> str:
+    """Create the Contact, carrying the Lead's consent verbatim (D7), plus its
+    identity rows (D4): email + visitor_id where present, never NULL."""
+    contact_id = await create_contact(
+        db,
+        claims,
+        account_id=account_id,
+        lead_id=lead.lead_id,
+        name=lead.name,
+        email=lead.email,
+        phone=lead.phone,
+        consent=lead.consent,
+    )
+    if lead.email:
+        await add_contact_identity(
+            db, claims, contact_id, identity_type="email", identity_value=lead.email,
+        )
+    if lead.visitor_id:
+        await add_contact_identity(
+            db, claims, contact_id, identity_type="visitor_id", identity_value=lead.visitor_id,
+        )
+    return contact_id

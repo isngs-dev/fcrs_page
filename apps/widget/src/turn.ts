@@ -12,6 +12,7 @@
  */
 import { z } from "zod";
 
+import { timeZoneField } from "./channelConsent";
 import { authHeader } from "./session";
 import type { WidgetConfig } from "./config";
 
@@ -169,6 +170,9 @@ export async function sendTurn(config: WidgetConfig, input: SendTurnInput): Prom
         message: input.message,
         conversation_id: input.conversationId,
         ...(input.messageId ? { message_id: input.messageId } : {}),
+        // The visitor's timezone, so a phone number they share in the chat
+        // gets contact-local calling windows.
+        ...timeZoneField(),
       }),
     });
   } catch (err) {

@@ -79,7 +79,12 @@ describe("sendTurn", () => {
     });
 
     const parsedBody = JSON.parse(init.body as string) as Record<string, unknown>;
-    expect(parsedBody).toEqual({ message: "hi", conversation_id: "conv-prior" });
+    // Plus the browser's IANA timezone (for calling windows if they share a number).
+    expect(parsedBody).toEqual({
+      message: "hi",
+      conversation_id: "conv-prior",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
     expect(parsedBody).not.toHaveProperty("tenant_id");
   });
 

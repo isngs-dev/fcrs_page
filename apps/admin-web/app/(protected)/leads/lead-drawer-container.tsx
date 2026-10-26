@@ -18,6 +18,7 @@
 import { getLeadActivities, getLeadDetail } from "@/lib/leads";
 import { getLeadTimeline } from "@/lib/timeline";
 import { getLeadVoiceCalls } from "@/lib/voice-calls";
+import { getLeadActivity } from "@/lib/outreach";
 import { LeadDrawer } from "@/app/(protected)/leads/lead-drawer";
 import { isTab, type Tab } from "@/app/(protected)/leads/lead-drawer-tabs";
 
@@ -42,6 +43,8 @@ export async function LeadDrawerContainer({
   const activitiesResult = tab === "notes" ? await getLeadActivities(leadId, tenantId) : null;
   const timelineResult = tab === "timeline" ? await getLeadTimeline(leadId, { before }) : null;
   const voiceCallsResult = tab === "calls" ? await getLeadVoiceCalls(leadId, tenantId) : null;
+  // A8 U11: implicit route only -- the PLATFORM_ADMIN tenant view shows a "switch chatbot" note.
+  const agentActivityResult = tab === "agents" && !tenantId ? await getLeadActivity(leadId) : null;
 
   return (
     <LeadDrawer
@@ -51,6 +54,7 @@ export async function LeadDrawerContainer({
       activitiesResult={activitiesResult}
       timelineResult={timelineResult}
       voiceCallsResult={voiceCallsResult}
+      agentActivityResult={agentActivityResult}
       basePath={basePath}
       tenantId={tenantId}
     />

@@ -36,6 +36,7 @@ same string (single source of truth -- never re-literaled here).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 # -- Rule name constants (the only values ever written to messages.guardrail_flag) --
@@ -113,3 +114,22 @@ def scan_output(text: str) -> GuardrailResult:
         return GuardrailResult(ok=False, rule=RULE_CONTEXT_SENTINEL_LEAK)
 
     return GuardrailResult(ok=True, rule=None)
+
+
+# -- Unstated commitments (A2 E7; shared with spoken call replies since A9 H4) ------------
+
+_MONEY_OR_PERCENT = re.compile(r"[$€£]\s?\d[\d,]*(?:\.\d+)?|\d+(?:\.\d+)?\s?%")
+_COMMITMENT_WORDS = ("free", "discount", "guarantee", "guaranteed", "refund", "warranty",
+                     "no obligation", "no-obligation", "risk-free")
+
+
+def unstated_commitments(text: str, context: str) -> list[str]:
+    """Amounts, percentages and commitment words in ``text`` that ``context`` doesn't contain."""
+    ctx = context.casefold()
+    found = [m.group(0) for m in _MONEY_OR_PERCENT.finditer(text)
+             if re.sub(r"\s", "", m.group(0)) not in re.sub(r"\s", "", ctx)]
+    lowered = text.casefold()
+    found += [w for w in _COMMITMENT_WORDS
+              if re.search(rf"\b{re.escape(w)}\b", lowered) and not re.search(
+                  rf"\b{re.escape(w)}\b", ctx)]
+    return found

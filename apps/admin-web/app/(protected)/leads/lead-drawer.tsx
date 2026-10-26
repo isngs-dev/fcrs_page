@@ -48,12 +48,14 @@ import type { VoiceCallsResult } from "@/lib/voice-calls";
 import { RecordDrawerTimelinePanel } from "@/components/admin/record-drawer";
 import { cn } from "@/lib/utils";
 import { TABS, type Tab } from "@/app/(protected)/leads/lead-drawer-tabs";
+import { AgentsTab, type LeadActivityResult } from "@/app/(protected)/leads/lead-agents-tab";
 
 const TAB_LABELS: Record<Tab, string> = {
   timeline: "Timeline",
   details: "Details",
   notes: "Notes",
   calls: "AI call",
+  agents: "Agents",
 };
 
 function formatDateTime(iso: string): string {
@@ -91,6 +93,8 @@ interface LeadDrawerProps {
   timelineResult: TimelineFetchResult | null;
   /** The lead's AI confirmation calls, fetched only when `tab === "calls"`. */
   voiceCallsResult?: VoiceCallsResult | null;
+  /** A8 U11: Rebecca's activity for the lead, fetched only when `tab === "agents"`. */
+  agentActivityResult?: LeadActivityResult | null;
   /** Base path (`/leads` or `/clients/{tenantId}/leads`) the drawer's URL
    * params are read/written against -- mirrors `leads-filter.tsx`'s
    * `basePath` convention for the S13.7 platform-admin tenant-scoped view. */
@@ -105,6 +109,7 @@ export function LeadDrawer({
   activitiesResult,
   timelineResult,
   voiceCallsResult = null,
+  agentActivityResult = null,
   basePath,
   tenantId,
 }: LeadDrawerProps) {
@@ -192,6 +197,7 @@ export function LeadDrawer({
           activitiesResult={activitiesResult}
           timelineResult={timelineResult}
           voiceCallsResult={voiceCallsResult}
+          agentActivityResult={agentActivityResult}
           onClose={close}
           onTabChange={(nextTab) => navigate(leadId, nextTab)}
           closeButtonRef={closeButtonRef}
@@ -259,6 +265,7 @@ function DrawerBody({
   activitiesResult,
   timelineResult,
   voiceCallsResult,
+  agentActivityResult,
   onClose,
   onTabChange,
   closeButtonRef,
@@ -271,6 +278,7 @@ function DrawerBody({
   activitiesResult: LeadActivitiesResult | null;
   timelineResult: TimelineFetchResult | null;
   voiceCallsResult: VoiceCallsResult | null;
+  agentActivityResult: LeadActivityResult | null;
   onClose: () => void;
   onTabChange: (tab: Tab) => void;
   closeButtonRef: React.RefObject<HTMLButtonElement | null>;
@@ -335,6 +343,8 @@ function DrawerBody({
           <TimelineTab leadId={leadId} lead={lead} timelineResult={timelineResult} basePath={basePath} />
         ) : tab === "calls" ? (
           <CallsTab result={voiceCallsResult} />
+        ) : tab === "agents" ? (
+          <AgentsTab result={agentActivityResult} platformView={!!tenantId} />
         ) : (
           <NotesTab
             activitiesResult={activitiesResult}

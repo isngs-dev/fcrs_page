@@ -30,7 +30,21 @@ _CLASSIFY_REPLY_LOG_LIMIT = 120
 # Model families that accept ``reasoning_effort``. ponytail: name-prefix match --
 # an Azure deployment with a custom name won't get the hint; add a per-tenant
 # flag if one ever needs it.
-_REASONING_MODEL_PREFIXES = ("gpt-oss", "o1", "o3", "o4", "gpt-5")
+_REASONING_MODEL_PREFIXES = ("gpt-oss", "o1", "o3", "o4", "gpt-5", "gpt-6")
+# OpenAI's own reasoning models reject ``max_tokens`` (400 "Use 'max_completion_tokens'
+# instead"); gpt-oss is served by Ollama, which speaks ``max_tokens``.
+_COMPLETION_TOKENS_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
+# Their hidden reasoning counts against that cap: a 20-token label call on gpt-6-luna
+# came back empty (stop=length). Callers size max_tokens for the VISIBLE answer, so
+# reasoning gets this on top -- a ceiling, not a spend (only used tokens are billed).
+# ponytail: fixed allowance; make it per-tenant if a model ever needs more to think.
+_REASONING_HEADROOM_TOKENS = 1024
+
+
+def _token_limit(model: str, limit: int) -> dict[str, int]:
+    if model.startswith(_COMPLETION_TOKENS_MODEL_PREFIXES):
+        return {"max_completion_tokens": limit + _REASONING_HEADROOM_TOKENS}
+    return {"max_tokens": limit}
 
 
 class OpenAICompatibleProvider:
@@ -118,8 +132,8 @@ class OpenAICompatibleProvider:
         try:
             resp = await self._client.chat.completions.create(
                 model=model,
-                max_tokens=max_tokens,
                 messages=[{"role": m.role, "content": m.content} for m in messages],
+                **_token_limit(model, max_tokens),
                 **hint,
             )
         except APIError as exc:
@@ -230,8 +244,8 @@ class OpenAICompatibleProvider:
         try:
             resp = await self._client.chat.completions.create(
                 model=model,
-                max_tokens=_CLASSIFY_MAX_TOKENS,
                 messages=[{"role": m.role, "content": m.content} for m in chat_messages],
+                **_token_limit(model, _CLASSIFY_MAX_TOKENS),
             )
         except APIError as exc:
             _log.warning(
@@ -278,9 +292,9 @@ class OpenAICompatibleProvider:
         try:
             stream = await self._client.chat.completions.create(
                 model=model,
-                max_tokens=max_tokens,
                 messages=[{"role": m.role, "content": m.content} for m in messages],
                 stream=True,
+                **_token_limit(model, max_tokens),
             )
         except APIError as exc:
             _log.warning(

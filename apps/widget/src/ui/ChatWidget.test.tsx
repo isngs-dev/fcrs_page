@@ -65,6 +65,7 @@ vi.mock("../session", () => ({
   isResumeEnabled: () => isResumeEnabledMock(),
   isVoiceAsrEnabled: () => isVoiceAsrEnabledMock(),
   isVoiceCallEnabled: () => false,
+  getOutreachConsent: () => null, // A4: no follow-up boxes in these tests
   isVoiceAgentEnabled: () => isVoiceAgentEnabledMock(),
 }));
 

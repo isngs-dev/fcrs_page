@@ -11,13 +11,16 @@ or echoed PII.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from common.auth import AuthClaims
 from common.errors import ValidationError
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
+from api.agents import hooks as agent_hooks
+from api.agents.consent_wording import ChannelConsentsIn, granted_channels
 from api.crm.tasks import sync_lead
 from api.gateway.dependencies import get_visitor_claims
 from api.leads.assignment import assign_lead_fail_open
@@ -46,6 +49,9 @@ class LeadCaptureRequest(BaseModel):
     phone: str | None = None
     source: str | None = None
     consent: ConsentPayload | None = None
+    # A4: optional per-channel follow-up consent + the browser's IANA timezone.
+    channel_consents: ChannelConsentsIn | None = None
+    timezone: str | None = Field(default=None, max_length=64)
 
     @field_validator("name")
     @classmethod
@@ -96,6 +102,10 @@ async def capture_lead(
             code="CONSENT_REQUIRED",
         )
 
+    # A4 H2: reject bad channel consent BEFORE anything is stored.
+    channels = granted_channels(body.channel_consents,
+                                has_phone=bool(body.phone and body.phone.strip()))
+
     # -- Stamp consent with server time ------------------------------------
     consent_with_timestamp = {
         "granted": body.consent.granted,
@@ -119,6 +129,21 @@ async def capture_lead(
         source=source,
     )
 
+    await after_capture(
+        db, claims, lead_id, channels=channels,
+        version=body.channel_consents.version if body.channel_consents else None,
+        timezone=body.timezone, form="lead_form")
+
+    return LeadCaptureResponse(lead_id=lead_id, status="new")
+
+
+async def after_capture(
+    db: Any, claims: AuthClaims, lead_id: str, *, channels: list[str], version: str | None,
+    timezone: str | None, form: str, consents: list[dict[str, Any]] | None = None,
+    answers: dict[str, str] | None = None,
+) -> None:
+    """Everything that follows a stored lead, for every source (widget, forms, Meta --
+    A10 I1): assignment, the feed event, the agents hand-off, CRM sync, email check."""
     # -- Round-robin auto-assignment (SR-20 D1/D2/D3): fail-open, AFTER the
     # durable lead write above, as a separate step. Never gates or reverses
     # the capture -- an assignment failure (or round-robin simply being off,
@@ -146,6 +171,11 @@ async def capture_lead(
         payload={"lead_id": lead_id},
         actor_id=None,
     )
+
+    # -- A4 H6: hand ticked follow-up consent to the agents (fail-safe) ------
+    await agent_hooks.inbound_lead_created(
+        db, claims, lead_id=lead_id, channels=channels, version=version,
+        timezone=timezone, form=form, consents=consents, answers=answers)
 
     # -- Enqueue outbound CRM sync (fire-and-forget; S7.4 decision 4) -------
     # Never awaited, never allowed to fail the capture: an enqueue failure
@@ -191,5 +221,3 @@ async def capture_lead(
                 "tenant_id": claims.tenant_id,
             },
         )
-
-    return LeadCaptureResponse(lead_id=lead_id, status="new")

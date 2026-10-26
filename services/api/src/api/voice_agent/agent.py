@@ -30,11 +30,12 @@ from common.auth import AuthClaims
 from common.db import Database
 from common.logging import get_logger
 
+from api.agents.memory import frame as frame_memory
 from api.config import get_api_settings
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, LLMError
-from api.orchestrator.guardrails import scan_output
+from api.orchestrator.guardrails import scan_output, unstated_commitments
 from api.rag.service import retrieve_hybrid
 from api.voice_agent.repository import VoiceAgentConfig
 
@@ -184,6 +185,7 @@ class CallSession:
 
 async def answer_from_knowledge(
     db: Database, claims: AuthClaims, question: str, history: list[ChatMessage],
+    *, model: str | None = None, about_caller: str | None = None,
 ) -> str | None:
     """A short spoken answer grounded in the tenant's knowledge base, or ``None``
     when the knowledge base doesn't hold it (or the reply fails the output
@@ -201,7 +203,9 @@ async def answer_from_knowledge(
         return None
     context = "\n".join(f"[{c.chunk_id}] {c.content}" for c in result.chunks)
     prompt = [
-        ChatMessage(role="system", content=f"{_VOICE_SYSTEM_PROMPT}\n\nContext:\n{context}"),
+        ChatMessage(role="system", content=(
+            f"{_VOICE_SYSTEM_PROMPT}\n\nContext:\n{context}\n\n{frame_memory(about_caller)}"
+        ).strip()),  # A11: the caller's story, as data
         *history[-_HISTORY_TURNS:],
         ChatMessage(role="user", content=question),
     ]
@@ -212,7 +216,7 @@ async def answer_from_knowledge(
         # question "missed". The prompt itself keeps the spoken answer short.
         # Low reasoning: the caller is waiting on the line (gpt-oss ~7s -> ~4s).
         completion = await provider.generate(
-            prompt, model=config.model, max_tokens=settings.llm_max_tokens,
+            prompt, model=model or config.model, max_tokens=settings.llm_max_tokens,
             reasoning_effort="low",
         )
     finally:
@@ -224,6 +228,8 @@ async def answer_from_knowledge(
         miss = "not in the knowledge base"
     elif not scan_output(reply).ok:
         miss = "reply failed the output guardrails"
+    elif unstated_commitments(reply, context):  # A9 H4: no spoken price/promise not in the KB
+        miss = "unstated commitment"
     else:
         return reply
     _log.info("voice agent could not answer", extra={"event": "voice_agent_miss", "reason": miss})

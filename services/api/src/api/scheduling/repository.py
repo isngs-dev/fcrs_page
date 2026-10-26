@@ -525,3 +525,23 @@ async def cancel_event(db: Database, claims: AuthClaims, event_id: str) -> bool:
         event_id,
     )
     return str(result).endswith(" 1")
+
+
+async def get_upcoming_for_contact(db: Database, claims: AuthClaims, *, lead_id: str | None,
+                                   email: str | None) -> ScheduleEvent | None:
+    """The person's soonest future booked event, by their lead or e-mail (A11 M5)."""
+    _reject_global(claims)
+    row = await db.fetchrow(
+        "SELECT event_id, lead_id, visitor_id, email, name, starts_at, ends_at, timezone, "
+        "status, calendar_ref, consent, created_at FROM schedule_events "
+        "WHERE tenant_id = $1 AND status = 'booked' AND starts_at > now() "
+        "AND (($2::text IS NOT NULL AND lead_id = $2) "
+        "     OR ($3::text IS NOT NULL AND lower(email) = lower($3))) "
+        "ORDER BY starts_at LIMIT 1", claims.tenant_id, lead_id, email)
+    if row is None:
+        return None
+    return ScheduleEvent(
+        event_id=str(row["event_id"]), lead_id=row["lead_id"], visitor_id=row["visitor_id"],
+        email=row["email"], name=row["name"], starts_at=row["starts_at"], ends_at=row["ends_at"],
+        timezone=str(row["timezone"]), status=str(row["status"]), calendar_ref=row["calendar_ref"],
+        consent=row["consent"], created_at=row["created_at"])

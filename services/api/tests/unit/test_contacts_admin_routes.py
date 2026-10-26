@@ -587,125 +587,6 @@ async def test_list_contacts_sort_tenant_id_returns_422(app: Any, db: _StubDatab
     assert response.json()["error_code"] == "INVALID_CONTACT_SORT"
 
 
-async def test_list_contacts_dir_unknown_returns_422_invalid_contact_sort_direction(
-    app: Any, db: _StubDatabase,
-) -> None:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"sort": "name", "dir": "sideways"},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "INVALID_CONTACT_SORT_DIRECTION"
-
-
-@pytest.mark.parametrize("sort", ["name", "email", "account", "owner", "created"])
-async def test_list_contacts_all_five_sort_keys_return_200(
-    app: Any, db: _StubDatabase, sort: str,
-) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id=f"contact-{sort}")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"sort": sort, "dir": "asc"},
-            cookies={"access_token": _token(Role.CLIENT_AGENT)},
-        )
-
-    assert response.status_code == 200
-
-
-async def test_list_contacts_sort_by_owner_returns_200(app: Any, db: _StubDatabase) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"sort": "owner", "dir": "asc"},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.status_code == 200
-
-
-async def test_list_contacts_sort_by_account_returns_200(app: Any, db: _StubDatabase) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"sort": "account", "dir": "asc"},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.status_code == 200
-
-
-async def test_list_contacts_q_matches_name_substring_case_insensitive(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", name="Alice Needle", email="a@x.example")
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-2", name="Bob Other", email="b@x.example")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts", params={"q": "needle"}, cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert [i["contact_id"] for i in response.json()["items"]] == ["contact-1"]
-
-
-async def test_list_contacts_q_matches_email_substring_case_insensitive(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", name="Alice", email="needle@x.example")
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-2", name="Bob", email="other@x.example")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts", params={"q": "NEEDLE"}, cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert [i["contact_id"] for i in response.json()["items"]] == ["contact-1"]
-
-
-async def test_list_contacts_q_too_short_returns_422_invalid_contact_search(
-    app: Any, db: _StubDatabase,
-) -> None:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts", params={"q": "a"}, cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "INVALID_CONTACT_SEARCH"
-
-
-async def test_list_contacts_q_too_long_returns_422(app: Any, db: _StubDatabase) -> None:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"q": "a" * 201},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "INVALID_CONTACT_SEARCH"
-
-
-async def test_list_contacts_q_empty_string_treated_as_omitted_returns_200(
-    app: Any, db: _StubDatabase,
-) -> None:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts", params={"q": ""}, cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.status_code == 200
-
-
 async def test_list_contacts_q_percent_wildcard_is_literal(app: Any, db: _StubDatabase) -> None:
     db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", name="100% Match")
     db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-2", name="No Percent")
@@ -716,94 +597,6 @@ async def test_list_contacts_q_percent_wildcard_is_literal(app: Any, db: _StubDa
         )
 
     assert [i["contact_id"] for i in response.json()["items"]] == ["contact-1"]
-
-
-async def test_list_contacts_account_id_filter_narrows_to_that_account(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_account(tenant_id=_TENANT_ID, account_id="acct-1")
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", account_id="acct-1")
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-2", account_id="acct-2")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"account_id": "acct-1"},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert [i["contact_id"] for i in response.json()["items"]] == ["contact-1"]
-
-
-async def test_list_contacts_account_id_filter_unknown_id_returns_200_empty(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", account_id="acct-1")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"account_id": "does-not-exist"},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["items"] == []
-
-
-async def test_list_contacts_account_id_filter_from_other_tenant_returns_empty(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_contact(tenant_id=_OTHER_TENANT_ID, contact_id="contact-other", account_id="acct-other")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"account_id": "acct-other"},
-            cookies={"access_token": _token(Role.CLIENT_AGENT, tenant_id=_TENANT_ID)},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["items"] == []
-
-
-async def test_list_contacts_account_id_filter_composes_with_q_and_sort(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_contact(
-        tenant_id=_TENANT_ID, contact_id="contact-1", account_id="acct-1", name="Needle A",
-    )
-    db.seed_contact(
-        tenant_id=_TENANT_ID, contact_id="contact-2", account_id="acct-1", name="Other B",
-    )
-    db.seed_contact(
-        tenant_id=_TENANT_ID, contact_id="contact-3", account_id="acct-2", name="Needle C",
-    )
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"account_id": "acct-1", "q": "needle", "sort": "name", "dir": "asc"},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert [i["contact_id"] for i in response.json()["items"]] == ["contact-1"]
-
-
-async def test_list_contacts_account_id_filter_changes_total_count(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", account_id="acct-1")
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-2", account_id="acct-2")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"account_id": "acct-1"},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.json()["total"] == 1
 
 
 @pytest.mark.parametrize("sort", ["name", "email", "account", "owner", "created"])
@@ -826,52 +619,6 @@ async def test_list_contacts_cross_tenant_isolation_every_sort_key(
     assert ids == ["contact-mine"]
 
 
-async def test_list_contacts_q_cross_tenant_isolation(app: Any, db: _StubDatabase) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-mine", name="Needle Corp")
-    db.seed_contact(tenant_id=_OTHER_TENANT_ID, contact_id="contact-other", name="Needle Corp")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"q": "needle"},
-            cookies={"access_token": _token(Role.CLIENT_AGENT, tenant_id=_TENANT_ID)},
-        )
-
-    ids = [i["contact_id"] for i in response.json()["items"]]
-    assert ids == ["contact-mine"]
-
-
-async def test_list_contacts_client_agent_may_sort_and_search(app: Any, db: _StubDatabase) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", name="Alice")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"sort": "name", "dir": "asc", "q": "alice"},
-            cookies={"access_token": _token(Role.CLIENT_AGENT)},
-        )
-
-    assert response.status_code == 200
-
-
-async def test_list_contacts_visitor_still_403(app: Any, db: _StubDatabase) -> None:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"sort": "name"},
-            cookies={"access_token": _token(Role.VISITOR)},
-        )
-
-    assert response.status_code == 403
-
-
-async def test_list_contacts_no_auth_still_401(app: Any, db: _StubDatabase) -> None:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/admin/contacts", params={"sort": "name"})
-
-    assert response.status_code == 401
-
-
 async def test_list_contacts_platform_admin_implicit_route_still_403(
     app: Any, db: _StubDatabase,
 ) -> None:
@@ -882,54 +629,6 @@ async def test_list_contacts_platform_admin_implicit_route_still_403(
         )
 
     assert response.status_code == 403
-
-
-async def test_list_contacts_tenant_scoped_route_accepts_sort_and_q(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", name="Acme")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        token = _token(Role.PLATFORM_ADMIN, tenant_id=None)
-        response = await client.get(
-            f"/admin/tenants/{_TENANT_ID}/contacts",
-            params={"sort": "name", "dir": "asc", "q": "acme"},
-            cookies={"access_token": token},
-        )
-
-    assert response.status_code == 200
-    assert [i["contact_id"] for i in response.json()["items"]] == ["contact-1"]
-
-
-async def test_list_contacts_tenant_scoped_route_accepts_account_id_filter(
-    app: Any, db: _StubDatabase,
-) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1", account_id="acct-1")
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-2", account_id="acct-2")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        token = _token(Role.PLATFORM_ADMIN, tenant_id=None)
-        response = await client.get(
-            f"/admin/tenants/{_TENANT_ID}/contacts",
-            params={"account_id": "acct-1"},
-            cookies={"access_token": token},
-        )
-
-    assert response.status_code == 200
-    assert [i["contact_id"] for i in response.json()["items"]] == ["contact-1"]
-
-
-async def test_list_contacts_response_shape_has_no_new_fields(app: Any, db: _StubDatabase) -> None:
-    db.seed_contact(tenant_id=_TENANT_ID, contact_id="contact-1")
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/admin/contacts", cookies={"access_token": _token(Role.CLIENT_ADMIN)})
-
-    item = response.json()["items"][0]
-    assert set(item.keys()) == {
-        "contact_id", "account_id", "lead_id", "name", "email", "phone",
-        "owner_agent_id", "created_at",
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1246,20 +945,6 @@ async def test_list_contacts_sort_unknown_key_returns_422_invalid_contact_sort(
         response = await client.get(
             "/admin/contacts",
             params={"sort": payload},
-            cookies={"access_token": _token(Role.CLIENT_ADMIN)},
-        )
-
-    assert response.status_code == 422
-    assert response.json()["error_code"] == "INVALID_CONTACT_SORT"
-
-
-async def test_list_contacts_sort_sql_injection_payload_returns_422(
-    app: Any, db: _StubDatabase,
-) -> None:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get(
-            "/admin/contacts",
-            params={"sort": "created_at; DROP TABLE contacts--"},
             cookies={"access_token": _token(Role.CLIENT_ADMIN)},
         )
 

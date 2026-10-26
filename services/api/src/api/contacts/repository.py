@@ -29,11 +29,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from asyncpg.exceptions import UniqueViolationError
 from common.auth import AuthClaims
 from common.db import Database
-from common.errors import ValidationError
+from common.errors import NotFoundError, ValidationError
+from common.phone import to_e164
 
 
 @dataclass(frozen=True)
@@ -108,6 +110,22 @@ CONTACT_SORT_DEFAULT_DIRECTIONS: dict[str, str] = {
     "owner": "asc",
     "created": "desc",
 }
+
+
+def normalise_identity(identity_type: str, identity_value: str) -> str:
+    """Canonical form for identity storage and lookup (A1 D6).
+
+    ``email`` -> trimmed + lower-cased; ``phone`` -> E.164 (``INVALID_PHONE``
+    when it can't be dialled); every other type is stored exactly as given.
+    """
+    if identity_type == "email":
+        return identity_value.strip().lower()
+    if identity_type == "phone":
+        e164 = to_e164(identity_value)
+        if e164 is None:
+            raise ValidationError("This phone number can't be dialled.", code="INVALID_PHONE")
+        return e164
+    return identity_value
 
 
 def _escape_ilike_pattern(value: str) -> str:
@@ -373,6 +391,7 @@ async def add_identity(
     a different contact (D4's tenant-scoped unique index).
     """
     _reject_global(claims)
+    identity_value = normalise_identity(identity_type, identity_value)
 
     new_identity_id = uuid4().hex
     try:
@@ -422,6 +441,7 @@ async def get_contact_id_by_identity(
 ) -> str | None:
     """Resolve a contact_id from an identity value, tenant-scoped, or ``None``."""
     _reject_global(claims)
+    identity_value = normalise_identity(identity_type, identity_value)
 
     row = await db.fetchrow(
         "SELECT contact_id FROM contact_identities "
@@ -431,6 +451,67 @@ async def get_contact_id_by_identity(
         identity_value,
     )
     return str(row["contact_id"]) if row is not None else None
+
+
+async def find_contacts(
+    db: Database,
+    claims: AuthClaims,
+    *,
+    emails: list[str],
+    names: list[str],
+    created_since: datetime | None,
+    import_id: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Contacts matching ANY of: an email identity, an exact (case-insensitive) name,
+    created since a time, or imported by an outreach import. Tenant-scoped (A5 J10)."""
+    _reject_global(claims)
+    rows = await db.fetch(
+        "SELECT DISTINCT c.contact_id, c.name, c.email FROM contacts c "
+        "LEFT JOIN contact_identities i ON i.tenant_id = c.tenant_id "
+        "AND i.contact_id = c.contact_id AND i.identity_type = 'email' "
+        "WHERE c.tenant_id = $1 AND ("
+        "  i.identity_value = ANY($2::text[]) "
+        "  OR lower(c.name) = ANY($3::text[]) "
+        "  OR ($4::timestamptz IS NOT NULL AND c.created_at >= $4) "
+        "  OR ($5::text IS NOT NULL AND c.consent->>'import_id' = $5)"
+        ") ORDER BY c.name NULLS LAST LIMIT $6",
+        claims.tenant_id, emails, names, created_since, import_id, limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_contact_timezone(db: Database, claims: AuthClaims, contact_id: str) -> str | None:
+    """The contact's IANA timezone (used for contact-local calling windows), or ``None``."""
+    _reject_global(claims)
+    value = await db.fetchval(
+        "SELECT timezone FROM contacts WHERE tenant_id = $1 AND contact_id = $2",
+        claims.tenant_id,
+        contact_id,
+    )
+    return str(value) if value is not None else None
+
+
+async def set_contact_timezone(
+    db: Database, claims: AuthClaims, contact_id: str, timezone: str | None
+) -> None:
+    """Set (or clear) the contact's IANA timezone. ``INVALID_TIMEZONE`` for an
+    unknown zone; ``CONTACT_NOT_FOUND`` when the contact isn't in this tenant."""
+    _reject_global(claims)
+    if timezone is not None:
+        try:
+            ZoneInfo(timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValidationError("Unknown timezone.", code="INVALID_TIMEZONE") from exc
+    tag = await db.execute(
+        "UPDATE contacts SET timezone = $3, updated_at = now() "
+        "WHERE tenant_id = $1 AND contact_id = $2",
+        claims.tenant_id,
+        contact_id,
+        timezone,
+    )
+    if _rows_affected(tag) == 0:
+        raise NotFoundError("Contact not found.", code="CONTACT_NOT_FOUND")
 
 
 def _rows_affected(command_tag: str) -> int:

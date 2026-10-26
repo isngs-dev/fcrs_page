@@ -376,6 +376,12 @@ def test_beat_schedule_contains_exactly_the_known_periodic_tasks() -> None:
         "dispatch-due-reminders",
         "prune-notification-events",
         "close-idle-conversations",
+        # A1: outbox + outreach-task dispatchers, lease reaper, audit-chain sealer.
+        "agents-dispatch-events",
+        "agents-dispatch-due-tasks",
+        "agents-reap-stale",
+        "agents-seal-audit-chain",
+        "agents-purge-recordings",  # A9 H8
     ]
 
 

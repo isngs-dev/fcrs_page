@@ -73,14 +73,15 @@ class _StubDatabase:
             return "UPDATE 1"
 
         if q.startswith("UPDATE LEADS SET NAME"):
-            # update_lead_contact -- args: name, email, consent, tenant_id, lead_id
-            name, email, consent, tenant_id, lead_id = args
+            # update_lead_contact -- args: name, email, consent, tenant_id, lead_id, phone
+            name, email, consent, tenant_id, lead_id, phone = args
             key = (tenant_id, lead_id)
             existing = self._leads.get(key)
             if existing is None:
                 return "UPDATE 0"
             existing["name"] = existing["name"] if name is None else name
             existing["email"] = existing["email"] if email is None else email
+            existing["phone"] = existing.get("phone") if phone is None else phone
             existing["consent"] = consent
             existing["updated_at"] = _NOW
             return "UPDATE 1"

@@ -19,10 +19,12 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { CHANNEL_CONSENT_VERSION, channelConsentOffer, timeZoneField } from "../channelConsent";
 import type { WidgetConfig } from "../config";
 import { CONSENT_PURPOSE, CONSENT_TEXT, submitLead } from "../lead";
 import { formatUsPhoneInput } from "../phoneFormat";
 import type { BookingPrefill } from "../turn";
+import { ChannelConsents, type ChannelConsentValue } from "./ChannelConsents";
 
 const LOG_PREFIX = "[chatbot-widget]";
 
@@ -40,6 +42,9 @@ export function LeadForm({ config, onSubmitted, prefill }: LeadFormProps) {
   const [email, setEmail] = useState(prefill?.email ?? "");
   const [phone, setPhone] = useState(prefill?.phone ?? "");
   const [consentChecked, setConsentChecked] = useState(false);
+  // A4: optional follow-up boxes, shown only when the tenant can use them.
+  const [offer] = useState(channelConsentOffer);
+  const [channels, setChannels] = useState<ChannelConsentValue>({ email: false, call: false });
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [succeeded, setSucceeded] = useState(false);
@@ -76,6 +81,16 @@ export function LeadForm({ config, onSubmitted, prefill }: LeadFormProps) {
       email: email.trim(),
       ...(phone.trim() ? { phone: phone.trim() } : {}),
       consent: { granted: true, purpose: CONSENT_PURPOSE, text: CONSENT_TEXT },
+      ...(offer
+        ? {
+            channelConsents: {
+              email: offer.email && channels.email,
+              call: offer.call && channels.call && phone.trim().length > 0,
+              version: CHANNEL_CONSENT_VERSION,
+            },
+          }
+        : {}),
+      ...timeZoneField(),
     });
 
     if (!result.ok) {
@@ -164,6 +179,17 @@ export function LeadForm({ config, onSubmitted, prefill }: LeadFormProps) {
           {CONSENT_TEXT}
         </label>
       </div>
+
+      {offer && (
+        <ChannelConsents
+          idPrefix="cw-lead"
+          offer={offer}
+          value={channels}
+          onChange={setChannels}
+          disabled={submitting}
+          hasPhone={phone.trim().length > 0}
+        />
+      )}
 
       {errorMessage && (
         <div className="cw-lead-error" role="alert">

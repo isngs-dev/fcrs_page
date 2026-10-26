@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from openai import APIError
 
-from api.llm.openai_provider import OpenAICompatibleProvider
+from api.llm.openai_provider import _REASONING_HEADROOM_TOKENS, OpenAICompatibleProvider
 from api.llm.provider import ChatMessage, Chunk, Completion, LLMError
 
 
@@ -208,7 +208,8 @@ async def test_generate_does_not_send_forbidden_params() -> None:
 
 @pytest.mark.parametrize(
     ("model", "sent"),
-    [("gpt-oss:20b", True), ("gpt-oss:20b-cloud", True), ("o3-mini", True), ("gpt-4o", False)],
+    [("gpt-oss:20b", True), ("gpt-oss:20b-cloud", True), ("o3-mini", True), ("gpt-4o", False),
+     ("gpt-6-luna", True), ("gpt-6.1-sol", True)],
 )
 async def test_generate_sends_reasoning_effort_only_to_reasoning_models(model: str, sent: bool) -> None:
     """The hint speeds up reasoning models; non-reasoning models reject the
@@ -221,6 +222,34 @@ async def test_generate_sends_reasoning_effort_only_to_reasoning_models(model: s
     )
 
     assert stub.last_kwargs.get("reasoning_effort") == ("low" if sent else None)
+
+
+@pytest.mark.parametrize(
+    ("model", "key"),
+    [("gpt-4o", "max_tokens"), ("gpt-oss:20b", "max_tokens"),  # Ollama speaks max_tokens
+     ("gpt-5-mini", "max_completion_tokens"), ("gpt-6-luna", "max_completion_tokens"),
+     ("gpt-6.1-sol", "max_completion_tokens"), ("o3-mini", "max_completion_tokens")],
+)
+async def test_token_limit_param_matches_the_model_family(model: str, key: str) -> None:
+    """OpenAI's reasoning models reject ``max_tokens`` with a 400 ("Use
+    'max_completion_tokens' instead") -- every call path must send the right one."""
+    other = "max_tokens" if key == "max_completion_tokens" else "max_completion_tokens"
+    # Reasoning tokens count against max_completion_tokens: a 20-token label call
+    # on gpt-6-luna came back EMPTY (stop=length), so those models get headroom.
+    extra = _REASONING_HEADROOM_TOKENS if key == "max_completion_tokens" else 0
+    stub = _StubCompletions(stream_events=[])
+    provider = OpenAICompatibleProvider(client=_make_stub_client(stub))
+
+    await provider.generate([ChatMessage("user", "Hi")], model=model, max_tokens=99)
+    assert stub.last_kwargs[key] == 99 + extra and other not in stub.last_kwargs
+
+    stub._text = "Sales"
+    await provider.classify("hi", labels=["Sales", "Support"], model=model)
+    assert key in stub.last_kwargs and other not in stub.last_kwargs
+
+    async for _ in provider.stream([ChatMessage("user", "Hi")], model=model, max_tokens=77):
+        pass
+    assert stub.last_kwargs[key] == 77 + extra and other not in stub.last_kwargs
 
 
 async def test_generate_content_none_yields_empty_text() -> None:

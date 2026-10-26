@@ -22,8 +22,10 @@ from common.auth import AuthClaims
 from common.errors import ValidationError
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
+from api.agents import hooks as agent_hooks
+from api.agents.consent_wording import ChannelConsentsIn, granted_channels
 from api.gateway.dependencies import get_visitor_claims
 from api.leads.assignment import assign_lead_fail_open
 from api.leads.repository import (
@@ -53,6 +55,9 @@ class IdentityCaptureRequest(BaseModel):
     name: str
     email: str
     consent: IdentityConsentPayload | None = None
+    # A4: optional email follow-up consent (no phone here, so never a call box).
+    channel_consents: ChannelConsentsIn | None = None
+    timezone: str | None = Field(default=None, max_length=64)
 
     @field_validator("name")
     @classmethod
@@ -111,6 +116,8 @@ async def capture_identity(
             "Consent to store contact information is required.",
             code="CONSENT_REQUIRED",
         )
+
+    channels = granted_channels(body.channel_consents, has_phone=False)  # A4 H2
 
     # -- Stamp consent with server time (never client-supplied) -------------
     consent_with_timestamp = {
@@ -181,6 +188,11 @@ async def capture_identity(
         payload=None,
         actor="visitor",
     )
+
+    await agent_hooks.inbound_lead_created(  # A4 H6 (fail-safe)
+        db, claims, lead_id=lead_id, channels=channels,
+        version=body.channel_consents.version if body.channel_consents else None,
+        timezone=body.timezone, form="identity_form")
 
     # -- Log the event (PII-safe) ---------------------------------------------
     _log.info(

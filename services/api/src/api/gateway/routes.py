@@ -7,12 +7,14 @@ GET /widget/whoami -- proves downstream VISITOR resolution from the bearer token
 """
 from __future__ import annotations
 
-from common.auth import AuthClaims
+from common.auth import AuthClaims, Role
 from common.errors import AuthorizationError, ValidationError
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
+from api.agents.consent_wording import CURRENT_VERSION as CONSENT_VERSION
+from api.agents.repository import get_agent_settings
 from api.calls.voice_repository import get_voice_call_enabled_by_tenant_id
 from api.config import get_api_settings
 from api.gateway.dependencies import get_visitor_claims
@@ -43,7 +45,7 @@ class WidgetSessionRequest(BaseModel):
 async def widget_session(
     body: WidgetSessionRequest,
     request: Request,
-) -> dict[str, str | bool | list[str]]:
+) -> dict[str, object]:
     """Validate client key + Origin, mint a visitor session token."""
     settings = get_api_settings()
 
@@ -97,7 +99,10 @@ async def widget_session(
         "visitor session minted",
         extra={"event": "widget_session", "tenant_id": tenant["id"]},
     )
-    response: dict[str, str | bool | list[str]] = {
+    # A4 H4: which follow-up consent boxes the widget may show (only usable ones).
+    outreach = await get_agent_settings(
+        db, AuthClaims(subject="gateway", role=Role.VISITOR, tenant_id=tenant["id"]))
+    response: dict[str, object] = {
         "visitor_token": token,
         "expires_at": expires_at,
         "resume_enabled": resume_enabled,
@@ -116,6 +121,12 @@ async def widget_session(
         # the platform's Plivo is set up for browser calls.
         "voice_agent_enabled": voice_agent.enabled and voice_agent_ready(settings),
     }
+    if outreach.inbound_auto_enabled and outreach.enabled_channels:
+        response["outreach_consent"] = {
+            "email": "email" in outreach.enabled_channels,
+            "call": "call" in outreach.enabled_channels,
+            "version": CONSENT_VERSION,
+        }
     if launcher_label is not None:
         response["launcher_label"] = launcher_label
     if branding.bot_name is not None:

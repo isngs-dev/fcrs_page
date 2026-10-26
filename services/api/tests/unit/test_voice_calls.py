@@ -15,6 +15,7 @@ import httpx
 import pytest
 from common.auth import AuthClaims, Role
 from common.cache import InMemoryCache
+from common.phone import to_e164
 from httpx import ASGITransport, AsyncClient
 
 from api.calls.voice import (
@@ -24,7 +25,6 @@ from api.calls.voice import (
     question_twiml,
     render_questions,
     schedule_booking_call,
-    to_e164,
 )
 from api.calls.voice_repository import VoiceCall, VoiceCallConfig
 from api.calls.voice_tasks import TwilioTransientError, place_call

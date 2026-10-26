@@ -14,7 +14,7 @@ from common.auth import AuthClaims
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from api.gateway.dependencies import get_visitor_claims
 from api.notifications.emit import emit_event_safe
@@ -31,6 +31,9 @@ class ChatMessageRequest(BaseModel):
     message: str
     conversation_id: str | None = None
     message_id: str | None = None
+    # The visitor's IANA timezone (browser) -- for contact-local calling
+    # windows when they share a phone number in the chat.
+    timezone: str | None = Field(default=None, max_length=64)
 
     @field_validator("message")
     @classmethod
@@ -110,6 +113,7 @@ async def post_message(
         message=body.message,
         conversation_id=body.conversation_id,
         message_id=body.message_id,
+        timezone=body.timezone,
     )
 
     # -- Log the event (PII-safe: never the message text, reply, or raw
@@ -213,6 +217,7 @@ async def post_message_stream(
         message=body.message,
         conversation_id=body.conversation_id,
         message_id=body.message_id,
+        timezone=body.timezone,
     )
 
     # Prime the generator: this executes _resolve_turn (and everything up to

@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from common.auth import AuthClaims
 from common.db import Database
+from common.phone import to_e164
 
 from api.calls.voice_repository import (
     DEFAULT_QUESTIONS,
@@ -35,20 +36,6 @@ _YES_WORDS = {
     "yes", "yeah", "yep", "yup", "sure", "correct", "absolutely", "definitely", "ok", "okay",
 }
 _NO_WORDS = {"no", "nope", "nah", "not", "never", "don't", "dont", "negative"}
-
-
-def to_e164(phone: str) -> str | None:
-    """Normalise a typed phone number for Twilio. Ten digits are read as a US/
-    Canada number (the widget's phone field is US-formatted); anything else
-    must already carry its +country code. ``None`` when it can't be dialled."""
-    digits = re.sub(r"\D", "", phone)
-    if phone.strip().startswith("+") and 8 <= len(digits) <= 15:
-        return f"+{digits}"
-    if len(digits) == 10:
-        return f"+1{digits}"
-    if len(digits) == 11 and digits.startswith("1"):
-        return f"+{digits}"
-    return None
 
 
 def render_questions(questions: list[str], starts_at: datetime, timezone: str) -> list[str]:

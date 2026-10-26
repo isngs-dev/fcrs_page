@@ -32,8 +32,10 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { CHANNEL_CONSENT_VERSION, channelConsentOffer, timeZoneField } from "../channelConsent";
 import type { WidgetConfig } from "../config";
 import { CHAT_IDENTITY_CONSENT_PURPOSE, CHAT_IDENTITY_CONSENT_TEXT, submitIdentity } from "../identity";
+import { ChannelConsents, type ChannelConsentValue } from "./ChannelConsents";
 
 const LOG_PREFIX = "[chatbot-widget]";
 
@@ -48,6 +50,12 @@ export function IdentityForm({ config, onCaptured }: IdentityFormProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [consentChecked, setConsentChecked] = useState(false);
+  // A4: no phone in this form, so only the email box is ever offered.
+  const [offer] = useState(() => {
+    const o = channelConsentOffer();
+    return o && o.email ? { email: true, call: false } : null;
+  });
+  const [channels, setChannels] = useState<ChannelConsentValue>({ email: false, call: false });
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [succeeded, setSucceeded] = useState(false);
@@ -80,6 +88,10 @@ export function IdentityForm({ config, onCaptured }: IdentityFormProps) {
       name: name.trim(),
       email: email.trim(),
       consent: { granted: true, purpose: CHAT_IDENTITY_CONSENT_PURPOSE, text: CHAT_IDENTITY_CONSENT_TEXT },
+      ...(offer
+        ? { channelConsents: { email: channels.email, call: false, version: CHANNEL_CONSENT_VERSION } }
+        : {}),
+      ...timeZoneField(),
     });
 
     if (!result.ok) {
@@ -152,6 +164,17 @@ export function IdentityForm({ config, onCaptured }: IdentityFormProps) {
           {CHAT_IDENTITY_CONSENT_TEXT}
         </label>
       </div>
+
+      {offer && (
+        <ChannelConsents
+          idPrefix="cw-identity"
+          offer={offer}
+          value={channels}
+          onChange={setChannels}
+          disabled={submitting}
+          hasPhone={false}
+        />
+      )}
 
       {errorMessage && (
         <div className="cw-identity-error" role="alert">

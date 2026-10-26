@@ -58,10 +58,10 @@ from api.conversation_store.repository import (
     get_recent_assistant_intents,
     get_working_memory,
 )
-from api.leads.repository import get_lead, get_lead_id_by_visitor_id
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, LLMError, LLMProvider
+from api.orchestrator import identity_capture
 from api.orchestrator.config_repository import get_orchestrator_config
 from api.orchestrator.guardrails import scan_output
 from api.rag.service import HybridMatch, retrieve_hybrid
@@ -173,6 +173,12 @@ class _GeneratePlan:
     intent: str | None
     model: str
     provider: LLMProvider
+    # Code-owned text appended to a successful ``answer`` (never to an escalate
+    # or a guardrail block) -- e.g. the phone ask with its call-consent
+    # disclosure, which must be exact, so the model never writes it.
+    # ``suffix_intent`` replaces the stored intent when the suffix is shown.
+    suffix: str | None = None
+    suffix_intent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -494,18 +500,6 @@ async def _extract_booking_prefill(
     return prefill
 
 
-# Fixed identity-gate template (SR-14 D1/D4) -- the trusted-constant reply
-# shown on a gated tenant's first bot reply (and every subsequent reply,
-# D2's absolute gate) when the visitor has no captured identity yet. The
-# widget renders the consent-gated <IdentityForm> inline in the thread on
-# action="identity_form"; the visitor's real question is already durable
-# (step 5 ran before this branch, C2) and is auto-answered on capture (D3).
-_IDENTITY_GATE_REPLY = (
-    "Before I answer, could you share your name and email? I'll use it to "
-    "follow up on this conversation -- once you've confirmed, I'll answer "
-    "your question right away."
-)
-
 # Fixed guardrail-block safe reply (S10.3 decision 4) -- substituted for a
 # generated reply that trips scan_output. Never the flagged text; also
 # consent-forward (same downstream UX as a genuine escalate -- offer a human,
@@ -520,28 +514,6 @@ _GUARDRAIL_SAFE_REPLY = (
 # expected chat role ('user'|'assistant'|'system') -- the store never sends
 # role="bot" to a provider (S4.1 decision 5 vs S10.1 decision 4).
 _ROLE_MAP: dict[str, str] = {"user": "user", "bot": "assistant", "system": "system"}
-
-
-async def _has_captured_identity(db: Database, claims: AuthClaims) -> bool:
-    """Has this visitor already captured identity in this tenant? (SR-14 D1/D2)
-
-    Reuses SR-9.1's exact create-or-link lookup (``get_lead_id_by_visitor_id``)
-    rather than inventing a new query -- the visitor's most-recent lead,
-    tenant-scoped. A visitor with NO lead at all has not captured identity.
-    A visitor WITH a lead may still have NULL ``name``/``email`` (migration
-    0039 -- an anonymous SR-9.1 booking creates a NULL-contact lead); that
-    case is also "not yet captured" so the gate still fires and D6's
-    ``update_lead_contact`` fills in the existing row rather than a fresh
-    lead being created. Only a lead with BOTH ``name`` and ``email`` set
-    counts as captured -- the never-re-ask half of D2.
-    """
-    lead_id = await get_lead_id_by_visitor_id(db, claims, claims.subject)
-    if lead_id is None:
-        return False
-    lead = await get_lead(db, claims, lead_id)
-    if lead is None:
-        return False
-    return lead.name is not None and lead.email is not None
 
 
 async def _schedule_action(db: Database, claims: AuthClaims) -> str:
@@ -644,6 +616,7 @@ async def _resolve_turn(
     message: str,
     conversation_id: str | None,
     message_id: str | None,
+    timezone: str | None = None,
 ) -> _ReplayOutcome | _FixedOutcome | _GeneratePlan:
     """Run steps 1-8 of the turn pipeline (S10.5 decision 1) -- everything
     BEFORE a ``generate``/``stream`` call. Single-sourced by both
@@ -715,31 +688,97 @@ async def _resolve_turn(
 
     provider = provider_for(config)
 
-    # Step 5.5 (SR-14 D1/D2/D9): the identity gate -- an INDEPENDENT,
-    # pre-empting trigger, placed AFTER the user turn is durably stored (C2)
-    # and BEFORE the turn-cap check. Fires when the tenant has the gate
-    # enabled (default OFF, D9) AND this visitor has no captured identity yet
-    # (D1's "no server-side conversation at widget-open" reconciliation --
-    # this is the earliest point the server can gate). Absolute (D2): every
-    # subsequent ungated message returns this same reply again, forever, until
-    # captured -- no escape hatch, no turn budget spent trying. Zero LLM cost
-    # (C1): classify/retrieve_hybrid/generate never run on a gate turn -- the
-    # provider was resolved but never used, so it is closed here exactly like
-    # the turn-cap short-circuit below.
-    if cfg.identity_gate_enabled and not await _has_captured_identity(db, claims):
-        await provider.aclose()
-        return _FixedOutcome(
-            conversation_id=conversation_id,
-            assistant_id=assistant_id,
-            reply=_IDENTITY_GATE_REPLY,
-            decision="identity_gate",
-            confidence=None,
-            sources=[],
-            intent=None,
-            action="identity_form",
-            grounded=False,
-            tokens=None,
-        )
+    # Step 5.5: conversational identity capture (replaces SR-14's up-front
+    # name+email form). With the tenant's identity gate on: the first message
+    # gets a fixed "what's your name?" (zero LLM cost; decision="identity_gate"
+    # so it never spends turn_cap budget, SR-14 D10); the next message, if it
+    # is a name, is saved and the ORIGINAL question is answered by name. A
+    # visitor who skips it is simply answered -- asked once, never nagged.
+    # An email typed at any point is captured (and acknowledged when that's
+    # all the message was); the thank-you then asks for a phone number with
+    # the call-consent disclosure. A number shared right after that
+    # disclosure is AI-call consent; one shared without it is just saved.
+    # The natural email ask and the later phone ask are added at Step 6.5.
+    first_name: str | None = None
+    deferred: str | None = None
+    lead_has_email = True
+    lead_has_phone = True
+    captured_email = False
+    captured_phone = False
+    asked_phone = False
+    if cfg.identity_gate_enabled:
+        lead = await identity_capture.visitor_lead(db, claims)
+        recent_bot = await get_recent_assistant_intents(db, claims, conversation_id, limit=20)
+        asked_phone = identity_capture.ASK_PHONE_INTENT in recent_bot
+        if not (lead and lead.name):
+            asked = await count_messages(
+                db, claims, conversation_id, role="bot", decision="identity_gate",
+            )
+            if not asked:
+                await provider.aclose()
+                return _FixedOutcome(
+                    conversation_id=conversation_id,
+                    assistant_id=assistant_id,
+                    reply=identity_capture.ASK_NAME_REPLY,
+                    decision="identity_gate",
+                    confidence=None,
+                    sources=[],
+                    intent=identity_capture.ASK_NAME_INTENT,
+                    action=None,
+                    grounded=False,
+                    tokens=None,
+                )
+            name = identity_capture.name_from_reply(message)
+            if recent_bot[:1] == [identity_capture.ASK_NAME_INTENT] and name:
+                lead = await identity_capture.save_name(db, claims, lead, name)
+                memory = await get_working_memory(db, claims, conversation_id, keep_recent=6)
+                deferred = identity_capture.deferred_question(memory["messages"])
+                if deferred:
+                    message = deferred  # classify/retrieve the question they actually asked
+        phone = identity_capture.phone_in(message)
+        if phone and not (lead and lead.phone):
+            consented = recent_bot[:1] == [identity_capture.ASK_PHONE_INTENT]
+            lead = await identity_capture.save_phone(
+                db, claims, lead, phone, consented=consented, timezone=timezone)
+            captured_phone = True
+        email = identity_capture.email_in(message)
+        if email and not (lead and lead.email):
+            lead = await identity_capture.save_email(db, claims, lead, email)
+            captured_email = True
+        first_name = identity_capture.safe_first_name(lead.name if lead else None)
+        if captured_email and email and identity_capture.is_only_email(message, email):
+            ask_number = not (lead and lead.phone) and not asked_phone
+            await provider.aclose()
+            return _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=identity_capture.email_ack_reply(first_name, email, ask_phone=ask_number),
+                decision="answer",
+                confidence=None,
+                sources=[],
+                intent=(identity_capture.ASK_PHONE_INTENT if ask_number
+                        else identity_capture.EMAIL_CAPTURED_INTENT),
+                action=None,
+                grounded=False,
+                tokens=None,
+            )
+        if captured_phone and identity_capture.is_only_phone(message):
+            await provider.aclose()
+            return _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=identity_capture.phone_ack_reply(
+                    first_name, consented=recent_bot[:1] == [identity_capture.ASK_PHONE_INTENT]),
+                decision="answer",
+                confidence=None,
+                sources=[],
+                intent=identity_capture.PHONE_CAPTURED_INTENT,
+                action=None,
+                grounded=False,
+                tokens=None,
+            )
+        lead_has_email = bool(lead and lead.email)
+        lead_has_phone = bool(lead and lead.phone)
 
     # Step 5.55: the visitor's answer to "would you like to reschedule?" --
     # "no" keeps the booking; "yes" or a new day/time opens the booking card in
@@ -803,8 +842,9 @@ async def _resolve_turn(
     # card opens. A visitor who already has an upcoming booking is offered a
     # reschedule instead. Pre-empts the turn cap. The card is the existing
     # consent-gated booking flow, pre-filled: nothing is booked from chat text.
-    has_email = _EMAIL_RE.search(message) is not None
-    has_phone = _find_phone(message) is not None
+    # An email just captured as follow-up contact (Step 5.5) isn't a booking request.
+    has_email = _EMAIL_RE.search(message) is not None and not captured_email
+    has_phone = _find_phone(message) is not None and not captured_phone
     after_ask = (
         last_intent == "scheduling_request"
         and await get_last_assistant_decision(db, claims, conversation_id) == "escalate"
@@ -888,6 +928,20 @@ async def _resolve_turn(
     )
     turns = raw_turns - gate_turns
 
+    # Step 6.5: the natural email ask rides on the EMAIL_ASK_TURN-th answer.
+    ask_email = (cfg.identity_gate_enabled and not lead_has_email
+                 and turns == identity_capture.EMAIL_ASK_TURN)
+    # The number, asked once, a couple of turns after the email ask -- as a
+    # code-owned suffix so the call-consent disclosure is exact.
+    phone_ask = (cfg.identity_gate_enabled and not lead_has_phone and not asked_phone
+                 and not ask_email and turns >= identity_capture.PHONE_ASK_TURN)
+    suffix = identity_capture.PHONE_ASK if phone_ask else None
+    suffix_intent = identity_capture.ASK_PHONE_INTENT if phone_ask else None
+
+    def _personal(prompt: list[ChatMessage]) -> list[ChatMessage]:
+        return identity_capture.personalize(prompt, first_name=first_name, deferred=deferred,
+                                            ask_email=ask_email)
+
     if turns > cfg.turn_cap:
         action = await _schedule_action(db, claims)
         # Turn-cap short-circuits before classify -- provider was resolved
@@ -924,7 +978,7 @@ async def _resolve_turn(
         wm = await get_working_memory(
             db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
         )
-        prompt = _build_chitchat_prompt(wm)
+        prompt = _personal(_build_chitchat_prompt(wm))
         return _GeneratePlan(
             conversation_id=conversation_id,
             assistant_id=assistant_id,
@@ -936,6 +990,8 @@ async def _resolve_turn(
             intent=intent,
             model=config.model,
             provider=provider,
+            suffix=suffix,
+            suffix_intent=suffix_intent,
         )
 
     if intent == "off_topic":
@@ -1025,7 +1081,7 @@ async def _resolve_turn(
         wm = await get_working_memory(
             db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
         )
-        prompt = _build_chitchat_prompt(wm)
+        prompt = _personal(_build_chitchat_prompt(wm))
         return _GeneratePlan(
             conversation_id=conversation_id,
             assistant_id=assistant_id,
@@ -1037,6 +1093,8 @@ async def _resolve_turn(
             intent=intent,
             model=config.model,
             provider=provider,
+            suffix=suffix,
+            suffix_intent=suffix_intent,
         )
 
     result = await retrieve_hybrid(db, claims, message, k=settings.orchestrator_rag_k)
@@ -1053,7 +1111,7 @@ async def _resolve_turn(
         wm = await get_working_memory(
             db, claims, conversation_id, keep_recent=settings.orchestrator_history_turns,
         )
-        prompt = _build_prompt(wm, result.chunks)
+        prompt = _personal(_build_prompt(wm, result.chunks))
         sources = _sources_from_chunks(result.chunks)
         return _GeneratePlan(
             conversation_id=conversation_id,
@@ -1066,6 +1124,8 @@ async def _resolve_turn(
             intent=intent,
             model=config.model,
             provider=provider,
+            suffix=suffix,
+            suffix_intent=suffix_intent,
         )
 
     # Nothing retrieved at all -- offer the booking call directly (fixed
@@ -1084,6 +1144,13 @@ async def _resolve_turn(
         grounded=False,
         tokens=None,
     )
+
+
+def _with_suffix(final: _FinalizedGeneration, plan: _GeneratePlan) -> tuple[str, str | None]:
+    """``(reply, intent)`` with the plan's code-owned suffix on a clean answer."""
+    if plan.suffix and final.decision == "answer" and final.guardrail_flag is None:
+        return f"{final.reply.rstrip()}\n\n{plan.suffix}", plan.suffix_intent or plan.intent
+    return final.reply, plan.intent
 
 
 def _finalize_generation(text: str, plan: _GeneratePlan) -> _FinalizedGeneration:
@@ -1140,6 +1207,7 @@ async def answer_turn(
     message: str,
     conversation_id: str | None = None,
     message_id: str | None = None,
+    timezone: str | None = None,
 ) -> TurnResult:
     """Run one visitor turn end-to-end (decision 8, the extended pipeline).
 
@@ -1168,6 +1236,7 @@ async def answer_turn(
 
     plan = await _resolve_turn(
         db, claims, message=message, conversation_id=conversation_id, message_id=message_id,
+        timezone=timezone,
     )
 
     if isinstance(plan, _ReplayOutcome):
@@ -1230,14 +1299,15 @@ async def answer_turn(
         _log.info("post-generation no-answer escalate", extra={"event": "chat_no_answer_escalate"})
     elif final.decision == "clarify":
         _log.info("post-generation no-answer clarify", extra={"event": "chat_no_answer_clarify"})
+    reply, intent = _with_suffix(final, plan)
 
     stored_message_id = await append_message(
         db,
         claims,
         plan.conversation_id,
         role="bot",
-        content=final.reply,
-        intent=plan.intent,
+        content=reply,
+        intent=intent,
         decision=final.decision,
         grounded=final.grounded,
         confidence=plan.confidence,
@@ -1251,11 +1321,11 @@ async def answer_turn(
     return TurnResult(
         conversation_id=plan.conversation_id,
         message_id=stored_message_id,
-        reply=final.reply,
+        reply=reply,
         decision=final.decision,
         confidence=plan.confidence,
         sources=final.sources,
-        intent=plan.intent,
+        intent=intent,
         action=action,
         guardrail_flag=final.guardrail_flag,
     )
@@ -1335,6 +1405,7 @@ async def answer_turn_stream(
     message: str,
     conversation_id: str | None = None,
     message_id: str | None = None,
+    timezone: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run one visitor turn, streaming the assistant reply over SSE events
     (S10.5 decisions 2/3/5).
@@ -1360,6 +1431,7 @@ async def answer_turn_stream(
     """
     plan = await _resolve_turn(
         db, claims, message=message, conversation_id=conversation_id, message_id=message_id,
+        timezone=timezone,
     )
 
     if isinstance(plan, _ReplayOutcome):
@@ -1437,14 +1509,17 @@ async def answer_turn_stream(
         _log.info("post-generation no-answer escalate", extra={"event": "chat_no_answer_escalate"})
     elif final.decision == "clarify":
         _log.info("post-generation no-answer clarify", extra={"event": "chat_no_answer_clarify"})
+    reply, intent = _with_suffix(final, plan)
+    if reply != final.reply:
+        yield StreamEvent.delta(reply[len(final.reply):])
 
     stored_message_id = await append_message(
         db,
         claims,
         plan.conversation_id,
         role="bot",
-        content=final.reply,
-        intent=plan.intent,
+        content=reply,
+        intent=intent,
         decision=final.decision,
         grounded=final.grounded,
         confidence=plan.confidence,
@@ -1473,12 +1548,12 @@ async def answer_turn_stream(
     yield StreamEvent.done(
         conversation_id=plan.conversation_id,
         message_id=stored_message_id,
-        reply=final.reply,
+        reply=reply,
         decision=final.decision,
         confidence=plan.confidence,
         sources=_sources_to_payload(final.sources),
         action=action,
-        intent=plan.intent,
+        intent=intent,
         guardrail_flag=final.guardrail_flag,
     )
 

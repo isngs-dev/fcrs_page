@@ -9,11 +9,11 @@ import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from common.auth import AuthClaims, Role
+from common.phone import to_e164
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 
 from api.auth.dependencies import require_roles, resolve_tenant_scope
-from api.calls.voice import to_e164
 from api.config import get_api_settings
 from api.voice_agent.repository import (
     DEFAULT_TRANSFER_NUMBER,

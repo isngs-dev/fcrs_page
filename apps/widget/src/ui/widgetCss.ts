@@ -460,6 +460,13 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   cursor: pointer;
 }
 .cw-lead-consent-label, .cw-sched-consent-label { color: #5a5b54; font-size: 11px; line-height: 1.45; }
+/* A4 optional follow-up consent group (ChannelConsents.tsx). */
+.cw-channel-consents { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.cw-channel-consents-legend { padding: 0; margin: 0 0 2px; color: #5a5b54; font-size: 11px; font-weight: 600; }
+.cw-channel-consents-hint { flex-basis: 100%; margin-left: 26px; color: #5a5b54; font-size: 11px; }
+.cw-channel-consents .cw-lead-consent-row { flex-wrap: wrap; }
+.cw-channel-consents .cw-lead-consent-label { flex: 1 1 0; min-width: 0; }
+.cw-lead-checkbox:disabled { cursor: not-allowed; opacity: 0.55; }
 .cw-lead-error, .cw-sched-error, .cw-voice-error { padding: 7px 8px; border-radius: 7px; font-size: 11px; }
 .cw-sched-field-hint { margin: -4px 0 0; color: var(--cw-danger-ink); font-size: 11px; }
 .cw-voice-error { margin: 8px 18px 0; }

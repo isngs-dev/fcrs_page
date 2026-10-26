@@ -24,6 +24,7 @@ from common.logging import get_logger
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, field_validator
 
+from api.agents import hooks as agent_hooks
 from api.calls.voice import schedule_booking_call
 from api.calls.voice_tasks import place_voice_call
 from api.config import ApiSettings, get_api_settings
@@ -510,6 +511,10 @@ async def book_slot(
         meet_url = ref.meet_url
         organizer_email = ref.organizer_email
         await update_event_calendar_ref(db, claims, event.event_id, calendar_ref, meet_url)
+
+    # A2 E10: the booking is final here (past the calendar-sync compensation),
+    # so a contact with an outreach plan stops getting follow-ups. Never raises.
+    await agent_hooks.meeting_booked(db, claims, email=str(body.email) if body.email else None)
 
     # Best-effort booking-lead autolink (SR-9.1 C1). Placed AFTER the
     # calendar-sync block so a CALENDAR_SYNC_FAILED compensation (delete_event

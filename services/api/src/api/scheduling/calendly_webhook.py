@@ -42,6 +42,7 @@ from common.errors import AuthenticationError
 from common.logging import get_logger
 from fastapi import APIRouter, Request, Response
 
+from api.agents import hooks as agent_hooks
 from api.config import get_api_settings
 from api.notifications.recipients import resolve_event_recipient
 from api.notifications.repository import enqueue_notification
@@ -247,6 +248,8 @@ async def calendly_webhook(tenant_id: str, request: Request) -> Response:
     )
 
     claims = _webhook_claims(tenant_id)
+    # A2 E10: stop the contact's outreach plan (fail-safe, never raises).
+    await agent_hooks.meeting_booked(db, claims, email=email)
 
     # Reminder jobs (decision 6d) -- same idempotent creation path as native
     # bookings; a re-delivered invitee.created hits create_reminder_jobs'

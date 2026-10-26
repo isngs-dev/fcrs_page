@@ -21,6 +21,7 @@ from api.conversation_store.repository import Message
 from api.leads.repository import Lead
 from api.llm.config_repository import LLMConfig
 from api.llm.provider import ChatMessage, Chunk, Completion, LLMError
+from api.orchestrator import identity_capture
 from api.orchestrator.config_repository import OrchestratorConfig
 from api.orchestrator.guardrails import (
     RULE_EMPTY_OUTPUT,
@@ -36,7 +37,6 @@ from api.orchestrator.service import (
     _FORMATTING_RULES,
     _GROUNDING_SYSTEM_PROMPT,
     _GUARDRAIL_SAFE_REPLY,
-    _IDENTITY_GATE_REPLY,
     _INTENT_LABEL_DESCRIPTIONS,
     _NO_ANSWER_SENTINEL,
     _OFF_TOPIC_BOOKING_REPLY,
@@ -213,6 +213,14 @@ class _Patched:
         self.lead = None if lead is ... else lead
         self.get_lead_id_by_visitor_id = AsyncMock(return_value=self.lead_id)
         self.get_lead = AsyncMock(return_value=self.lead)
+        self.save_name = AsyncMock(
+            side_effect=lambda db, claims, lead, name: _lead(name=name, email=None))
+        self.save_phone = AsyncMock(
+            side_effect=lambda db, claims, lead, phone, **kw: Lead(
+                **{**(lead or _lead()).__dict__, "phone": phone}))
+        self.save_email = AsyncMock(
+            side_effect=lambda db, claims, lead, email: _lead(
+                name=lead.name if lead else None, email=email))
         # Default: no availability configured -- matches the S10.3-era
         # unconditional "lead_form" expectation for escalate branches unless
         # a test explicitly opts into `availability=_availability()`.
@@ -295,10 +303,13 @@ class _Patched:
             patch("api.orchestrator.service.get_upcoming_booking", self.get_upcoming_booking),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
             patch(
-                "api.orchestrator.service.get_lead_id_by_visitor_id",
+                "api.orchestrator.identity_capture.get_lead_id_by_visitor_id",
                 self.get_lead_id_by_visitor_id,
             ),
-            patch("api.orchestrator.service.get_lead", self.get_lead),
+            patch("api.orchestrator.identity_capture.get_lead", self.get_lead),
+            patch("api.orchestrator.identity_capture.save_name", self.save_name),
+            patch("api.orchestrator.identity_capture.save_email", self.save_email),
+            patch("api.orchestrator.identity_capture.save_phone", self.save_phone),
         ]
         for p in self._patchers:
             p.start()
@@ -1463,122 +1474,147 @@ async def test_turn_cap_counts_role_user_after_user_turn_stored() -> None:
     assert call_order.index("append_message") < call_order.index("count_messages")
 
 
-# -- SR-14: conversation-start identity gate -----------------------------------------
+# -- Conversational identity capture (name first, email later) ----------------------
 
 
-async def test_identity_gate_fires_when_enabled_and_no_captured_identity() -> None:
-    """Tenant flag ON + visitor has no lead at all -> _FixedOutcome with
-    decision="identity_gate", action="identity_form", grounded=False,
-    sources=[], confidence=None -- no classify/RAG/generate (C1)."""
-    p = _Patched(
-        orchestrator_config=_orch_cfg(identity_gate_enabled=True),
-        lead_id=None,
-    )
+async def test_first_message_asks_only_for_the_name() -> None:
+    """Gate ON + no name yet -> a fixed, friendly name question; no form, no
+    email ask, no classify/RAG/generate; the provider is closed."""
+    p = _Patched(orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id=None)
     with p:
         result = await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
 
     assert result.decision == "identity_gate"
-    assert result.action == "identity_form"
-    assert result.confidence is None
-    assert result.sources == []
-    assert result.reply == _IDENTITY_GATE_REPLY
-
+    assert result.action is None
+    assert result.reply == identity_capture.ASK_NAME_REPLY
+    assert "email" not in result.reply.lower()
     p.provider.classify.assert_not_awaited()
-    p.retrieve_hybrid.assert_not_awaited()
     p.provider.generate.assert_not_awaited()
-    # Resource-leak fix: the provider was resolved but never used -- must
-    # still be closed, exactly like the turn-cap short-circuit.
     p.provider.aclose.assert_awaited_once()
+    user_call, bot_call = p._append_calls
+    assert user_call["content"] == "How much does it cost?"  # durable before the ask
+    assert bot_call["intent"] == identity_capture.ASK_NAME_INTENT
 
 
-async def test_identity_gate_fires_when_lead_exists_but_contact_incomplete() -> None:
-    """A visitor with an existing lead whose name/email are NULL (the SR-9.1
-    anonymous-booking case) still counts as "not yet captured" -- the gate
-    fires so D6's update_lead_contact can fill in the row."""
+async def test_name_reply_is_saved_and_the_original_question_answered_by_name() -> None:
+    ask = _msg("bot", identity_capture.ASK_NAME_REPLY, "b1")
+    ask = Message(message_id=ask.message_id, role="bot", content=ask.content,
+                  intent=identity_capture.ASK_NAME_INTENT, confidence=None, tokens=None,
+                  created_at=ask.created_at)
+    history = [_msg("user", "How much does it cost?", "u1"), ask, _msg("user", "I'm jane", "u2")]
     p = _Patched(
-        orchestrator_config=_orch_cfg(identity_gate_enabled=True),
-        lead_id="lead-1",
-        lead=_lead(name=None, email=None),
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
-
-    assert result.decision == "identity_gate"
-    assert result.action == "identity_form"
-
-
-async def test_identity_gate_user_message_is_durable_before_gate_reply() -> None:
-    """D3's foundation: append_message for the role="user" row happens
-    (durable storage) even on a gate turn."""
-    p = _Patched(orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id=None)
-    with p:
-        await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
-
-    assert len(p._append_calls) == 2
-    user_call, assistant_call = p._append_calls
-    assert user_call["role"] == "user"
-    assert user_call["content"] == "How much does it cost?"
-    assert assistant_call["role"] == "bot"
-    assert assistant_call["decision"] == "identity_gate"
-    assert assistant_call["action"] == "identity_form"
-    assert assistant_call["grounded"] is False
-    assert assistant_call["confidence"] is None
-    assert assistant_call["tokens"] is None
-
-
-async def test_identity_gate_does_not_fire_when_flag_off() -> None:
-    """Default OFF (D9): even with no captured identity, the flag being off
-    (or unset, the OrchestratorConfig default) means normal answering."""
-    p = _Patched(
-        orchestrator_config=_orch_cfg(identity_gate_enabled=False),
-        lead_id=None,
-        classify_return="question",
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id=None,
+        gate_turns_return=1, count_messages_return=2,
+        recent_intents=[identity_capture.ASK_NAME_INTENT],
+        working_memory=_wm(history), classify_return="question",
         hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
     )
     with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
+        result = await answer_turn(db=object(), claims=_claims(), message="I'm jane")
+
+    assert result.decision == "answer"
+    p.save_name.assert_awaited_once()
+    assert p.save_name.await_args.args[3] == "Jane"
+    assert p.provider.classify.await_args.args[0] == "How much does it cost?"
+    prompt = p.provider.generate.await_args.args[0]
+    assert "first name is Jane" in prompt[0].content
+    assert prompt[-1].content == "My name is Jane. How much does it cost?"
+    assert "email to reach them" not in prompt[0].content
+
+
+async def test_a_non_name_reply_is_just_answered_and_never_re_asked() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id=None,
+        gate_turns_return=1, recent_intents=[identity_capture.ASK_NAME_INTENT],
+        classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(),
+                                   message="Do you repair flat roofs?")
+
+    assert result.decision == "answer"
+    p.save_name.assert_not_awaited()
+    assert p.provider.classify.await_args.args[0] == "Do you repair flat roofs?"
+
+
+@pytest.mark.parametrize(("turns", "asks"), [(2, False), (3, True), (4, False)])
+async def test_email_is_asked_naturally_once_on_the_third_turn(turns: int, asks: bool) -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
+        lead=_lead(name="Jane Doe", email=None), count_messages_return=turns,
+        classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="And gutters?")
+
+    assert result.decision == "answer"
+    system = p.provider.generate.await_args.args[0][0].content
+    assert "first name is Jane" in system
+    assert ("email to reach them" in system) is asks
+
+
+async def test_no_email_ask_once_the_email_is_known() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
+        lead=_lead(name="Jane", email="jane@example.com"), count_messages_return=3,
+        classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        await answer_turn(db=object(), claims=_claims(), message="And gutters?")
+    assert "email to reach them" not in p.provider.generate.await_args.args[0][0].content
+
+
+async def test_an_email_on_its_own_is_captured_and_acknowledged() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
+        lead=_lead(name="Jane", email=None),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(),
+                                   message="sure, it's Jane@Example.com")
+
+    p.save_email.assert_awaited_once()
+    assert p.save_email.await_args.args[3] == "jane@example.com"
+    # The thank-you asks for the number, with the call-consent disclosure.
+    assert result.reply == identity_capture.email_ack_reply(
+        "Jane", "jane@example.com", ask_phone=True)
+    assert result.reply.endswith(identity_capture.PHONE_ASK)
+    assert p._append_calls[-1]["intent"] == identity_capture.ASK_PHONE_INTENT
+    p.provider.classify.assert_not_awaited()
+
+
+async def test_an_email_inside_a_question_is_captured_and_the_question_answered() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
+        lead=_lead(name="Jane", email=None), classify_return="question",
+        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message=(
+            "jane@example.com is best. Also, do you offer financing for a new roof?"))
+
+    p.save_email.assert_awaited_once()
+    assert result.decision == "answer"
+    p.provider.generate.assert_awaited_once()
+
+
+async def test_identity_capture_is_off_when_the_flag_is_off() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=False), lead_id=None,
+        classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="me@x.com hi")
 
     assert result.decision != "identity_gate"
-    p.provider.classify.assert_awaited_once()
     p.get_lead_id_by_visitor_id.assert_not_awaited()
-
-
-async def test_identity_gate_does_not_fire_once_identity_captured() -> None:
-    """Never re-asked (D2's other half): a visitor whose lead already has
-    both name and email -> normal answering, no gate."""
-    p = _Patched(
-        orchestrator_config=_orch_cfg(identity_gate_enabled=True),
-        lead_id="lead-1",
-        lead=_lead(name="Dana", email="dana@example.com"),
-        classify_return="question",
-        hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
-    )
-    with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="A follow-up question")
-
-    assert result.decision != "identity_gate"
-    p.provider.classify.assert_awaited_once()
-
-
-async def test_identity_gate_absolute_fires_again_on_second_unsatisfied_message() -> None:
-    """D2: absolute, no escape hatch -- a second message from the SAME
-    not-yet-identified visitor gets the gate reply again."""
-    p = _Patched(orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id=None)
-    with p:
-        first = await answer_turn(db=object(), claims=_claims(), message="How much does it cost?")
-        second = await answer_turn(db=object(), claims=_claims(), message="Hello?")
-
-    assert first.decision == "identity_gate"
-    assert second.decision == "identity_gate"
+    p.save_email.assert_not_awaited()
 
 
 async def test_identity_gate_excluded_from_turn_cap_budget() -> None:
-    """D10: a gate turn does not consume a turn_cap slot -- count_messages is
-    called with role="bot"/decision="identity_gate" to net gate turns out of
-    the raw role="user" count. This is proven directly on the turn-cap path
-    (not the gate path, since the gate short-circuits before turn-cap is
-    ever reached) -- 7 raw user turns minus 1 gate turn stays under a
-    turn_cap of 6, so the conversation is NOT capped."""
+    """D10: a gate turn (the name question) does not consume a turn_cap slot --
+    count_messages nets role="bot"/decision="identity_gate" out of the raw
+    role="user" count."""
     p = _Patched(
         orchestrator_config=_orch_cfg(identity_gate_enabled=False, turn_cap=6),
         count_messages_return=7,
@@ -1597,9 +1633,90 @@ async def test_identity_gate_excluded_from_turn_cap_budget() -> None:
     assert gate_call.kwargs.get("decision") == "identity_gate"
 
 
-async def test_identity_gate_reply_is_the_trusted_constant() -> None:
-    assert _IDENTITY_GATE_REPLY
-    assert isinstance(_IDENTITY_GATE_REPLY, str)
+# -- Phone number (after the email; AI-call consent only after the disclosure) -------
+
+
+async def test_phone_right_after_the_disclosure_is_call_consent() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
+        lead=_lead(name="Jane", email="jane@example.com"),
+        recent_intents=[identity_capture.ASK_PHONE_INTENT],
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="(786) 823-3553",
+                                   timezone="America/New_York")
+
+    p.save_phone.assert_awaited_once()
+    assert p.save_phone.await_args.args[3] == "+17868233553"
+    assert p.save_phone.await_args.kwargs == {"consented": True, "timezone": "America/New_York"}
+    assert result.reply == identity_capture.phone_ack_reply("Jane", consented=True)
+    p.provider.classify.assert_not_awaited()
+
+
+async def test_phone_without_the_disclosure_is_saved_but_not_consent() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
+        lead=_lead(name="Jane", email="jane@example.com"), recent_intents=["question"],
+    )
+    with p:
+        await answer_turn(db=object(), claims=_claims(), message="786 823 3553")
+    assert p.save_phone.await_args.kwargs["consented"] is False
+
+
+@pytest.mark.parametrize(("turns", "recent", "has_phone", "asks"), [
+    (4, [], False, False),                                    # too early
+    (5, [], False, True),                                     # the later ask
+    (7, [], False, True),                                     # still not asked -> ask now
+    (5, [identity_capture.ASK_PHONE_INTENT], False, False),   # asked once already
+    (5, [], True, False),                                     # number already known
+])
+async def test_phone_ask_suffix(turns: int, recent: list[str | None], has_phone: bool,
+                                asks: bool) -> None:
+    lead = _lead(name="Jane", email="jane@example.com")
+    if has_phone:
+        lead = Lead(**{**lead.__dict__, "phone": "+17868233553"})
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True, turn_cap=20), lead_id="lead-1",
+        lead=lead, count_messages_return=turns, recent_intents=recent,
+        classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="And gutters?")
+
+    assert result.reply.endswith(identity_capture.PHONE_ASK) is asks
+    bot_call = p._append_calls[-1]
+    assert (bot_call["intent"] == identity_capture.ASK_PHONE_INTENT) is asks
+    assert "including with our AI assistant" not in p.provider.generate.await_args.args[0][0].content
+
+
+async def test_phone_ask_is_never_added_to_an_escalation() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True, turn_cap=20), lead_id="lead-1",
+        lead=_lead(name="Jane", email="jane@example.com"), count_messages_return=5,
+        classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+        completion=Completion(text=_NO_ANSWER_SENTINEL, model="m", input_tokens=1, output_tokens=1),
+    )
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="Obscure question?")
+    assert identity_capture.PHONE_ASK not in result.reply
+    assert p._append_calls[-1]["intent"] != identity_capture.ASK_PHONE_INTENT
+
+
+async def test_streamed_answer_gets_the_phone_ask_as_a_final_delta() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True, turn_cap=20), lead_id="lead-1",
+        lead=_lead(name="Jane", email="jane@example.com"), count_messages_return=5,
+        classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+        stream_chunks=["Yes, ", "we do gutters."],
+    )
+    with p:
+        events = [e async for e in answer_turn_stream(db=object(), claims=_claims(),
+                                                      message="Gutters?")]
+
+    deltas = "".join(e.data["text"] for e in events if e.type == "delta")
+    done = next(e for e in events if e.type == "done")
+    assert deltas == f"Yes, we do gutters.\n\n{identity_capture.PHONE_ASK}"
+    assert done.data["reply"] == deltas
 
 
 # -- escalate action conditional on availability (all causes) ------------------------

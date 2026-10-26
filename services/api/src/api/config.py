@@ -10,6 +10,7 @@ from functools import lru_cache
 from typing import Literal
 
 from common.settings import Settings
+from pydantic import field_validator
 
 
 class ApiSettings(Settings):
@@ -232,6 +233,37 @@ class ApiSettings(Settings):
     conversation_idle_timeout_minutes: int = 30
     conversation_idle_sweep_interval_seconds: int = 300
 
+    # Agent foundations (A1): outbox + outreach-task dispatchers, the stale
+    # lease reaper, and the audit-chain sealer (Celery Beat, queue "agents").
+    # Batch size is a per-tick LIMIT on the claim UPDATEs (contention only).
+    agent_event_dispatch_interval_seconds: int = 15
+    agent_task_dispatch_interval_seconds: int = 30
+    agent_task_lease_seconds: int = 600
+    agent_dispatch_batch_size: int = 50
+    audit_seal_interval_seconds: int = 60
+
+    # Email Agent (A2). email_link_secret signs unsubscribe links (HMAC-SHA256,
+    #   >= 32 chars). Unset -> agent email can't be enabled or sent
+    #   (EMAIL_NOT_READY), never a send without a working unsubscribe link.
+    # email_draft_ttl_days: unapproved drafts expire (task cancelled).
+    # email_cost_micros: per-send cost recorded in usage_costs (provider pricing).
+    email_link_secret: str | None = None
+    email_draft_ttl_days: int = 7
+    email_cost_micros: int = 0
+    email_send_timeout_seconds: float = 15.0
+
+    # Calling Agent (A6). Per-minute telephony cost written to usage_costs, and
+    # how long past max_call_seconds a session may stay open without a hangup
+    # webhook before the reaper fails it and retries/settles its task.
+    call_cost_micros_per_minute: int = 0
+    call_reap_grace_seconds: int = 600
+
+    # Meta Lead Ads webhook (A10 I7) -- ONE Meta app for the platform. Both unset ->
+    # /public/intake/meta answers 404 (notification-email intake still works).
+    meta_app_secret: str | None = None
+    meta_verify_token: str | None = None
+    meta_graph_version: str = "v21.0"
+
     # Voice (ASR/TTS) -- ONE OpenAI account/key covers both directions (a
     # single provider, unlike the ElevenLabs-for-TTS/OpenAI-for-ASR split
     # this replaced). Env-var-only config, NOT per-tenant (unlike LLM/
@@ -290,6 +322,17 @@ class ApiSettings(Settings):
     #   the same explicit-default pattern as platform_smtp_*. Unset -> a call
     #   is recorded as failed (TWILIO_NOT_CONFIGURED), never silently skipped.
     public_api_base_url: str | None = None
+
+    @field_validator("public_api_base_url", "admin_web_base_url", "password_reset_url_base",
+                     "google_oauth_redirect_uri", mode="before")
+    @classmethod
+    def _trim_url(cls, value: object) -> object:
+        # A stray space in .env would land inside every webhook/link URL built from it
+        # (and break Plivo's signature check); blank means unset.
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
     platform_twilio_account_sid: str | None = None
     platform_twilio_auth_token: str | None = None
     platform_twilio_from_number: str | None = None

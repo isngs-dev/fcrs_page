@@ -23,6 +23,7 @@
 import { z } from "zod";
 
 import { authHeader } from "./session";
+import type { ChannelConsentsPayload } from "./channelConsent";
 import type { WidgetConfig } from "./config";
 
 /** SR-14 D7 -- a NEW consent purpose/copy pair, distinct from lead.ts's
@@ -73,6 +74,9 @@ export interface SubmitIdentityInput {
   name: string;
   email: string;
   consent: SubmitIdentityConsent;
+  /** A4: optional email follow-up consent (no phone here, so never call). */
+  channelConsents?: ChannelConsentsPayload;
+  timezone?: string;
 }
 
 interface BackendErrorEnvelope {
@@ -138,6 +142,8 @@ export async function submitIdentity(config: WidgetConfig, input: SubmitIdentity
         name: input.name,
         email: input.email,
         consent: input.consent,
+        ...(input.channelConsents ? { channel_consents: input.channelConsents } : {}),
+        ...(input.timezone ? { timezone: input.timezone } : {}),
       }),
     });
   } catch (err) {

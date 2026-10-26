@@ -337,6 +337,7 @@ async def update_lead_contact(
     name: str | None,
     email: str | None,
     consent: dict[str, Any],
+    phone: str | None = None,
 ) -> bool:
     """Fill in name/email/consent on an EXISTING lead, tenant-scoped (SR-14 D6).
 
@@ -366,13 +367,14 @@ async def update_lead_contact(
 
     result = await db.execute(
         "UPDATE leads SET name = COALESCE($1, name), email = COALESCE($2, email), "
-        "consent = $3, updated_at = now() "
+        "phone = COALESCE($6, phone), consent = $3, updated_at = now() "
         "WHERE tenant_id = $4 AND lead_id = $5",
         name,
         email,
         consent,
         claims.tenant_id,
         lead_id,
+        phone,
     )
     return _rows_affected(result) > 0
 

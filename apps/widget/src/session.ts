@@ -48,6 +48,10 @@ const SessionResponseSchema = z.object({
   voice_call_enabled: z.boolean().optional(),
   // AI voice agent ("Call Us") on for this chatbot -- absent -> false.
   voice_agent_enabled: z.boolean().optional(),
+  // A4: which optional follow-up consent boxes to show -- absent -> none.
+  outreach_consent: z
+    .object({ email: z.boolean(), call: z.boolean(), version: z.string().min(1).max(40) })
+    .optional(),
 });
 
 export interface VisitorSession {
@@ -108,6 +112,9 @@ let voiceAsrEnabled = false;
 let voiceTtsEnabled = false;
 let voiceCallEnabled = false;
 let voiceAgentEnabled = false;
+// A4: follow-up consent offer from the admission response; null (no boxes)
+// on a hydrated resume, exactly like the voice flags above.
+let outreachConsent: { email: boolean; call: boolean; version: string } | null = null;
 
 /** The in-memory visitor token, if a session has been minted successfully. */
 export function getVisitorSession(): VisitorSession | null {
@@ -157,6 +164,11 @@ export function isVoiceTtsEnabled(): boolean {
  * books without the call, never with it unconsented). */
 export function isVoiceCallEnabled(): boolean {
   return voiceCallEnabled;
+}
+
+/** Which optional follow-up consent boxes the forms may show (A4), or null. */
+export function getOutreachConsent(): { email: boolean; call: boolean; version: string } | null {
+  return outreachConsent;
 }
 
 /** Whether the "Call Us" button (AI voice agent) is shown -- `false` until a
@@ -311,6 +323,7 @@ export async function mintVisitorSession(config: WidgetConfig): Promise<Admissio
   voiceTtsEnabled = parsed.data.voice_tts_enabled ?? false;
   voiceCallEnabled = parsed.data.voice_call_enabled ?? false;
   voiceAgentEnabled = parsed.data.voice_agent_enabled ?? false;
+  outreachConsent = parsed.data.outreach_consent ?? null;
   if (resumeEnabled) {
     writeResumeRecord({
       token: currentSession.visitorToken,

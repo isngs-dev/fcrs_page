@@ -9,6 +9,7 @@ from common.auth import AuthClaims, Role
 from common.logging import get_logger
 from fastapi import APIRouter, Depends, Query, Request
 
+from api.audit.chain import verify_audit_chain
 from api.audit.repository import list_audit
 from api.auth.dependencies import require_roles, resolve_tenant_scope
 
@@ -72,3 +73,31 @@ async def list_audit_events_for_tenant(
 ) -> list[dict[str, object]]:
     """PLATFORM_ADMIN super-user variant of ``GET /admin/audit`` (S12.7)."""
     return await _list_audit_events(request, claims, limit=limit, offset=offset)
+
+
+async def _verify(request: Request, claims: AuthClaims) -> dict[str, object]:
+    report = await verify_audit_chain(request.app.state.db, claims)
+    return {
+        "ok": report.ok,
+        "rows_checked": report.rows_checked,
+        "unsealed": report.unsealed,
+        "broken_at": report.broken_at,
+        "first_chained_at": _iso(report.first_chained_at),
+    }
+
+
+@router.get("/verify")
+async def verify_chain(
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> dict[str, object]:
+    """Recompute this tenant's audit hash chain (A1.5)."""
+    return await _verify(request, claims)
+
+
+@tenant_scoped_router.get("/verify")
+async def verify_chain_for_tenant(
+    request: Request,
+    claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> dict[str, object]:
+    return await _verify(request, claims)

@@ -20,6 +20,7 @@ dependencies = [
     "chatbot-common",
     "fastapi>=0.111",
     "openai>=1.0",
+    "phonenumbers>=9.0,<10",  # A10 I4: US phone -> timezone (intake only)
     "psycopg2-binary>=2.9",
     "pyjwt>=2.8",
     "redis>=5.0",

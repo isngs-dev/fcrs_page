@@ -78,6 +78,7 @@ celery_app = Celery(
         "api.leads.tasks",
         "api.conversation_store.tasks",
         "api.calls.voice_tasks",
+        "api.agents.tasks",
     ],
 )
 
@@ -95,6 +96,13 @@ celery_app.conf.update(
     # Timezone.
     timezone="UTC",
     enable_utc=True,
+    # A1 D11: named queues. One worker consumes all of them
+    # (``-Q celery,agents,email,calls``); everything unrouted stays on "celery".
+    task_routes={
+        "agents.*": {"queue": "agents"},
+        "email_agent.*": {"queue": "email"},
+        "call_agent.*": {"queue": "calls"},
+    },
     # Beat schedule — the reminder dispatcher (S8.3). Polls at
     # reminder_poll_interval_seconds; the task itself atomically claims due
     # rows (exactly-once gate lives in the claim SQL, not here).
@@ -120,6 +128,23 @@ celery_app.conf.update(
             "task": "conversation_store.close_idle_conversations",
             "schedule": get_api_settings().conversation_idle_sweep_interval_seconds,
         },
+        # A1: outbox dispatcher, outreach-task dispatcher, lease reaper and the
+        # audit-chain sealer. Each claim is exactly-once in its SQL.
+        "agents-dispatch-events": {
+            "task": "agents.dispatch_events",
+            "schedule": get_api_settings().agent_event_dispatch_interval_seconds,
+        },
+        "agents-dispatch-due-tasks": {
+            "task": "agents.dispatch_due_tasks",
+            "schedule": get_api_settings().agent_task_dispatch_interval_seconds,
+        },
+        "agents-reap-stale": {"task": "agents.reap_stale", "schedule": 300},
+        "agents-seal-audit-chain": {
+            "task": "agents.seal_audit_chain",
+            "schedule": get_api_settings().audit_seal_interval_seconds,
+        },
+        # A9 H8: call recordings past each tenant's retention (default 90 days).
+        "agents-purge-recordings": {"task": "agents.purge_recordings", "schedule": 86400},
     },
 )
 

@@ -185,7 +185,8 @@ services:
     # Linux, not the Windows dev box -- prefork (the default pool) is fine
     # here; the .env.example's "--pool=solo required on Windows" note does
     # not apply in production.
-    command: ["celery", "-A", "api.tasks.celery_app", "worker", "--loglevel=info"]
+    # A1 D11: one worker consumes every named queue (task_routes in celery_app).
+    command: ["celery", "-A", "api.tasks.celery_app", "worker", "-Q", "celery,agents,email,calls", "--loglevel=info"]
     # The image's baked-in HEALTHCHECK curls localhost:8000/healthz --
     # nothing listens there in this container (it runs the celery command,
     # not uvicorn), so the inherited check would always fail without this.

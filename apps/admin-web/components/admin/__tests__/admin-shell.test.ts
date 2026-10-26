@@ -76,6 +76,7 @@ describe("SR-30 D30-1: nested Overview nav (supersedes SR-15 D6's flat-nav claus
       "/",
       "/conversations",
       "/leads",
+      "/outreach",
     ]);
 
     const dashboard = overviewGroup.items.find((item) => item.href === "/")!;
@@ -231,5 +232,24 @@ describe("SR-30 D30-7: the active child auto-expands its parent", () => {
 
   it("a parent's own route does not by itself mark a child active", () => {
     expect(parentContainsActivePath(leads, "/leads")).toBe(false);
+  });
+
+  it("A8: Outreach is visible to admins and agents; its settings only to admins", () => {
+    const admin = visibleLeafHrefsForRole("CLIENT_ADMIN");
+    const agent = visibleLeafHrefsForRole("CLIENT_AGENT");
+    for (const href of ["/outreach", "/outreach/emails", "/outreach/calls", "/outreach/campaigns"]) {
+      expect(admin).toContain(href);
+      expect(agent).toContain(href);
+    }
+    expect(admin).toContain("/outreach/settings");
+    expect(agent).not.toContain("/outreach/settings");
+    expect(admin).toContain("/outreach/intake"); // A10: admin-only (lead PII in the queue)
+    expect(agent).not.toContain("/outreach/intake");
+    // A13: performance is aggregates (both roles); status and exceptions name people.
+    expect(agent).toContain("/outreach/performance");
+    expect(agent).not.toContain("/outreach/status");
+    expect(agent).not.toContain("/outreach/exceptions");
+    expect(admin).toEqual(expect.arrayContaining(["/outreach/status", "/outreach/exceptions"]));
+    expect(visibleLeafHrefsForRole("PLATFORM_ADMIN")).not.toContain("/outreach");
   });
 });

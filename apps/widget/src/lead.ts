@@ -12,6 +12,7 @@
 import { z } from "zod";
 
 import { authHeader } from "./session";
+import type { ChannelConsentsPayload } from "./channelConsent";
 import type { WidgetConfig } from "./config";
 
 /**
@@ -65,6 +66,10 @@ export interface SubmitLeadInput {
   email: string;
   phone?: string;
   consent: SubmitLeadConsent;
+  /** A4: optional per-channel follow-up consent (only when the boxes were shown). */
+  channelConsents?: ChannelConsentsPayload;
+  /** A4: the visitor's IANA timezone, for contact-local calling windows. */
+  timezone?: string;
 }
 
 interface BackendErrorEnvelope {
@@ -133,6 +138,8 @@ export async function submitLead(config: WidgetConfig, input: SubmitLeadInput): 
         ...(input.phone ? { phone: input.phone } : {}),
         source: "widget",
         consent: input.consent,
+        ...(input.channelConsents ? { channel_consents: input.channelConsents } : {}),
+        ...(input.timezone ? { timezone: input.timezone } : {}),
       }),
     });
   } catch (err) {

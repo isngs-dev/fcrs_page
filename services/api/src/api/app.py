@@ -224,6 +224,12 @@ def create_app() -> FastAPI:
     from api.admin.workspace_routes import (
         tenant_scoped_router as admin_workspace_tenant_router,
     )
+    from api.agents.console_routes import router as outreach_console_router
+    from api.agents.console_routes import tenant_scoped_router as outreach_console_tenant_router
+    from api.agents.feed_routes import router as outreach_feed_router
+    from api.agents.feed_routes import tenant_scoped_router as outreach_feed_tenant_router
+    from api.agents.routes import router as outreach_router
+    from api.agents.routes import tenant_scoped_router as outreach_tenant_router
     from api.analytics.reports_routes import router as analytics_reports_router
     from api.analytics.reports_routes import (
         tenant_scoped_router as analytics_reports_tenant_router,
@@ -233,6 +239,9 @@ def create_app() -> FastAPI:
     from api.audit.routes import router as audit_router
     from api.audit.routes import tenant_scoped_router as audit_tenant_router
     from api.auth.routes import router as auth_router
+    from api.call_agent.routes import public_router as call_agent_public_router
+    from api.call_agent.routes import router as call_agent_router
+    from api.call_agent.routes import tenant_scoped_router as call_agent_tenant_router
     from api.calls.admin_routes import router as calls_admin_router
     from api.calls.admin_routes import tenant_scoped_router as calls_admin_tenant_router
     from api.calls.voice_admin_routes import router as voice_calls_admin_router
@@ -249,9 +258,15 @@ def create_app() -> FastAPI:
     )
     from api.conversation_store.routes import router as conversation_router
     from api.crm.routes import router as crm_router
+    from api.email_agent.routes import public_router as email_agent_public_router
+    from api.email_agent.routes import router as email_agent_router
+    from api.email_agent.routes import tenant_scoped_router as email_agent_tenant_router
     from api.gateway.routes import router as gateway_router
     from api.ingestion.routes import router as ingestion_router
     from api.ingestion.routes import tenant_scoped_router as ingestion_tenant_router
+    from api.intake.routes import public_router as intake_public_router
+    from api.intake.routes import router as intake_router
+    from api.intake.routes import tenant_scoped_router as intake_tenant_router
     from api.leads.admin_routes import router as leads_admin_router
     from api.leads.admin_routes import tenant_scoped_router as leads_admin_tenant_router
     from api.leads.identity_routes import router as identity_router
@@ -301,6 +316,15 @@ def create_app() -> FastAPI:
     app.include_router(admin_users_router)
     app.include_router(admin_workspace_router)
     app.include_router(analytics_router)
+    app.include_router(outreach_router)
+    app.include_router(outreach_feed_router)
+    app.include_router(outreach_console_router)
+    app.include_router(intake_router)
+    app.include_router(intake_public_router)
+    app.include_router(call_agent_router)
+    app.include_router(call_agent_public_router)
+    app.include_router(email_agent_router)
+    app.include_router(email_agent_public_router)
     app.include_router(analytics_reports_router)
     app.include_router(audit_router)
     app.include_router(auth_router)
@@ -344,6 +368,12 @@ def create_app() -> FastAPI:
     app.include_router(admin_users_tenant_router)
     app.include_router(admin_workspace_tenant_router)
     app.include_router(analytics_tenant_router)
+    app.include_router(outreach_tenant_router)
+    app.include_router(outreach_feed_tenant_router)
+    app.include_router(outreach_console_tenant_router)
+    app.include_router(intake_tenant_router)
+    app.include_router(call_agent_tenant_router)
+    app.include_router(email_agent_tenant_router)
     app.include_router(analytics_reports_tenant_router)
     app.include_router(audit_tenant_router)
     app.include_router(contacts_admin_tenant_router)

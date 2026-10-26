@@ -6,20 +6,29 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Bell,
+  Bot,
   BookOpen,
   Building2,
   ChevronDown,
   Contact,
   FileBarChart,
+  Inbox,
+  ListChecks,
   LayoutDashboard,
   LogOut,
+  Mail,
+  Megaphone,
   MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  PhoneCall,
   PlusCircle,
   Settings,
   Settings2,
+  SlidersHorizontal,
+  TrendingUp,
+  TriangleAlert,
   Users2,
   UsersRound,
 } from "lucide-react";
@@ -123,6 +132,24 @@ const overviewItems: NavEntry[] = [
   },
   // Deals nav entry remains soft-disabled (removed on user request, route and
   // components intentionally left on disk). Unchanged by SR-30.
+  {
+    // A8 U1: Rebecca's email + calling agents. Settings is CLIENT_ADMIN-only,
+    // mirroring the backend (PUT /admin/outreach/* are admin-only).
+    href: "/outreach",
+    label: "Outreach",
+    icon: Bot,
+    roles: ["CLIENT_ADMIN", "CLIENT_AGENT"],
+    children: [
+      { href: "/outreach/emails", label: "Emails", icon: Mail, roles: ["CLIENT_ADMIN", "CLIENT_AGENT"] },
+      { href: "/outreach/calls", label: "Calls", icon: PhoneCall, roles: ["CLIENT_ADMIN", "CLIENT_AGENT"] },
+      { href: "/outreach/campaigns", label: "Campaigns", icon: Megaphone, roles: ["CLIENT_ADMIN", "CLIENT_AGENT"] },
+      { href: "/outreach/status", label: "Lead status", icon: ListChecks, roles: ["CLIENT_ADMIN"] },
+      { href: "/outreach/performance", label: "Performance", icon: TrendingUp, roles: ["CLIENT_ADMIN", "CLIENT_AGENT"] },
+      { href: "/outreach/exceptions", label: "Exceptions", icon: TriangleAlert, roles: ["CLIENT_ADMIN"] },
+      { href: "/outreach/intake", label: "Lead intake", icon: Inbox, roles: ["CLIENT_ADMIN"] },
+      { href: "/outreach/settings", label: "Outreach settings", icon: SlidersHorizontal, roles: ["CLIENT_ADMIN"] },
+    ],
+  },
 ];
 
 const toolsItems: NavItem[] = [
