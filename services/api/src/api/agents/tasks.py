@@ -15,6 +15,7 @@ from typing import Any
 
 from common.db import Database
 from common.logging import get_logger
+from common.pgvector import register_vector_init
 
 import api.call_agent.executor  # noqa: F401 -- registers the call executor (A6)
 import api.email_agent.executor  # noqa: F401 -- registers the email executor (A2)
@@ -33,7 +34,10 @@ def _run(body: Callable[[Database, Any], Awaitable[Any]]) -> Any:
         from api.config import get_api_settings  # noqa: PLC0415
 
         settings = get_api_settings()
-        db = await Database.connect(settings.database_url, statement_cache_size=0)
+        # The email composer and reply answering search the knowledge base from these
+        # tasks: without the pgvector codec every query fails (DataError, list vs str).
+        db = await Database.connect(settings.database_url, statement_cache_size=0,
+                                    init=register_vector_init)
         try:
             return await body(db, settings)
         finally:
