@@ -21,7 +21,7 @@ import {
   type CommandDraft,
   type ImportPreview,
 } from "@/lib/outreach";
-import { humanize } from "@/lib/outreach-format";
+import { humanize, planReasonText } from "@/lib/outreach-format";
 
 const card = "flex flex-col gap-3 rounded-[14px] border border-[var(--line)] bg-card px-[22px] py-5";
 
@@ -220,7 +220,10 @@ export function AddContactCard() {
     });
     setBusy(false);
     if (result.status === "error") return setNote({ ok: false, text: result.message });
-    setNote({ ok: true, text: `Contact ${result.result.contact}; follow-up: ${humanize(result.result.plan)}.` });
+    const { contact, plan, reasons = [] } = result.result;
+    const why = plan !== "planned" && reasons.length ? ` — ${planReasonText(reasons)}` : "";
+    const kept = contact === "existing" ? " (matched an existing contact: their saved phone and time zone were kept)" : "";
+    setNote({ ok: plan === "planned", text: `Contact ${contact}${kept}; follow-up: ${humanize(plan)}${why}.` });
     form.reset();
     setCallConsent(false);
     router.refresh();

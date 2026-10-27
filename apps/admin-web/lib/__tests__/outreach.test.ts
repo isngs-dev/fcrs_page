@@ -140,3 +140,14 @@ describe("percent (A13)", () => {
     expect(percent(null)).toBe("—");
   });
 });
+
+describe("why no follow-up started", () => {
+  it("explains each dropped step in plain words", async () => {
+    const { planReasonText } = await import("@/lib/outreach-format");
+    expect(planReasonText(["CHANNEL_DISABLED", "CONTACT_TIMEZONE_UNKNOWN"])).toBe(
+      "a channel is switched off in Outreach settings; calls need the person's time zone",
+    );
+    expect(planReasonText(["SOMETHING_NEW"])).toBe("something new");
+    expect(planReasonText([])).toBe("");
+  });
+});

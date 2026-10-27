@@ -121,7 +121,7 @@ async def discard_import(db: Database, claims: AuthClaims, import_id: str) -> bo
 
 async def _apply_row(db: Database, claims: AuthClaims, row: ImportRow, *, import_id: str | None,
                      campaign_id: str | None, kind: PlanKind, goal: str | None,
-                     now: datetime) -> dict[str, str]:
+                     now: datetime) -> dict[str, Any]:
     """Contact (reuse or create) -> consents -> plan. Returns what happened."""
     contact_id = await _existing_contact(db, claims, row)
     created = contact_id is None
@@ -157,15 +157,20 @@ async def _apply_row(db: Database, claims: AuthClaims, row: ImportRow, *, import
             evidence=evidence | {"consent_date": c["date"], "consent_source": c["source"]})
 
     outcome = "not_started"
+    reasons: list[str] = []
     if campaign_id is not None:
         try:
             plan = await planner.create_plan(db, claims, contact_id=contact_id, kind=kind,
                                              goal=goal, now=now, campaign_id=campaign_id)
             outcome = "planned" if plan.plan_id else "no_allowed_channel"
+            # Why steps were dropped (calls off, no timezone, no consent...): without this
+            # "no allowed channel" leaves the person guessing.
+            reasons = sorted({n.code for n in plan.notes if n.code != "NO_ALLOWED_CHANNEL"
+                              and n.step_index is not None})
         except ConflictError:
             outcome = "plan_already_active"
     return {"contact_id": contact_id, "contact": "created" if created else "existing",
-            "plan": outcome}
+            "plan": outcome, "reasons": reasons}
 
 
 async def commit_import(db: Database, claims: AuthClaims, import_id: str, *,

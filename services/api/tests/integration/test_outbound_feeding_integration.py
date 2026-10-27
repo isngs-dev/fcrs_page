@@ -232,6 +232,19 @@ async def test_add_one_contact_form(env: dict[str, Any]) -> None:
     assert bad.status_code == 422 and bad.json()["error_code"] == "NO_CONTACT_DETAILS"
 
 
+async def test_add_one_contact_says_why_no_follow_up_started(env: dict[str, Any]) -> None:
+    """'No allowed channel' alone left a live demo guessing for hours: the form must say
+    why each step was dropped (here: calls need the person's timezone)."""
+    client, a = env["client"], env["a"]
+    r = await client.post("/admin/outreach/contacts:add", cookies=_cookie(a), json={
+        "name": "Vin", "phone": "+91 98900 68591", "call_consent": True,
+        "consent_date": "2026-10-27", "consent_source": "demo sign-up",
+        "consent_attested": True})
+    assert r.status_code == 201, r.text
+    assert r.json()["plan"] == "no_allowed_channel"
+    assert "CONTACT_TIMEZONE_UNKNOWN" in r.json()["reasons"]
+
+
 async def test_talk_to_rebecca_launches_only_on_confirm(env: dict[str, Any]) -> None:
     db, client, llm, a, b = env["db"], env["client"], env["llm"], env["a"], env["b"]
     for tenant in (a, b):  # same email in both tenants

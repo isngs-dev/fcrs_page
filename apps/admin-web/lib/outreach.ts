@@ -306,7 +306,7 @@ export async function discardImport(importId: string) {
 }
 
 export async function addContact(values: Record<string, string | boolean | undefined>) {
-  return call<{ contactId: string; contact: string; plan: string; warnings: string[] }, "result">("result", "/contacts:add", json("POST", values));
+  return call<{ contactId: string; contact: string; plan: string; warnings: string[]; reasons?: string[] }, "result">("result", "/contacts:add", json("POST", values));
 }
 
 export async function createCommand(text: string) {

@@ -55,6 +55,18 @@ export function formatWhen(iso: string | null | undefined): string {
 }
 
 /** "not_interested" / "INVALID_EMAIL" / "contactCreated" -> "Not interested" / "Invalid email" / "Contact created". */
+/** Why the planner dropped steps (A1 policy notes), in plain words for the person adding. */
+const PLAN_REASONS: Record<string, string> = {
+  CHANNEL_DISABLED: "a channel is switched off in Outreach settings",
+  NO_CONSENT: "there's no recorded consent for a channel",
+  CONTACT_TIMEZONE_UNKNOWN: "calls need the person's time zone",
+  MAX_TOUCHES: "they've already had the most contacts allowed",
+};
+
+export function planReasonText(reasons: string[]): string {
+  return reasons.map((r) => PLAN_REASONS[r] ?? humanize(r).toLowerCase()).join("; ");
+}
+
 export function humanize(value: string | null | undefined): string {
   if (!value) return "—";
   const text = value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").toLowerCase();
