@@ -369,6 +369,13 @@ export async function getLeadActivity(leadId: string) {
   return call<LeadActivity, "activity">("activity", `/leads/${id(leadId)}/activity`);
 }
 
+/** The same view for a contact with no lead (added by hand / CSV). */
+export type ContactActivity = LeadActivity & { name: string | null; email: string | null };
+
+export async function getContactActivity(contactId: string) {
+  return call<ContactActivity, "activity">("activity", `/contacts/${id(contactId)}/activity`);
+}
+
 export async function takeOver(contactId: string) {
   return call<{ eventId: string; tasksCancelled: number }, "result">("result", `/contacts/${id(contactId)}:takeover`, { method: "POST" });
 }

@@ -26,6 +26,7 @@ const StatusPage = (await import("@/app/(protected)/outreach/status/page")).defa
 const PerformancePage = (await import("@/app/(protected)/outreach/performance/page")).default;
 const ExceptionsPage = (await import("@/app/(protected)/outreach/exceptions/page")).default;
 const { AgentsTab } = await import("@/app/(protected)/leads/lead-agents-tab");
+const ContactPage = (await import("@/app/(protected)/outreach/contacts/[contactId]/page")).default;
 
 function as(role: string) {
   const token = jwt.sign({ sub: "u1", role, tenant_id: "t1", project_ids: [] }, process.env.JWT_SECRET as string, {
@@ -256,7 +257,39 @@ describe("Status, performance, exceptions (A13)", () => {
     const html = renderToStaticMarkup(await StatusPage(params({})));
     expect(html).toContain("All (4)");
     expect(html).toContain("Engaged (2)");
+    // Two-word states too: the response is camelized (meeting_booked -> meetingBooked).
+    expect(html).toContain("Meeting booked (1)");
     expect(html).toContain('href="/leads?lead=l1&amp;tab=agents"');
+  });
+
+  it("a contact without a lead links to its own Agents page", async () => {
+    as("CLIENT_ADMIN");
+    backend({
+      "/statuses": {
+        counts: { new: 1 },
+        contacts: [{ contact_id: "c2", name: "Vinith", email: "v@x.com", lead_id: null, status: "new" }],
+      },
+    });
+    const html = renderToStaticMarkup(await StatusPage(params({})));
+    expect(html).toContain('href="/outreach/contacts/c2"');
+  });
+
+  it("the contact page shows who it is and lets you take over", async () => {
+    as("CLIENT_AGENT");
+    backend({
+      "/contacts/c2/activity": {
+        name: "Vinith", email: "v@x.com", contact_id: "c2", consents: [], emails: [], calls: [], memory: [],
+        plan: { plan_id: "p1", campaign_id: "k1", status: "active", stop_reason: null,
+          created_at: "2026-10-27T06:44:00Z",
+          tasks: [{ task_id: "t1", step_index: 0, channel: "call", scheduled_at: "2026-10-27T06:44:00Z",
+            status: "scheduled", last_error: null }] },
+      },
+    });
+    const html = renderToStaticMarkup(
+      await ContactPage({ params: Promise.resolve({ contactId: "c2" }) }));
+    expect(html).toContain("Vinith");
+    expect(html).toContain("v@x.com");
+    expect(html).toContain("Take over (stop Rebecca)");
   });
 
   it("performance shows rates, costs for admins and meetings to mark", async () => {

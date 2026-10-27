@@ -38,7 +38,7 @@ from api.agents.routes import _consent_out, _task_out
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
 from api.call_agent import repository as call_repo
-from api.contacts.repository import get_contact_by_lead_id
+from api.contacts.repository import get_contact, get_contact_by_lead_id
 from api.email_agent import repository as email_repo
 from api.email_agent.routes import _message_out
 from api.leads.repository import get_lead
@@ -114,9 +114,23 @@ async def _lead_activity(request: Request, claims: AuthClaims, lead_id: str) -> 
             raise NotFoundError("Lead not found.", code="LEAD_NOT_FOUND")
         return {"contact_id": None, "plan": None, "consents": [], "emails": [], "calls": [],
                 "memory": []}
-    cid = contact.contact_id
-    if not await contact_visible(db, claims, cid):
+    if not await contact_visible(db, claims, contact.contact_id):
         raise NotFoundError("Lead not found.", code="LEAD_NOT_FOUND")
+    return await _activity(db, claims, contact.contact_id)
+
+
+async def _contact_activity(request: Request, claims: AuthClaims, contact_id: str
+                            ) -> dict[str, Any]:
+    """The same view by contact id, for contacts with no lead (added by hand / CSV)."""
+    db = request.app.state.db
+    contact = await get_contact(db, claims, contact_id)
+    if contact is None or not await contact_visible(db, claims, contact_id):
+        raise NotFoundError("Contact not found.", code="CONTACT_NOT_FOUND")
+    return {"name": contact.name, "email": contact.email,
+            **await _activity(db, claims, contact_id)}
+
+
+async def _activity(db: Any, claims: AuthClaims, cid: str) -> dict[str, Any]:
     plan = await get_latest_plan(db, claims, cid)
     emails = await email_repo.list_messages(db, claims, status=None, limit=50, offset=0,
                                             contact_id=cid)
@@ -287,6 +301,11 @@ def _mount(r: APIRouter, admin: Callable[..., Any], staff: Callable[..., Any]) -
     async def lead_activity(lead_id: str, request: Request,
                             claims: AuthClaims = Depends(staff)) -> dict[str, Any]:  # noqa: B008
         return await _lead_activity(request, claims, lead_id)
+
+    @r.get("/contacts/{contact_id}/activity")
+    async def contact_activity(contact_id: str, request: Request,
+                               claims: AuthClaims = Depends(staff)) -> dict[str, Any]:  # noqa: B008
+        return await _contact_activity(request, claims, contact_id)
 
     @r.get("/contacts/{contact_id}/agent-data")
     async def export_data(contact_id: str, request: Request,

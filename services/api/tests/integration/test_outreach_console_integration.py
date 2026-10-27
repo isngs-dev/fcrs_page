@@ -133,6 +133,30 @@ async def test_lead_activity_and_takeover(env: dict[str, Any]) -> None:
                               cookies=_cookie(a))).status_code == 404
 
 
+async def test_contact_activity_for_contacts_without_a_lead(env: dict[str, Any]) -> None:
+    """Contacts added by hand / CSV have no lead, so no lead drawer: their Agents view
+    (and Take over) is reached by contact id, with the same visibility rules."""
+    db, client, a, b = env["db"], env["client"], env["a"], env["b"]
+    _, cid = await _lead_with_plan(env, a)
+    await db.execute("UPDATE contacts SET lead_id = NULL WHERE contact_id = $1", cid)
+    path = f"/admin/outreach/contacts/{cid}/activity"
+
+    got = (await client.get(path, cookies=_cookie(a))).json()
+    assert got["contact_id"] == cid and got["plan"]["status"] == "active"
+    assert (got["name"], got["email"]) == ("Jane Doe", "jane@example.com")  # page heading
+    assert [c["channel"] for c in got["consents"]] == ["call"]
+    assert [e["subject"] for e in got["emails"]] == ["Hi"] and len(got["calls"]) == 1
+    assert "memory" in got
+
+    assert (await client.get(path, cookies=_cookie(b))).status_code == 404  # other tenant
+    agent = _cookie(a, Role.CLIENT_AGENT)  # subject "u": not their contact yet
+    assert (await client.get(path, cookies=agent)).status_code == 404
+    await db.execute("UPDATE contacts SET owner_agent_id = 'u' WHERE contact_id = $1", cid)
+    assert (await client.get(path, cookies=agent)).status_code == 200
+    assert (await client.get("/admin/outreach/contacts/nope/activity",
+                             cookies=_cookie(a))).status_code == 404
+
+
 async def test_calls_are_hidden_from_agents_who_cant_see_the_contact(env: dict[str, Any]) -> None:
     db, client, a = env["db"], env["client"], env["a"]
     call_id, _ = await _dial(env, a)

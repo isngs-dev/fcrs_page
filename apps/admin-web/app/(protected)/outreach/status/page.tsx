@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { getStatuses } from "@/lib/outreach";
-import { OUTREACH_STATUSES } from "@/lib/outreach-format";
+import { OUTREACH_STATUSES, camelKey } from "@/lib/outreach-format";
 import { TableCard, TableCell, TableHeadCell, TableRow } from "@/components/admin/table-card";
 import { EmptyCard, ErrorCard, FilterPills, OutreachHeader } from "@/app/(protected)/outreach/outreach-ui";
 
@@ -31,7 +31,7 @@ export default async function LeadStatusPage({ searchParams }: { searchParams: S
             pills={[
               { label: `All (${Object.values(result.data.counts).reduce((a, b) => a + b, 0)})`, href: "/outreach/status" },
               ...OUTREACH_STATUSES.map((s) => ({
-                label: `${s.label} (${result.data.counts[s.value] ?? 0})`,
+                label: `${s.label} (${result.data.counts[camelKey(s.value)] ?? 0})`,
                 value: s.value,
                 href: `/outreach/status?status=${s.value}`,
               })),
@@ -57,7 +57,9 @@ export default async function LeadStatusPage({ searchParams }: { searchParams: S
                           {c.name ?? "—"}
                         </Link>
                       ) : (
-                        <span className="font-semibold">{c.name ?? "—"}</span>
+                        <Link href={`/outreach/contacts/${encodeURIComponent(c.contactId)}`} className="font-semibold">
+                          {c.name ?? "—"}
+                        </Link>
                       )}
                     </TableCell>
                     <TableCell>{c.email ?? "—"}</TableCell>
