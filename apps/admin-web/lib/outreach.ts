@@ -376,6 +376,12 @@ export async function getContactActivity(contactId: string) {
   return call<ContactActivity, "activity">("activity", `/contacts/${id(contactId)}/activity`);
 }
 
+/** A9 data rights: delete Rebecca's plans, emails, calls, recordings and memory for a
+ * contact (CLIENT_ADMIN, audited). The contact record and its consents stay. */
+export async function eraseAgentData(contactId: string) {
+  return call<Record<string, unknown>, "result">("result", `/contacts/${id(contactId)}/agent-data`, { method: "DELETE" });
+}
+
 export async function takeOver(contactId: string) {
   return call<{ eventId: string; tasksCancelled: number }, "result">("result", `/contacts/${id(contactId)}:takeover`, { method: "POST" });
 }

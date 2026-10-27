@@ -290,6 +290,19 @@ describe("Status, performance, exceptions (A13)", () => {
     expect(html).toContain("Vinith");
     expect(html).toContain("v@x.com");
     expect(html).toContain("Take over (stop Rebecca)");
+    expect(html).not.toContain("Erase Rebecca"); // erasing is admin-only (the API agrees)
+  });
+
+  it("admins can erase what Rebecca holds on a contact", async () => {
+    as("CLIENT_ADMIN");
+    backend({
+      "/contacts/c2/activity": {
+        name: "Vinith", email: "v@x.com", contact_id: "c2", consents: [], emails: [], calls: [], memory: [], plan: null,
+      },
+    });
+    const html = renderToStaticMarkup(
+      await ContactPage({ params: Promise.resolve({ contactId: "c2" }) }));
+    expect(html).toContain("Erase Rebecca&#x27;s data");
   });
 
   it("performance shows rates, costs for admins and meetings to mark", async () => {
