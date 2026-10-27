@@ -204,6 +204,26 @@ async def _outreach(env: dict[str, Any], *, mode: str = "auto_send") -> tuple[st
     return contact_id, env["mailer"].sent[-1]
 
 
+async def test_first_email_sends_for_a_contact_without_a_timezone(env: dict[str, Any]) -> None:
+    """Email needs no timezone: a contact added without one still gets its first email
+    (ruled out as the cause of a live DataError on the first step)."""
+    db, a = env["db"], _claims(env["a"])
+    await _tenant(db, a, mode="auto_send")
+    contact_id = await create_contact(db, a, account_id=None, lead_id=None, name="Vin",
+                                      email="vin@example.com", phone=None,
+                                      consent={"granted": True})
+    await add_identity(db, a, contact_id, identity_type="email", identity_value="vin@example.com")
+    await add_consent(db, a, contact_id, channel="email", status="granted",
+                      basis="documented_lawful_basis", source="admin_form")
+    now = datetime.now(UTC)
+    await planner.create_plan(db, a, contact_id=contact_id, kind="outbound_manual", goal=None,
+                              now=now)
+    await dispatch.dispatch_due_tasks(db, limit=10, now=now)
+    row = await db.fetchrow("SELECT status, last_error FROM outreach_tasks WHERE step_index = 0")
+    assert row is not None and tuple(row) == ("completed", None), tuple(row or ())
+    assert [e.to for e in env["mailer"].sent] == ["vin@example.com"]
+
+
 def _raw(*, body: str, in_reply_to: str | None = None, sender: str = "jane@example.com",
          to: str = "rebecca@mail.acme.com", headers: str = "", msg_id: str | None = None) -> str:
     lines = [f"From: Jane Doe <{sender}>", f"To: {to}", "Subject: Re: Your roof enquiry",

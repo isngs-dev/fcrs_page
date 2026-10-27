@@ -186,6 +186,8 @@ const US_ZONES: [string, string][] = [
   ["America/Los_Angeles", "Pacific"],
   ["America/Anchorage", "Alaska"],
   ["Pacific/Honolulu", "Hawaii"],
+  // Testing from India before the US launch; calls still follow the US calling rules.
+  ["Asia/Kolkata", "India (IST, for testing)"],
 ];
 
 // -- One contact --------------------------------------------------------------------
