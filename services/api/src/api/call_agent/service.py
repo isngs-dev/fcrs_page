@@ -327,6 +327,11 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         await repo.update_session(db, claims, call_id, session=state.to_json(), outcome=outcome)
         return TurnResult(_hangup(text, voice), outcome, True)
 
+    if session.amd_result == "machine":
+        if not speech:  # nobody answered the opening: it really is a voicemail
+            await repo.update_session(db, claims, call_id, outcome="voicemail")
+            return TurnResult(await voicemail_xml(db, claims), "voicemail", True)
+        await repo.update_session(db, claims, call_id, amd_result="human")
     if not speech:
         state.silences += 1
         if state.silences >= 2:
@@ -480,15 +485,11 @@ async def _offer(db: Database, claims: AuthClaims, state: script.CallState, say:
 
 
 async def on_machine(db: Database, claims: AuthClaims, session: repo.CallSessionRow) -> None:
-    """Async AMD said "machine" (L7): send the call to the voicemail branch."""
-    config = await repo.get_call_config(db, claims)
-    await repo.update_session(db, claims, session.call_id, amd_result="machine",
-                              outcome="voicemail")
-    if config is None or not session.provider_call_uuid:
-        return
-    provider = await telephony_for(db, str(claims.tenant_id), config)
-    await provider.transfer_to_url(call_uuid=session.provider_call_uuid,
-                                   url=call_url(session.call_id, "voicemail"))
+    """Async AMD said "machine" (L7). Only NOTE it: a live call to a real person was judged
+    a machine mid-greeting and cut off. ``handle_turn`` takes the voicemail branch if nobody
+    answers Rebecca's opening; any reply proves a person."""
+    if session.amd_result != "human":
+        await repo.update_session(db, claims, session.call_id, amd_result="machine")
 
 
 async def voicemail_xml(db: Database, claims: AuthClaims) -> str:

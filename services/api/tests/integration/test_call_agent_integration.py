@@ -287,15 +287,16 @@ async def test_dont_call_me_suppresses_and_ends_the_call(env: dict[str, Any]) ->
 
 
 async def test_voicemail_leaves_the_approved_message_and_retries(env: dict[str, Any]) -> None:
+    """Plivo's async "machine" verdict only counts once nobody answers Rebecca's opening:
+    then the voicemail branch runs (approved message here) and the step retries."""
     db, plivo, a = env["db"], env["plivo"], env["a"]
     call_id, task_id = await _dial(env, a)
-    await db.execute("UPDATE call_sessions SET provider_call_uuid = 'uuid-1' WHERE call_id = $1",
-                     call_id)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
     await _webhook(env, call_id, "machine", {"Machine": "true", "CallUUID": "uuid-1"})
-    assert plivo.calls[-1][0] == "transfer_to_url"
-    assert urlsplit(plivo.calls[-1][1]["url"]).path.endswith("/voicemail")
-    vm = await _webhook(env, call_id, "voicemail", {"CallUUID": "uuid-1"})
-    assert "an AI assistant for Acme Roofing" in service.spoken_text(vm.text)
+    assert plivo.calls[-1][0] != "transfer_to_url"  # no cut-off mid-greeting
+    vm = await _say(env, call_id, "")  # nobody answered the opening question
+    assert "an AI assistant for Acme Roofing" in service.spoken_text(vm)
+    assert vm.endswith("<Hangup/></Response>")
     await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "Duration": "20",
                                             "CallStatus": "completed"})
     task = await db.fetchrow("SELECT status, attempts, scheduled_at FROM outreach_tasks "
@@ -304,6 +305,23 @@ async def test_voicemail_leaves_the_approved_message_and_retries(env: dict[str, 
     assert task["scheduled_at"] > datetime.now(UTC) + timedelta(hours=23)
     assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
                              call_id) == "voicemail"
+
+
+async def test_a_person_wrongly_judged_a_machine_keeps_talking_to_rebecca(
+    env: dict[str, Any],
+) -> None:
+    """Live: Plivo said "machine" during Rebecca's greeting to a real person and the call
+    went silent and hung up. A reply to the opening proves a person: the call goes on."""
+    db, plivo, a = env["db"], env["plivo"], env["a"]
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _webhook(env, call_id, "machine", {"Machine": "true", "CallUUID": "uuid-1"})
+    assert all(name != "transfer_to_url" for name, _ in plivo.calls)
+    reply = await _say(env, call_id, "Yes, who is this?")
+    assert not reply.endswith("<Hangup/></Response>")  # the conversation continues
+    row = await db.fetchrow("SELECT outcome, amd_result FROM call_sessions WHERE call_id = $1",
+                            call_id)
+    assert row is not None and row["outcome"] != "voicemail" and row["amd_result"] == "human"
 
 
 async def test_no_answer_on_the_last_attempt_fails_the_task(env: dict[str, Any]) -> None:

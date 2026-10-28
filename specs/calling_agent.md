@@ -31,8 +31,11 @@ Numbers live in `telephony_numbers` (number → tenant); inbound tenant resoluti
 attempts, cadence, concurrency cap, cost cap, kill switch) → Plivo Call API with `answer_url` (signed
 ticket), `machine_detection=true` + `machine_detection_url` → on answer, XML speaks the disclosure inside
 `<GetInput inputType="speech">` → recording started via the Record-call API after the disclosure.
-AMD `Machine=true` arrives asynchronously → Transfer API switches the call to the voicemail branch
-(`voicemail_policy`).
+AMD `Machine=true` arrives asynchronously and is only **noted** (`amd_result = machine`). If nobody
+answers Rebecca's opening (first turn is silence) the voicemail branch runs (`voicemail_policy`);
+any reply proves a person (`amd_result = human`) and the conversation continues. *(Changed
+2026-10-27: Plivo judged a real person a machine mid-greeting and the call was cut off silently.
+Trade-off: on a real voicemail the opening is recorded before the branch runs.)*
 
 **Inbound:** Plivo answer webhook on the tenant number → `X-Plivo-Signature-V3` verified → tenant from
 `telephony_numbers` → caller ID → `contacts.phone_e164` (tenant-scoped) → known-contact context or

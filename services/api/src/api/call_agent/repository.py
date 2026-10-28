@@ -146,12 +146,13 @@ class CallSessionRow:
     created_at: datetime
     answered_at: datetime | None
     ended_at: datetime | None
+    amd_result: str | None = None  # Plivo's async verdict; "human" once a person replies
 
 
 _SESSION_SELECT = (
     "SELECT tenant_id, call_id, direction, task_id, plan_id, contact_id, from_e164, to_e164, "
     "provider_call_uuid, status, outcome, recording_consent, recording_id, session, created_at, "
-    "answered_at, ended_at FROM call_sessions "
+    "answered_at, ended_at, amd_result FROM call_sessions "
 )
 
 
