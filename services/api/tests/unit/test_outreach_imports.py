@@ -129,3 +129,21 @@ def test_command_schema_accepts_a_well_formed_request() -> None:
 ])
 def test_command_schema_rejects_anything_else(text: str) -> None:
     assert parse_model_output(text) is None
+
+
+@pytest.mark.parametrize(("phone", "zone", "result"), [
+    ("9890068591", "Asia/Kolkata", "PHONE_NEEDS_COUNTRY_CODE"),  # would silently become +1
+    ("+91 98900 68591", "Asia/Kolkata", "+919890068591"),
+    ("(202) 555-0199", "America/Chicago", "+12025550199"),  # US use unchanged
+    ("2025550199", "Pacific/Honolulu", "+12025550199"),
+    ("2025550199", "", "+12025550199"),  # no zone given: US default as before
+])
+def test_a_non_us_contact_must_include_the_country_code(phone: str, zone: str,
+                                                         result: str) -> None:
+    """A tester in India typed a 10-digit mobile 3 times; it was read as a US number and
+    Plivo refused to dial it (403). With a non-US timezone, ask for the country code."""
+    from api.agents.imports import check_row  # noqa: PLC0415
+
+    row, reasons = check_row({"name": "V", "phone": phone, "timezone": zone}, 1,
+                             date(2026, 10, 28))
+    assert (row.phone if row else reasons[0]) == result

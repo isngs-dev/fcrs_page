@@ -128,16 +128,21 @@ def check_row(values: dict[str, str], number: int, today: date) -> tuple[
         email = _email(values["email"])
         if email is None:
             reasons.append("INVALID_EMAIL")
-    if values.get("phone"):
-        phone = to_e164(values["phone"])
-        if phone is None:
-            reasons.append("INVALID_PHONE")
     if values.get("timezone"):
         try:
             ZoneInfo(values["timezone"])
             tz = values["timezone"]
         except (ZoneInfoNotFoundError, ValueError):
             reasons.append("INVALID_TIMEZONE")
+    if values.get("phone"):
+        phone = to_e164(values["phone"])
+        if phone is None:
+            reasons.append("INVALID_PHONE")
+        elif (tz and not tz.startswith("America/") and tz != "Pacific/Honolulu"
+              and not values["phone"].strip().startswith("+")):
+            # Without '+' a 10-digit number is read as US; for someone outside the US
+            # that silently dials the wrong country (live: an Indian mobile -> +1, 403).
+            reasons.append("PHONE_NEEDS_COUNTRY_CODE")
     if not values.get("email") and not values.get("phone"):
         reasons.append("NO_CONTACT_DETAILS")
     if reasons:
