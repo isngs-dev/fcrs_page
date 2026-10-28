@@ -322,7 +322,7 @@ async def test_h2_outbound_csv_to_ai_call_to_booked(env: dict[str, Any]) -> None
     # 1. An admin imports a list with written AI-call consent evidence and confirms it.
     consented = (date.today() - timedelta(days=10)).isoformat()
     csv = ("name,email,phone,timezone,call_consent,consent_date,consent_source\n"
-           f"Ana Ruiz,ana@example.com,(202) 555-0199,{_open_zone()},yes,{consented},"
+           f"Ana Ruiz,ana@example.com,+1 (202) 555-0199,{_open_zone()},yes,{consented},"
            "Signed web form\n")
     r = await client.post("/admin/outreach/imports", cookies=cookies,
                           files={"file": ("list.csv", csv.encode(), "text/csv")},
@@ -350,12 +350,13 @@ async def test_h2_outbound_csv_to_ai_call_to_booked(env: dict[str, Any]) -> None
         "Speech": "Do you fix flat roofs?", "CallUUID": "u-1"}))
     assert "we repair flat roofs" in said
     assert "start_recording" in plivo.names  # after the disclosure was heard
-    offer = call_service.spoken_text(await _plivo(env, call_id, "turn", {
+    ask = call_service.spoken_text(await _plivo(env, call_id, "turn", {
         "Speech": "I'd like to book a time", "CallUUID": "u-1"}))
-    assert "Eastern time" in offer
-    await _plivo(env, call_id, "turn", {"Speech": "the first one", "CallUUID": "u-1"})
+    assert ask.startswith("Sure. What day and time works best for you?")
+    for speech in ("the earliest you have", "the first one", "Yes please"):
+        await _plivo(env, call_id, "turn", {"Speech": speech, "CallUUID": "u-1"})
     booked = call_service.spoken_text(await _plivo(env, call_id, "turn", {
-        "Speech": "Yes please", "CallUUID": "u-1"}))
+        "Speech": "yes", "CallUUID": "u-1"}))  # ana@example.com is the right email
     assert booked.startswith("You're booked for")
     await _plivo(env, call_id, "hangup", {"CallUUID": "u-1", "Duration": "120",
                                           "CallStatus": "completed"})

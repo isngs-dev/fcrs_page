@@ -55,8 +55,19 @@ transfer (rules already in `voice_agent/agent.py:CallSession`, generalised). Bar
 2. Purpose (from task intent).
 3. Grounded Q&A (answer / clarify / escalate bands; never invent price, discount, legal/financial terms).
 4. Qualify (existing qualification fields, one question per turn).
-5. Offer slots (`get_available_slots`) → read back time + timezone → explicit "yes" → `book_meeting`.
-6. Confirm by email (and SMS if consented) → polite close.
+5. Ask "What day and time works best?" (earliest open time as a hint) → the caller's day/time is
+   matched against open slots in **the caller's own timezone** (contact zone, else the business's);
+   already booked (our meetings or the Google calendar's busy times) → "I'm sorry, we already have a
+   meeting scheduled at that time" + the two nearest open times + "or would you prefer another day
+   and time?" ("no" → asked for another); outside business hours → "we're not available at that
+   time" + the nearest → read back time + timezone → explicit "yes".
+6. Email the meeting details go to: the contact's email is read back for a yes, or the caller says
+   one ("john dot smith at gmail dot com", "at the rate" understood) and it's read back; two misses
+   → booked anyway and the team is flagged (`email_needed`) → `book_meeting`.
+7. Book: a connected Google calendar gets the event + a Meet link (sync failure undoes the booking
+   and hands off, like the widget); Calendly tenants are still handed a link by the team. The
+   confirmation email carries the Meet link → polite close. *(Steps 5–7 changed 2026-10-28: the
+   caller was told "our team will send you a link" instead of being booked.)*
 
 ## 4. Must-handle situations
 

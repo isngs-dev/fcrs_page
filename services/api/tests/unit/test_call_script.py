@@ -163,3 +163,64 @@ async def test_fetch_recording_sends_the_tenants_credentials() -> None:
     assert seen[0].headers["authorization"].startswith("Basic ")
     with pytest.raises(CallProviderError):
         await plivo.fetch_recording(url="https://media.plivo.com/gone.mp3")
+
+
+# -- Booking on the call: the caller names the day/time, Rebecca confirms the email ----------
+
+_WED = __import__("datetime").date(2026, 10, 28)  # a Wednesday
+
+
+@pytest.mark.parametrize(("text", "day", "at"), [
+    ("tomorrow at 3 pm", (2026, 10, 29), (15, 0)),
+    ("Friday 11 am", (2026, 10, 30), (11, 0)),
+    ("how about Monday at 2:30?", (2026, 11, 2), (14, 30)),  # 1-7 without am/pm: afternoon
+    ("October 30th at 4", (2026, 10, 30), (16, 0)),
+    ("the 2nd of November at 10 in the morning", (2026, 11, 2), (10, 0)),
+    ("the 5th", (2026, 11, 5), None),  # this month's 5th has passed: next month
+    ("day after tomorrow, evening 6", (2026, 10, 30), (18, 0)),
+    ("today at noon", (2026, 10, 28), (12, 0)),
+    ("three p.m. works", None, (15, 0)),
+    ("Thursday", (2026, 10, 29), None),
+    ("whenever suits you", None, None),
+])
+def test_parse_when_reads_the_day_and_time_the_caller_asks_for(
+        text: str, day: tuple[int, int, int] | None, at: tuple[int, int] | None) -> None:
+    from datetime import date
+
+    got_day, got_at = script.parse_when(text, _WED)
+    assert got_day == (date(*day) if day else None)
+    assert got_at == at
+
+
+@pytest.mark.parametrize(("speech", "email"), [
+    ("david dot r at isngs dot com", "david.r@isngs.com"),
+    ("it's d a v i d at the rate gmail dot com", "david@gmail.com"),  # Indian English
+    ("My email is Jane_Doe@Example.com.", "jane_doe@example.com"),
+    ("john dash smith at yahoo dot co dot in", "john-smith@yahoo.co.in"),
+    ("I don't remember", None),
+    ("david at gmail", None),
+])
+def test_spoken_email_is_turned_into_an_address(speech: str, email: str | None) -> None:
+    assert script.parse_spoken_email(speech) == email
+
+
+def test_email_is_read_back_the_way_people_say_it() -> None:
+    assert script.say_email("david.r@isngs.com") == "david dot r at isngs dot com"
+
+
+def test_booked_line_mentions_the_meeting_link_only_when_there_is_one() -> None:
+    slot, tz = datetime(2026, 10, 29, 9, 30, tzinfo=UTC), "Asia/Kolkata"
+    assert "Thursday, October 29 at 3 PM India time" in script.booked_line(slot, tz)
+    assert "meeting link" in script.booked_line(slot, tz, emailed=True, link=True)
+    assert "meeting link" not in script.booked_line(slot, tz, emailed=True, link=False)
+    assert "our team will send" in script.booked_line(slot, tz, emailed=False, link=False).lower()
+
+
+def test_a_booked_time_is_declined_politely_with_the_nearest_and_an_open_question() -> None:
+    a = datetime(2026, 10, 29, 9, 0, tzinfo=UTC)
+    b = datetime(2026, 10, 29, 10, 0, tzinfo=UTC)
+    line = script.taken_line([a, b], "Asia/Kolkata")
+    assert line.startswith("I'm sorry, we already have a meeting scheduled at that time.")
+    assert "2:30 PM India time" in line and "3:30 PM India time" in line
+    assert line.endswith("or would you prefer another day and time?")
+    assert "another day and time" in script.taken_line([a], "Asia/Kolkata")

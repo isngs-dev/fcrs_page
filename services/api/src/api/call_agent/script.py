@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
+
+from email_validator import EmailNotValidError, validate_email
 
 from api.voice_agent.agent import _GOODBYE_RE, _PERSON_RE
 
@@ -117,11 +119,21 @@ NO_SLOTS_LINE = ("I don't see an open time right now, so I'll have our team reac
 WRAP_UP_LINE = "I want to respect your time, so I'll have our team follow up. Thanks, goodbye."
 ASK_WHICH = "Which works better for you?"
 ANYTHING_ELSE = "Is there anything else I can help with?"
+NOT_OPEN = "I'm sorry, we're not available at that time. "
+DAY_FULL = "I'm sorry, we're not available that day. "
+DAY_BOOKED = "I'm sorry, that day is already fully booked. "
+OTHER_TIME_LINE = "No problem. What day and time would suit you better?"
+EMAIL_ASK_LINE = ("What email address should I send the meeting link to? "
+                  "Please say it slowly, like john dot smith at gmail dot com.")
+EMAIL_RETRY_LINE = "Sorry, I didn't catch that. Could you say the email address again, slowly?"
+SYNC_FAILED_LINE = ("I couldn't confirm that time in our calendar, so our team will reach out to "
+                    "book it with you. Thanks, goodbye.")
 
 _ZONE_NAMES = {"America/New_York": "Eastern", "America/Detroit": "Eastern",
                "America/Chicago": "Central", "America/Denver": "Mountain",
                "America/Phoenix": "Arizona", "America/Los_Angeles": "Pacific",
-               "America/Anchorage": "Alaska", "Pacific/Honolulu": "Hawaii"}
+               "America/Anchorage": "Alaska", "Pacific/Honolulu": "Hawaii",
+               "Asia/Kolkata": "India"}
 
 
 def say_time(at: datetime, timezone: str) -> str:
@@ -138,13 +150,40 @@ def offer_line(slots: list[datetime], timezone: str) -> str:
             f"{ASK_WHICH}")
 
 
+def taken_line(slots: list[datetime], timezone: str) -> str:
+    """The time asked for already has a meeting: apologise, give the nearest, invite another."""
+    times = " or ".join(say_time(s, timezone) for s in slots)
+    which = "either of those" if len(slots) > 1 else "that"
+    return (f"I'm sorry, we already have a meeting scheduled at that time. The closest I have "
+            f"open is {times}. Would {which} work, or would you prefer another day and time?")
+
+
 def confirm_line(slot: datetime, timezone: str) -> str:
     return f"Great. Just to confirm, {say_time(slot, timezone)}. Shall I book that?"
 
 
-def booked_line(slot: datetime, timezone: str) -> str:
-    return (f"You're booked for {say_time(slot, timezone)}. You'll get a confirmation email and "
-            f"a reminder before the call. {ANYTHING_ELSE}")
+def ask_time_line(earliest: datetime, timezone: str) -> str:
+    return (f"Sure. What day and time works best for you? The earliest I have is "
+            f"{say_time(earliest, timezone)}.")
+
+
+def email_check_line(email: str) -> str:
+    return f"I'll send the meeting details to {say_email(email)}. Is that the right email?"
+
+
+def email_heard_line(email: str) -> str:
+    return f"I heard {say_email(email)}. Is that right?"
+
+
+def booked_line(slot: datetime, timezone: str, *, emailed: bool = True,
+                link: bool = False) -> str:
+    when = f"You're booked for {say_time(slot, timezone)}."
+    if not emailed:
+        return f"{when} Our team will send you the meeting details. {ANYTHING_ELSE}"
+    if link:
+        return (f"{when} I'm sending the meeting link to your email now, and you'll get a "
+                f"reminder before the call. {ANYTHING_ELSE}")
+    return f"{when} You'll get a confirmation email and a reminder before the call. {ANYTHING_ELSE}"
 
 
 _FIRST = re.compile(r"\b(?:first|1st|earlier|former|the one)\b", re.I)
@@ -176,9 +215,113 @@ def choose_slot(text: str, slots: list[datetime], timezone: str) -> int | None:
     return None
 
 
+# -- What the caller asks for: a day/time, an email address ---------------------------------
+
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august",
+           "september", "october", "november", "december")
+_MONTH = "|".join(_MONTHS)
+_NUMBERS = {w: str(i) for i, w in enumerate(
+    ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+     "twelve"), start=1)}
+_NUMBER_WORD = re.compile(r"\b(" + "|".join(_NUMBERS) + r")\b")
+_MONTH_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b")
+_DAY_MONTH = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MONTH})\b")
+_ORDINAL = re.compile(r"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b")
+_CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?\s?m\b\.?|p\.?\s?m\b\.?|o'?clock)?")
+_TIME_WORDS = {"at", "around", "about", "by", "morning", "afternoon", "evening", "night"}
+
+
+def _on_or_after(today: date, year: int, month: int, day: int) -> date | None:
+    try:
+        found = date(year, month, day)
+    except ValueError:
+        return None
+    return found if found >= today else None
+
+
+def parse_when(text: str, today: date) -> tuple[date | None, tuple[int, int] | None]:
+    """The day and (hour, minute) a caller asked for, each ``None`` when not said.
+    Hours 1-7 without am/pm mean the afternoon (nobody books a 3 AM call)."""
+    t = _NUMBER_WORD.sub(lambda m: _NUMBERS[m.group(1)], text.lower())
+    day: date | None = None
+    if (m := _MONTH_DAY.search(t)) or (m := _DAY_MONTH.search(t)):
+        month_name, number = ((m.group(1), m.group(2)) if m.re is _MONTH_DAY
+                              else (m.group(2), m.group(1)))
+        month = _MONTHS.index(month_name) + 1
+        day = (_on_or_after(today, today.year, month, int(number))
+               or _on_or_after(today, today.year + 1, month, int(number)))
+        t = t[:m.start()] + " " + t[m.end():]
+    elif m := _ORDINAL.search(t):
+        nxt = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+        day = (_on_or_after(today, today.year, today.month, int(m.group(1)))
+               or _on_or_after(today, nxt.year, nxt.month, int(m.group(1))))
+        t = t[:m.start()] + " " + t[m.end():]
+    elif "day after tomorrow" in t:
+        day = today + timedelta(days=2)
+    elif "tomorrow" in t:
+        day = today + timedelta(days=1)
+    elif re.search(r"\btoday\b|\btonight\b", t):
+        day = today
+    else:
+        for i, name in enumerate(_WEEKDAYS):
+            if re.search(rf"\b{name}\b", t):
+                day = today + timedelta(days=(i - today.weekday()) % 7)
+                break
+
+    at: tuple[int, int] | None = None
+    for c in _CLOCK.finditer(t):
+        before = t[:c.start()].split()
+        if not (c.group(2) or c.group(3) or (before and before[-1] in _TIME_WORDS)):
+            continue  # a bare number ("the first one") isn't a time
+        hour, minute, suffix = int(c.group(1)), int(c.group(2) or 0), (c.group(3) or "")[:1]
+        if hour > 23 or minute > 59:
+            continue
+        if suffix == "p" and hour < 12:
+            hour += 12
+        elif suffix == "a" and hour == 12:
+            hour = 0
+        elif suffix not in ("a", "p") and hour < 12:
+            later = re.search(r"\b(?:afternoon|evening|night)\b", t)
+            if later or (1 <= hour <= 7 and "morning" not in t):
+                hour += 12
+        at = (hour, minute)
+        break
+    if at is None and re.search(r"\bnoon\b", t):
+        at = (12, 0)
+    return day, at
+
+
+_EMAIL_PREFIX = re.compile(
+    r"^(?:(?:yes|yeah|sure|ok(?:ay)?|no|nope|actually)[,.]?\s+)?"
+    r"(?:it'?s|it is|that'?s|my email(?: address)? is"
+    r"|the email(?: address)? is|email is)\s+")
+
+
+def parse_spoken_email(text: str) -> str | None:
+    """An email address from what the caller said ("john dot smith at gmail dot com"),
+    or ``None`` when it isn't one. Indian English "at the rate" is understood too."""
+    t = _EMAIL_PREFIX.sub("", text.lower().strip())
+    t = re.sub(r"\bat the rate(?: of)?\b|\bat\b", "@", t)
+    t = re.sub(r"\b(?:dot|period|point)\b", ".", t)
+    t = re.sub(r"\bunderscore\b", "_", t)
+    t = re.sub(r"\b(?:dash|hyphen)\b", "-", t)
+    t = re.sub(r"\s+", "", t).strip(".,")
+    try:
+        return validate_email(t, check_deliverability=False).normalized.lower()
+    except EmailNotValidError:
+        return None
+
+
+def say_email(email: str) -> str:
+    for char, word in ((".", " dot "), ("@", " at "), ("_", " underscore "), ("-", " dash ")):
+        email = email.replace(char, word)
+    return " ".join(email.split())
+
+
 # -- Per-call memory ------------------------------------------------------------------------
 
-Stage = Literal["talking", "offered", "confirming"]
+Stage = Literal["talking", "asking_time", "offered", "confirming", "email_check", "email_ask"]
 
 
 @dataclass
@@ -186,6 +329,8 @@ class CallState:
     stage: Stage = "talking"
     offered: list[str] = field(default_factory=list)  # ISO datetimes
     chosen: str | None = None
+    email: str | None = None  # where the meeting details go
+    email_tries: int = 0
     silences: int = 0
     misses: int = 0
     recording_started: bool = False
@@ -193,6 +338,7 @@ class CallState:
 
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "offered": self.offered, "chosen": self.chosen,
+                "email": self.email, "email_tries": self.email_tries,
                 "silences": self.silences, "misses": self.misses,
                 "recording_started": self.recording_started, "history": self.history[-12:]}
 
@@ -200,7 +346,9 @@ class CallState:
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
         data = data or {}
         return cls(stage=data.get("stage", "talking"), offered=list(data.get("offered", [])),
-                   chosen=data.get("chosen"), silences=int(data.get("silences", 0)),
+                   chosen=data.get("chosen"), email=data.get("email"),
+                   email_tries=int(data.get("email_tries", 0)),
+                   silences=int(data.get("silences", 0)),
                    misses=int(data.get("misses", 0)),
                    recording_started=bool(data.get("recording_started", False)),
                    history=[list(h) for h in data.get("history", [])])
