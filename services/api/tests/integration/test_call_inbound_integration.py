@@ -183,6 +183,11 @@ async def test_warm_transfer_whispers_who_and_what(routed: dict[str, Any]) -> No
         "X-Plivo-Signature-V3": compute_signature(_BASE + path, params, nonce, _TOKENS["a"]),
         "X-Plivo-Signature-V3-Nonce": nonce})
     assert script.TRANSFER_MISSED_LINE in service.spoken_text(missed.text)
+    # The whole conversation is in the transcript the console shows -- the apology too
+    turns = await routed["db"].fetch("SELECT speaker, text FROM call_transcript_turns "
+                                     "WHERE call_id = $1 ORDER BY turn_index", call_id)
+    assert turns[-1]["speaker"] == "rebecca" and turns[-1]["text"] == script.TRANSFER_MISSED_LINE
+    assert [t["speaker"] for t in turns[:3]] == ["rebecca", "caller", "rebecca"]
 
 
 async def test_unknown_caller_who_engaged_becomes_a_lead(routed: dict[str, Any]) -> None:

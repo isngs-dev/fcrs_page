@@ -201,12 +201,15 @@ _Q = "What's going on with your roof at the moment?"
 
 
 @pytest.mark.parametrize(("line", "expected"), [
-    ("I saw you were asking about gutter guards, so I thought I'd give you a quick ring.",
-     "I saw you were asking about gutter guards, so I thought I'd give you a quick ring."),
+    ("I saw you were asking about gutter guards for your home.",
+     "I saw you were asking about gutter guards for your home."),
     ('"I saw you were asking about gutters."', "I saw you were asking about gutters."),
     ("Do you still need a new roof?", None),  # the opening asks its own question
     ("", None),
     ("We help " + "really " * 35 + "a lot.", None),  # a speech, not a sentence
+    # the line Rebecca actually said on 2026-10-29: 23 words was too long to hold the floor
+    ("I'm calling back to answer your questions and chat about how we help roofing "
+     "businesses get homeowner inquiries through digital marketing.", None),
     ("NO_ANSWER_FOUND", None),
 ])
 async def test_opening_line_is_one_short_spoken_sentence(

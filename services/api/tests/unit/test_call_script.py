@@ -43,15 +43,23 @@ def test_injection_is_just_another_question() -> None:
 
 
 def test_opening_sounds_like_a_person_but_still_says_ai_and_recording() -> None:
-    hook = "I saw you were asking about storm-damage repairs on our site."
+    hook = "I saw you were asking about storm-damage repairs."
     line = script.opening(first_name="Jane", company="Acme Roofing", recording=True, hook=hook)
-    assert line == ("Hi Jane, it's Rebecca with Acme Roofing. I help the team out as their AI "
-                    f"assistant. {hook} Just so you know, this call's recorded. "
-                    "Have you got a minute?")
+    assert line == (f"Hi Jane, it's Rebecca, the AI assistant at Acme Roofing. {hook} "
+                    "This call's recorded. Have you got a minute?")
     plain = script.opening(first_name=None, company="Acme", recording=False, hook=None)
-    assert plain.startswith("Hi, it's Rebecca with Acme.") and "AI assistant" in plain
+    assert plain.startswith("Hi, it's Rebecca, the AI assistant at Acme.")
     assert script.GENERIC_HOOK in plain and "recorded" not in plain
     assert "calling on behalf of" not in line + plain
+
+
+def test_opening_is_short_enough_to_answer() -> None:
+    """A live call (2026-10-29): a ~48-word opening took ~25 s at the clear speaking rate;
+    the person's "yes" landed on its tail and the call dropped before Plivo heard it."""
+    longest_hook = " ".join(["word"] * 16)  # opening_lines' cap
+    line = script.opening(first_name="Christopher", company="Acme Roofing and Gutters",
+                          recording=True, hook=longest_hook)
+    assert len(line.split()) <= 36
 
 
 def test_spoken_times_and_slot_choice() -> None:
@@ -127,8 +135,8 @@ def test_yes_no_only_for_short_replies(text: str, kind: str) -> None:
 
 def test_inbound_greeting_and_whisper() -> None:
     assert script.inbound_greeting(first_name="Jane", company="Acme Roofing", recording=True) == (
-        "Hi Jane, thanks for calling Acme Roofing, this is Rebecca. I help the team out as their "
-        "AI assistant. Just so you know, this call's recorded. What can I do for you today?")
+        "Hi Jane, thanks for calling Acme Roofing. It's Rebecca, the AI assistant here. "
+        "This call's recorded. What can I do for you today?")
     assert script.whisper(caller="Jane Doe", asked="Do you fix flat roofs?") == (
         "Rebecca transferring a caller: Jane Doe. They asked: Do you fix flat roofs? "
         "Connecting you now.")

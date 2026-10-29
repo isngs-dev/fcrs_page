@@ -215,7 +215,10 @@ async def dial_status(call_id: str, request: Request) -> Response:
     session, params, claims = await _verified(request, call_id)
     if params.get("DialStatus") == "completed":
         return xml("<Hangup/>")
-    return xml(await service.transfer_missed(request.app.state.db, claims, session))
+    db = request.app.state.db
+    body = await service.transfer_missed(db, claims, session)
+    await repo.add_turn(db, claims, call_id, speaker="rebecca", text=service.spoken_text(body))
+    return xml(body)
 
 
 @public_router.post("/calls/{call_id}/whisper")

@@ -85,13 +85,13 @@ _OPENING_PROMPT = (
     "you're calling, warmly and casually, the way a friendly person at a small business would. "
     "If the notes about the person say what they asked about, filled in or looked at on our "
     "website, mention that naturally (for example: I saw you were asking about ...). Otherwise "
-    "mention in a few words what we help people with, using ONLY the context below. At most 25 "
+    "mention in a few words what we help people with, using ONLY the context below. At most 12 "
     "words, no question. QUESTION: one short, friendly question about what they need, tied to "
     "what they asked about or what we offer, to get them talking (at most 15 words). Neither "
     "line has a greeting, a name, prices, dates, discounts, promises, lists or emoji. Reply "
     "with exactly two lines:\nLINE: <sentence>\nQUESTION: <question>"
 )
-_OPENING_MAX_WORDS = 30
+_OPENING_MAX_WORDS = 16  # spoken slowly: ~8 s
 _QUESTION_MAX_WORDS = 20
 _OPENING_RE = re.compile(r"^[ \t]*(LINE|QUESTION)[ \t]*:[ \t]*(.+?)[ \t]*$",
                          re.MULTILINE | re.IGNORECASE)

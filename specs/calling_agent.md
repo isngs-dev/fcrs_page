@@ -55,9 +55,10 @@ transfer (rules already in `voice_agent/agent.py:CallSession`, generalised). Bar
 
 ## 3. Script (non-negotiable order)
 
-1. **Opening (first turn, disclosure kept):** "Hi {name}, it's Rebecca with {company}. I help the team
-   out as their AI assistant. {why we're calling} Just so you know, this call's recorded. Have you got
-   a minute?" Recording starts only after this turn; an objection stops and deletes it (compliance §5).
+1. **Opening (first turn, disclosure kept):** "Hi {name}, it's Rebecca, the AI assistant at {company}.
+   {why we're calling, ≤ 16 words} This call's recorded. Have you got a minute?" (≤ 36 words, ~15 s;
+   shortened 2026-10-29 after a ~48-word, ~25 s opening lost the person's "yes" and the call dropped).
+   Recording starts only after this turn; an objection stops and deletes it (compliance §5).
    *(Changed 2026-10-28, product-owner decision: a natural, human-sounding opening with a brief AI
    mention instead of the stock "an AI assistant calling on behalf of…".)*
 2. Purpose: "{why we're calling}" is one sentence written per contact before dialling, from what they

@@ -83,9 +83,9 @@ def classify(text: str) -> Kind:
 # -- Lines (code-owned; the model never writes these) -------------------------------------
 
 
-AI_LINE = "I help the team out as their AI assistant."  # the disclosure, said like a person
-RECORDED_LINE = "Just so you know, this call's recorded."
-GENERIC_HOOK = "You were in touch with us recently, so I thought I'd give you a quick ring."
+# Short on purpose: a ~48-word opening ran ~25 s and the person's "yes" was lost (2026-10-29).
+RECORDED_LINE = "This call's recorded."
+GENERIC_HOOK = "You were in touch with us recently."
 
 
 def opening(*, first_name: str | None, company: str, recording: bool, hook: str | None) -> str:
@@ -93,7 +93,7 @@ def opening(*, first_name: str | None, company: str, recording: bool, hook: str 
     (``hook``: written for this person from their chat + this business's knowledge base),
     the recording notice, then a question that hands them the floor."""
     who = f" {first_name}" if first_name else ""
-    parts = [f"Hi{who}, it's Rebecca with {company}.", AI_LINE, hook or GENERIC_HOOK]
+    parts = [f"Hi{who}, it's Rebecca, the AI assistant at {company}.", hook or GENERIC_HOOK]
     if recording:
         parts.append(RECORDED_LINE)
     return " ".join([*parts, "Have you got a minute?"])
@@ -101,7 +101,7 @@ def opening(*, first_name: str | None, company: str, recording: bool, hook: str 
 
 def inbound_greeting(*, first_name: str | None, company: str, recording: bool) -> str:
     who = f" {first_name}" if first_name else ""
-    parts = [f"Hi{who}, thanks for calling {company}, this is Rebecca.", AI_LINE]
+    parts = [f"Hi{who}, thanks for calling {company}. It's Rebecca, the AI assistant here."]
     if recording:
         parts.append(RECORDED_LINE)
     return " ".join([*parts, "What can I do for you today?"])

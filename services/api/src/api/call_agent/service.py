@@ -703,6 +703,12 @@ async def on_hangup(db: Database, claims: AuthClaims, session: repo.CallSessionR
             "no-answer", "busy", "cancel", "timeout", "") else "failed"
     outcome = outcome or "completed"
     duration = int(params.get("Duration") or 0)
+    turns = len(script.CallState.from_json(session.session).history) // 2
+    _log.info("call ended", extra={  # who hung up and why: Plivo's own words
+        "event": "call_hangup", "kind": outcome, "duration_ms": duration * 1000,
+        "reason": f"{params.get('HangupSource') or '?'}: "
+                  f"{params.get('HangupCauseName') or params.get('HangupCause') or '?'} "
+                  f"after {turns} turns"})
     await repo.update_session(
         db, claims, session.call_id, status=_FINAL_STATUS.get(outcome, "completed"),
         outcome=outcome, ended_at=datetime.now(UTC), duration_s=duration,

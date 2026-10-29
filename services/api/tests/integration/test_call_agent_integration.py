@@ -462,6 +462,20 @@ async def test_an_unanswered_call_sends_no_thank_you(env: dict[str, Any]) -> Non
     assert goals == []  # nothing to thank them for; the call is retried instead
 
 
+async def test_every_hangup_logs_who_ended_the_call_and_why(
+        env: dict[str, Any], caplog: pytest.LogCaptureFixture) -> None:
+    """2026-10-29: a call dropped after the opening and nothing on our side said why."""
+    call_id, _ = await _dial(env, env["a"])
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    with caplog.at_level("INFO", logger="api.call_agent.service"):
+        await _webhook(env, call_id, "hangup", {
+            "CallUUID": "uuid-1", "CallStatus": "completed", "Duration": "26",
+            "HangupSource": "Caller", "HangupCauseName": "Normal Hangup"})
+    ended = [r for r in caplog.records if getattr(r, "event", None) == "call_hangup"]
+    assert len(ended) == 1
+    assert ended[0].reason == "Caller: Normal Hangup after 0 turns"  # type: ignore[attr-defined]
+
+
 async def test_a_calendar_that_refuses_the_booking_undoes_it_and_hands_off(
         env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     from api.scheduling.calendar_config_repository import upsert_calendar_config
