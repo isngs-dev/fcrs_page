@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 TaskChannel = Literal["email", "call", "sms"]
 TaskGoal = Literal[
     "follow_up", "answer_questions", "qualify", "book_meeting", "reminder", "re_engage",
+    "thank_you",
 ]
 PlanKind = Literal["inbound_auto", "outbound_manual", "outbound_csv"]
 

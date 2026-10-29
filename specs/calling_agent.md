@@ -37,6 +37,12 @@ any reply proves a person (`amd_result = human`) and the conversation continues.
 2026-10-27: Plivo judged a real person a machine mid-greeting and the call was cut off silently.
 Trade-off: on a real voicemail the opening is recorded before the branch runs.)*
 
+**Website form → call within ~30 s** *(added 2026-10-28)*: a landing-page form submission (A10
+intake) that says yes to the client's saved call wording gets an `inbound_auto` plan whose **first
+step is the call, due now** (then the usual emails); exempt from the touch gap (they just asked),
+still inside the contact-local window (a night-time form is called next morning). Event and task
+dispatchers poll every 5 s, so form → event → plan → dial is about 10–20 s plus ringing.
+
 **Inbound:** Plivo answer webhook on the tenant number → `X-Plivo-Signature-V3` verified → tenant from
 `telephony_numbers` → caller ID → `contacts.phone_e164` (tenant-scoped) → known-contact context or
 "new caller" → same turn loop. No AMD on inbound (Plivo supports it on outbound only).
@@ -49,10 +55,18 @@ transfer (rules already in `voice_agent/agent.py:CallSession`, generalised). Bar
 
 ## 3. Script (non-negotiable order)
 
-1. **Disclosure first sentence:** "Hi, this is Rebecca, an AI assistant calling on behalf of {company}.
-   This call is recorded for quality." Recording starts only after this sentence; an objection stops and
-   deletes it (compliance §5).
-2. Purpose (from task intent).
+1. **Opening (first turn, disclosure kept):** "Hi {name}, it's Rebecca with {company}. I help the team
+   out as their AI assistant. {why we're calling} Just so you know, this call's recorded. Have you got
+   a minute?" Recording starts only after this turn; an objection stops and deletes it (compliance §5).
+   *(Changed 2026-10-28, product-owner decision: a natural, human-sounding opening with a brief AI
+   mention instead of the stock "an AI assistant calling on behalf of…".)*
+2. Purpose: "{why we're calling}" is one sentence written per contact before dialling, from what they
+   asked that tenant's website chatbot (contact memory) and that tenant's knowledge base, guardrail-
+   checked (no question, ≤ 30 words, no unstated price/promise); if it fails → "You were in touch
+   with us recently, so I thought I'd give you a quick ring." (`call_opening_generic` logged).
+   A "yes" to "Have you got a minute?" gets one question about their need, written with the
+   opening ("Great. Is it the roof or the gutters giving you trouble?"); their answer is remembered
+   (`need`) and Rebecca offers to find a time with the team. Asked once, only right after the opening.
 3. Grounded Q&A (answer / clarify / escalate bands; never invent price, discount, legal/financial terms).
 4. Qualify (existing qualification fields, one question per turn).
 5. Ask "What day and time works best?" (earliest open time as a hint) → the caller's day/time is
@@ -89,6 +103,12 @@ transfer (rules already in `voice_agent/agent.py:CallSession`, generalised). Bar
 stricter state rules in `compliance.md`), cost cap per tenant/month (Q9) checked by the gate.
 
 ## 6. After the call
+
+**Thank-you email** *(added 2026-10-29)*: a real conversation that didn't book (`interested`,
+`completed`, `escalated`) turns the plan's next scheduled email into a `thank_you` sent right away,
+written from the call summary. Gate purpose `after_call`: consent, suppression and touch limits
+apply; the email working hours and the gap since that call don't. A booking already sends its
+confirmation (and stops the plan); no answer / voicemail / callback / opt-out send nothing.
 
 Persist `call_sessions` (status, durations, AMD result, outcome ∈ `booked | interested | callback |
 not_interested | no_answer | voicemail | wrong_number | opted_out | escalated | failed`), transcript turns,

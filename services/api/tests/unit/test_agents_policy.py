@@ -15,10 +15,11 @@ from common.errors import ValidationError
 from api.agents.compliance import consent_allows, in_window, next_window_open
 from api.agents.events import emit
 from api.agents.models import AgentTask, OutreachPlan
-from api.agents.planner import default_plan
+from api.agents.planner import call_first_steps, default_plan
 from api.agents.policy import GateInputs, validate
 from api.agents.repository import AgentSettings, Consent
 from api.agents.tools import redact
+from api.config import ApiSettings
 
 _NY = ZoneInfo("America/New_York")
 _NOW = datetime(2026, 10, 15, 14, 0, tzinfo=UTC)  # 10:00 in New York
@@ -160,6 +161,25 @@ def test_gap_clamps_after_a_recent_touch_but_inbound_first_email_is_exempt() -> 
     assert inbound is not None and inbound.steps[0].offset == timedelta(minutes=5)
 
 
+def test_a_form_that_asked_for_a_call_is_called_first_and_right_away() -> None:
+    form = OutreachPlan(kind="inbound_auto", steps=call_first_steps(_SETTINGS))
+    plan, _ = validate(form, _SETTINGS, _inputs(), _NOW)  # 10:00 in New York
+    assert plan is not None and [s.channel for s in plan.steps] == ["call", "email", "email"]
+    assert plan.steps[0].offset == timedelta(0) and "just filled in" in plan.steps[0].intent
+    recent = _inputs(touches=1, last_touch_at=_NOW - timedelta(hours=1))
+    plan, _ = validate(form, _SETTINGS, recent, _NOW)  # they just asked: no gap wait
+    assert plan is not None and plan.steps[0].offset == timedelta(0)
+    night, notes = validate(form, _SETTINGS, _inputs(), _NOW.replace(hour=2))  # 22:00 NY
+    assert night is not None and night.steps[0].offset > timedelta(0)  # never at night
+    assert "WINDOW_SHIFTED" in _codes(notes)
+
+
+def test_dispatchers_poll_fast_enough_to_ring_a_form_within_30_seconds() -> None:
+    fields = ApiSettings.model_fields
+    assert (fields["agent_event_dispatch_interval_seconds"].default
+            + fields["agent_task_dispatch_interval_seconds"].default) <= 10
+
+
 def test_policy_invariants_hold_for_random_plans() -> None:
     """Property check: whatever the proposal, the output never violates gap,
     touches, window or consent."""
@@ -192,7 +212,7 @@ def test_policy_invariants_hold_for_random_plans() -> None:
             at = now + step.offset
             assert step.channel in settings.enabled_channels
             assert inputs.consent_ok[step.channel]
-            exempt = kind == "inbound_auto" and i == 0 and step.channel == "email"
+            exempt = kind == "inbound_auto" and i == 0  # they just reached out
             if previous is not None and not exempt:
                 assert at >= previous + gap
             if step.channel == "call":

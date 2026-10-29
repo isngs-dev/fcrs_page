@@ -94,12 +94,19 @@ def xml(body: str) -> Response:
     )
 
 
+# ponytail: one rate for every call; Polly also takes "90%"-style values -- tune after a test call.
+SPEAKING_RATE = "slow"
+
+
 def speak(text: str, voice: str) -> str:
     # Plivo names Polly voices "Polly.<Name>" and has no "-Neural" variants (that suffix is
     # Twilio's naming); given one it says nothing at all, so map it to the plain voice.
     if voice.startswith("Polly.") and voice.endswith("-Neural"):
         voice = voice.removesuffix("-Neural")
-    return f"<Speak voice={quoteattr(voice)}>{escape(text)}</Speak>"
+    body = escape(text)
+    if voice.startswith("Polly."):  # SSML works on Polly voices only; slower = clearer on a phone
+        body = f"<prosody rate={quoteattr(SPEAKING_RATE)}>{body}</prosody>"
+    return f"<Speak voice={quoteattr(voice)}>{body}</Speak>"
 
 
 def listen(prompt: str, action_url: str, voice: str) -> str:

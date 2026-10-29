@@ -95,9 +95,12 @@ async def handle_inbound_lead(db: Database, claims: AuthClaims, payload: dict[st
         if active is not None and not any(t.status == "completed" for t in active["tasks"]):
             await stop_plan(db, claims, active["plan_id"], reason="replanned_new_consent")
             replanned = True
+    # A website form (it carries its own consent evidence) that said yes to calls: ring now.
+    steps = (planner.call_first_steps(settings)
+             if "call" in channels and payload.get("consents") else None)
     try:
         outcome = await planner.create_plan(db, claims, contact_id=contact_id, kind="inbound_auto",
-                                            goal="follow_up", now=datetime.now(UTC))
+                                            goal="follow_up", now=datetime.now(UTC), steps=steps)
     except ConflictError:
         return "PLAN_ALREADY_ACTIVE"
     if not outcome.plan_id:

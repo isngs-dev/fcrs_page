@@ -19,7 +19,8 @@ from common.cache import InMemoryCache
 from common.db import Database
 from httpx import ASGITransport, AsyncClient
 
-from api.agents import dispatch, executors, planner
+from api.agents import dispatch, executors, memory, planner
+from api.agents.executors import ExecutorResult
 from api.agents.repository import AgentSettings, add_consent, upsert_agent_settings
 from api.auth.tokens import create_access_token
 from api.call_agent import repository as repo
@@ -42,6 +43,8 @@ if _DEV_DB_URL and _TEST_DB_URL == _DEV_DB_URL:
 
 _JWT = "x" * 48
 _BASE = "https://api.example.com"
+_HOOK = "I saw you were asking about storm-damage repairs on our site."
+_QUESTION = "What's going on with your roof at the moment?"
 _ENV = {
     "DEPLOYMENT_MODE": "saas", "DATABASE_URL": "postgres://stub-host:5432/appdb",
     "REDIS_URL": "redis://stub-host:6379", "JWT_SECRET": _JWT,
@@ -133,6 +136,14 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, Any]]:
         return None if "warranty" in question else "We charge two hundred dollars for that."
 
     monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    hooks: list[tuple[str | None, str | None]] = []  # (tenant, what we knew about them)
+
+    async def lines(db: Any, claims: Any, about: str | None, *, intent: Any = None,
+                    model: Any = None) -> tuple[str, str]:
+        hooks.append((claims.tenant_id, about))
+        return _HOOK, _QUESTION
+
+    monkeypatch.setattr(service, "opening_lines", lines)
     executors.register("call", place_call)
     executors.register_capacity("call", service.has_capacity)
 
@@ -164,7 +175,8 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, Any]]:
     app = create_app()
     app.state.db, app.state.redis, app.state.cache = db, _Redis(), InMemoryCache()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield {"db": db, "client": client, "plivo": plivo, "zone": zone, **tenants}
+        yield {"db": db, "client": client, "plivo": plivo, "zone": zone, "hooks": hooks,
+               **tenants}
     executors.unregister("call")
     await db.close()
     get_settings.cache_clear()
@@ -225,8 +237,9 @@ async def test_full_call_disclosure_recording_booking_and_settlement(env: dict[s
     answer = await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
     assert answer.status_code == 200
     first_speak = service.spoken_text(answer.text)
-    assert first_speak.startswith("Hi Jane, this is Rebecca, an AI assistant calling on behalf "
-                                  "of Acme Roofing. This call is recorded for quality.")
+    assert first_speak == script.opening(first_name="Jane", company="Acme Roofing",
+                                         recording=True, hook=_HOOK)
+    assert env["hooks"] == [(a, None)]  # written for tenant A's contact, before dialling
     assert "start_recording" not in plivo.names()  # never before the disclosure was heard
 
     reply = await _say(env, call_id, "Sure, how much is a repair?")
@@ -272,6 +285,39 @@ async def test_full_call_disclosure_recording_booking_and_settlement(env: dict[s
     assert "meeting_booked" in kinds
     assert await db.fetchval("SELECT status FROM outreach_plans WHERE tenant_id = $1",
                              a) == "stopped"  # booked -> follow-ups stop
+
+
+async def test_a_failed_opening_hook_still_calls_with_the_general_line(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    async def down(*args: Any, **kwargs: Any) -> str:
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(service, "opening_lines", down)
+    call_id, _ = await _dial(env, env["a"])
+    answer = await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    assert service.spoken_text(answer.text) == script.opening(
+        first_name="Jane", company="Acme Roofing", recording=True, hook=None)
+    # no follow-up question either: "yes" gets the usual reply
+    assert "What questions can I answer" in service.spoken_text(await _say(env, call_id, "yes"))
+
+
+async def test_yes_to_the_opening_gets_a_question_about_what_they_need(
+        env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    assert service.spoken_text(await _say(env, call_id, "yes sure")) == f"Great. {_QUESTION}"
+    thanks = service.spoken_text(await _say(env, call_id, "the roof leaks over the kitchen"))
+    assert thanks == script.DISCOVERY_THANKS_LINE
+    contact_id = await db.fetchval("SELECT contact_id FROM call_sessions WHERE call_id = $1",
+                                   call_id)
+    remembered = await memory.items(db, claims, str(contact_id))  # the team sees what they said
+    assert remembered[-1]["text"] == "the roof leaks over the kitchen"
+    ask = service.spoken_text(await _say(env, call_id, "yes"))
+    assert ask.startswith("Sure. What day and time works best for you?")
+    # asked once only: a later "yes" never repeats the question
+    assert _QUESTION not in ask
 
 
 async def _answered(env: dict[str, Any], tenant: str) -> str:
@@ -349,6 +395,71 @@ async def test_a_time_outside_business_hours_is_not_called_booked(env: dict[str,
     await _say(env, call_id, "I'd like to book a time")
     offer = service.spoken_text(await _say(env, call_id, "tomorrow at 11:45 pm"))
     assert offer.startswith(script.NOT_OPEN) and "already" not in offer
+
+
+async def _form_call(env: dict[str, Any], tenant: str) -> tuple[str, str]:
+    """A website form that asked for a call: call now, then the inbound emails."""
+    db = env["db"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=tenant)
+    settings = AgentSettings(enabled_channels=("call", "email"), physical_address="1 Main St")
+    await upsert_agent_settings(db, claims, settings)
+    cid = await create_contact(db, claims, account_id=None, lead_id=None, name="Jane Doe",
+                               email="jane@example.com", phone="2025550123", consent={})
+    await add_identity(db, claims, cid, identity_type="phone", identity_value="2025550123")
+    await set_contact_timezone(db, claims, cid, env["zone"])
+    await add_consent(db, claims, cid, channel="call", status="granted",
+                      basis="express_written_consent", source="form")
+    await add_consent(db, claims, cid, channel="email", status="granted",
+                      basis="express_consent", source="form")
+    await planner.create_plan(db, claims, contact_id=cid, kind="inbound_auto", goal="follow_up",
+                              now=datetime.now(UTC), steps=planner.call_first_steps(settings))
+    await dispatch.dispatch_due_tasks(db, limit=10)
+    call_id = await db.fetchval("SELECT call_id FROM call_sessions WHERE contact_id = $1", cid)
+    return str(call_id), cid
+
+
+async def test_after_a_real_conversation_a_thank_you_email_goes_right_away(
+        env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    sent: list[str] = []
+
+    async def mail(db: Any, claims: Any, task: Any, run_id: str) -> Any:
+        sent.append(task.goal)
+        return ExecutorResult(status="completed", result={})
+
+    previous = executors.get_executor("email")
+    executors.register("email", mail)
+    try:
+        call_id, _ = await _form_call(env, a)
+        await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+        await _say(env, call_id, "Sure, how much is a repair?")
+        await _say(env, call_id, "No, that's all, bye")
+        await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "Duration": "60",
+                                                "CallStatus": "completed"})
+        await dispatch.dispatch_events(db, limit=20)  # after the call
+        await dispatch.dispatch_due_tasks(db, limit=10)
+    finally:
+        if previous is not None:
+            executors.register("email", previous)
+        else:
+            executors.unregister("email")
+    assert sent == ["thank_you"]  # straight after the call, despite the usual 48 h gap
+    later = await db.fetchval("SELECT goal FROM outreach_tasks WHERE tenant_id = $1 AND "
+                              "channel = 'email' AND status = 'scheduled'", a)
+    assert later == "re_engage"  # the last friendly check-in stays where it was
+    assert await db.fetchval("SELECT count(*) FROM outreach_tasks WHERE tenant_id = $1",
+                             env["b"]) == 0
+
+
+async def test_an_unanswered_call_sends_no_thank_you(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id, _ = await _form_call(env, a)
+    await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "CallStatus": "no-answer"})
+    await dispatch.dispatch_events(db, limit=20)
+    goals = [r["goal"] for r in await db.fetch(
+        "SELECT goal FROM outreach_tasks WHERE tenant_id = $1 AND channel = 'email' "
+        "AND scheduled_at <= now()", a)]
+    assert goals == []  # nothing to thank them for; the call is retried instead
 
 
 async def test_a_calendar_that_refuses_the_booking_undoes_it_and_hands_off(

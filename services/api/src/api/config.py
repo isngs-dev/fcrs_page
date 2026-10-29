@@ -236,8 +236,10 @@ class ApiSettings(Settings):
     # Agent foundations (A1): outbox + outreach-task dispatchers, the stale
     # lease reaper, and the audit-chain sealer (Celery Beat, queue "agents").
     # Batch size is a per-tick LIMIT on the claim UPDATEs (contention only).
-    agent_event_dispatch_interval_seconds: int = 15
-    agent_task_dispatch_interval_seconds: int = 30
+    # Fast enough that a website form asking for a call rings within ~30 s (event -> plan
+    # -> dial); both queries are indexed "anything due?" polls.
+    agent_event_dispatch_interval_seconds: int = 5
+    agent_task_dispatch_interval_seconds: int = 5
     agent_task_lease_seconds: int = 600
     agent_dispatch_batch_size: int = 50
     audit_seal_interval_seconds: int = 60

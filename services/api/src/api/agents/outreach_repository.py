@@ -348,6 +348,21 @@ async def move_call_tasks(db: Database, claims: AuthClaims, plan_id: str, *, at:
     return len(rows)
 
 
+async def bring_email_forward(db: Database, claims: AuthClaims, plan_id: str, *, at: datetime,
+                              goal: str, intent: str) -> int:
+    """Turn the plan's next scheduled email into ``goal``/``intent`` sent at ``at`` (the
+    thank-you after a call). Returns 1/0."""
+    _reject_global(claims)
+    rows = await db.fetch(
+        "UPDATE outreach_tasks SET scheduled_at = $3, goal = $4, intent = $5, "
+        "last_error = 'AFTER_CALL' "
+        "WHERE (tenant_id, task_id) IN (SELECT tenant_id, task_id FROM outreach_tasks "
+        "  WHERE tenant_id = $1 AND plan_id = $2 AND channel = 'email' AND status = 'scheduled' "
+        "  ORDER BY scheduled_at LIMIT 1) RETURNING task_id",
+        claims.tenant_id, plan_id, at, goal, intent)
+    return len(rows)
+
+
 # -- Console reads (A8) ------------------------------------------------------------------
 
 

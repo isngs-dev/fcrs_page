@@ -40,6 +40,18 @@ def default_plan(kind: PlanKind, settings: AgentSettings) -> OutreachPlan:
     ])
 
 
+FORM_CALL_INTENT = ("They just filled in the contact form on our website a moment ago: thank "
+                    "them, ask what they need, answer questions and offer to book a meeting.")
+
+
+def call_first_steps(settings: AgentSettings) -> list[AgentTask]:
+    """A website form that asked for a call: ring right away (speed to lead), then the
+    usual inbound emails. The policy still keeps the call inside the contact's window."""
+    email, call, last = default_plan("inbound_auto", settings).steps
+    return [call.model_copy(update={"offset": timedelta(0), "intent": FORM_CALL_INTENT}),
+            email, last]
+
+
 @dataclass(frozen=True)
 class PlanOutcome:
     plan_id: str | None

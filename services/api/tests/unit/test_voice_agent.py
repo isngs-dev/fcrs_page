@@ -28,6 +28,7 @@ from api.voice_agent.agent import (
     call_ticket,
     in_business_hours,
     is_repeat,
+    opening_lines,
     verify_call_ticket,
 )
 from api.voice_agent.plivo import compute_signature, mint_browser_token, verify_signature
@@ -175,6 +176,64 @@ async def _answer_with(completion_text: str, stop_reason: str = "stop") -> tuple
     ):
         reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [])  # type: ignore[arg-type]
     return reply, generate
+
+
+async def _lines_with(text: str, about: str | None = None, intent: str | None = None,
+                      ) -> tuple[tuple[str | None, str | None], AsyncMock]:
+    from api.llm.provider import Completion
+
+    generate = AsyncMock(return_value=Completion(
+        text=text, model="m", input_tokens=1, output_tokens=1, stop_reason="stop"))
+    provider = SimpleNamespace(generate=generate, aclose=AsyncMock())
+    chunk = SimpleNamespace(chunk_id="c1", content="We repair storm-damaged roofs and gutters.")
+    with (
+        patch("api.voice_agent.agent.get_llm_config", AsyncMock(return_value=SimpleNamespace(
+            embedding_model="emb", model="m"))),
+        patch("api.voice_agent.agent.retrieve_hybrid", AsyncMock(return_value=SimpleNamespace(
+            chunks=[chunk]))),
+        patch("api.voice_agent.agent.provider_for", return_value=provider),
+    ):
+        lines = await opening_lines(object(), object(), about, intent=intent)  # type: ignore[arg-type]
+    return lines, generate
+
+
+_Q = "What's going on with your roof at the moment?"
+
+
+@pytest.mark.parametrize(("line", "expected"), [
+    ("I saw you were asking about gutter guards, so I thought I'd give you a quick ring.",
+     "I saw you were asking about gutter guards, so I thought I'd give you a quick ring."),
+    ('"I saw you were asking about gutters."', "I saw you were asking about gutters."),
+    ("Do you still need a new roof?", None),  # the opening asks its own question
+    ("", None),
+    ("We help " + "really " * 35 + "a lot.", None),  # a speech, not a sentence
+    ("NO_ANSWER_FOUND", None),
+])
+async def test_opening_line_is_one_short_spoken_sentence(
+        env: None, line: str, expected: str | None) -> None:
+    (hook, question), _ = await _lines_with(f"LINE: {line}\nQUESTION: {_Q}")
+    assert (hook, question) == (expected, _Q)
+
+
+@pytest.mark.parametrize("question", [
+    "Tell me about your roof.",  # not a question
+    "What's going on with " + "your " * 25 + "roof?",  # too long to say
+    "",
+])
+async def test_follow_up_question_is_one_short_question(env: None, question: str) -> None:
+    (hook, asked), _ = await _lines_with(f"LINE: I saw you were asking about gutters.\n"
+                                         f"QUESTION: {question}")
+    assert hook == "I saw you were asking about gutters." and asked is None
+
+
+async def test_opening_lines_come_from_the_landing_page_and_why_we_call(env: None) -> None:
+    _, generate = await _lines_with("LINE: Thanks for filling in our form.\nQUESTION: " + _Q,
+                                    about="Website chat: asked about gutter guards",
+                                    intent="They just filled in the contact form on our website.")
+    system = generate.await_args.args[0][0].content
+    assert "gutter guards" in system  # the person's chat on that site's chatbot
+    assert "We repair storm-damaged roofs" in system  # that site's knowledge base
+    assert "just filled in the contact form" in system  # why this call is happening
 
 
 async def test_the_spoken_answer_gets_the_same_token_budget_as_the_chat(env: None) -> None:
@@ -524,11 +583,18 @@ async def test_start_call_is_refused_when_the_chatbot_has_it_off(env: None) -> N
     ("Polly.Joanna-Neural", "Polly.Joanna"),  # Twilio's name: Plivo stays SILENT on it
     ("Polly.Joanna", "Polly.Joanna"),
     ("Polly.Raveena", "Polly.Raveena"),
-    ("WOMAN", "WOMAN"),
 ])
 def test_speak_uses_a_voice_name_plivo_knows(stored: str, spoken: str) -> None:
     """Plivo documents Polly voices as ``Polly.<Name>`` with no ``-Neural`` variants; a
-    live call with ``Polly.Joanna-Neural`` was answered but completely silent."""
+    live call with ``Polly.Joanna-Neural`` was answered but completely silent. Polly voices
+    speak a little slower so callers catch every word (SSML is Polly-only on Plivo)."""
+    from api.voice_agent.plivo import SPEAKING_RATE, speak  # noqa: PLC0415
+
+    assert speak("Hi & bye", stored) == (
+        f'<Speak voice="{spoken}"><prosody rate="{SPEAKING_RATE}">Hi &amp; bye</prosody></Speak>')
+
+
+def test_plivo_built_in_voices_get_no_ssml() -> None:
     from api.voice_agent.plivo import speak  # noqa: PLC0415
 
-    assert speak("Hi", stored) == f'<Speak voice="{spoken}">Hi</Speak>'
+    assert speak("Hi", "WOMAN") == '<Speak voice="WOMAN">Hi</Speak>'

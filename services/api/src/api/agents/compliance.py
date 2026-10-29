@@ -34,8 +34,9 @@ from api.contacts.repository import get_contact, get_contact_timezone, list_iden
 
 Channel = Literal["email", "call"]
 # "first_response": the first e-mail to someone who just asked us (A12 F4) -- outreach
-# rules, except the e-mail working hours.
-Purpose = Literal["outreach", "reply", "first_response"]
+# rules, except the e-mail working hours. "after_call": the thank-you right after a call
+# they took part in -- outreach rules, except the working hours and the gap since that call.
+Purpose = Literal["outreach", "reply", "first_response", "after_call"]
 
 # Blocks that can never clear by waiting: the task is cancelled, not rescheduled.
 PERMANENT_CODES = frozenset({
@@ -171,7 +172,8 @@ async def _decide(
 
     stats = await touch_stats(db, claims, contact_id, now=now)
     gap = timedelta(hours=settings.min_hours_between_touches)
-    if stats.last_touch_at is not None and now - stats.last_touch_at < gap:
+    if (stats.last_touch_at is not None and now - stats.last_touch_at < gap
+            and purpose != "after_call"):
         return _block("CADENCE_LIMIT", stats.last_touch_at + gap, touches=stats.touches)
     if stats.touches >= settings.max_touches_per_contact:
         return _block("MAX_TOUCHES", touches=stats.touches)

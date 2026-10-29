@@ -79,6 +79,22 @@ _VOICE_SYSTEM_PROMPT = (
     "invent prices, dates or commitments."
 )
 _NO_ANSWER = "NO_ANSWER_FOUND"
+_OPENING_PROMPT = (
+    "You are Rebecca, calling someone back for this business. Write the opening of a phone "
+    "call. LINE: one sentence that comes right after you have said hi and your name. Say why "
+    "you're calling, warmly and casually, the way a friendly person at a small business would. "
+    "If the notes about the person say what they asked about, filled in or looked at on our "
+    "website, mention that naturally (for example: I saw you were asking about ...). Otherwise "
+    "mention in a few words what we help people with, using ONLY the context below. At most 25 "
+    "words, no question. QUESTION: one short, friendly question about what they need, tied to "
+    "what they asked about or what we offer, to get them talking (at most 15 words). Neither "
+    "line has a greeting, a name, prices, dates, discounts, promises, lists or emoji. Reply "
+    "with exactly two lines:\nLINE: <sentence>\nQUESTION: <question>"
+)
+_OPENING_MAX_WORDS = 30
+_QUESTION_MAX_WORDS = 20
+_OPENING_RE = re.compile(r"^[ \t]*(LINE|QUESTION)[ \t]*:[ \t]*(.+?)[ \t]*$",
+                         re.MULTILINE | re.IGNORECASE)
 _HISTORY_TURNS = 6  # recent caller/agent turns sent with each question
 
 _PERSON_RE = re.compile(
@@ -234,6 +250,47 @@ async def answer_from_knowledge(
         return reply
     _log.info("voice agent could not answer", extra={"event": "voice_agent_miss", "reason": miss})
     return None
+
+
+async def opening_lines(db: Database, claims: AuthClaims, about_caller: str | None, *,
+                        intent: str | None = None, model: str | None = None,
+                        ) -> tuple[str | None, str | None]:
+    """``(why we're calling, a question about their need)`` written for this person: what
+    they asked this tenant's chatbot or form (``about_caller``), this tenant's knowledge base
+    and why the call happens (``intent``). Each is ``None`` when unusable; LLM/retrieval
+    errors propagate -- the caller falls back to the general opening."""
+    config = await get_llm_config(db, claims)
+    if config is None or not config.embedding_model:
+        raise LLMError("LLM or embeddings not configured for this tenant")
+    result = await retrieve_hybrid(db, claims, about_caller or "what we help people with", k=3)
+    context = "\n".join(c.content for c in result.chunks)
+    why = f"Why this call is happening: {intent}\n\n" if intent else ""
+    provider = provider_for(config)
+    try:
+        completion = await provider.generate(
+            [ChatMessage(role="system", content=(
+                f"{_OPENING_PROMPT}\n\n{why}Context:\n{context}\n\n{frame_memory(about_caller)}"
+            ).strip()), ChatMessage(role="user", content="Write the two lines.")],
+            model=model or config.model, max_tokens=get_api_settings().llm_max_tokens,
+            reasoning_effort="low")
+    finally:
+        await provider.aclose()
+    found = {k.upper(): v.strip('"').strip() for k, v in _OPENING_RE.findall(completion.text)}
+
+    def usable(text: str | None, *, question: bool) -> str | None:
+        if not text or _NO_ANSWER in text or not scan_output(text).ok:
+            return None
+        if unstated_commitments(text, context):
+            return None
+        if question:  # one short question, asked as one
+            return text if text.endswith("?") and len(text.split()) <= _QUESTION_MAX_WORDS else None
+        return text if "?" not in text and len(text.split()) <= _OPENING_MAX_WORDS else None
+
+    line = usable(found.get("LINE"), question=False)
+    asked = usable(found.get("QUESTION"), question=True)
+    if line is None or asked is None:
+        _log.info("call opening partly generic", extra={"event": "call_opening_generic"})
+    return line, asked
 
 
 # -- call ticket ----------------------------------------------------------------

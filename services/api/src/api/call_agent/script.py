@@ -42,6 +42,13 @@ _NOT_INTERESTED = re.compile(
 _YES = re.compile(r"^\s*(?:yes|yeah|yep|yup|sure|correct|that works|perfect|ok(?:ay)?|please"
                   r"|book it|go ahead|sounds good)\b", re.I)
 _NO = re.compile(r"^\s*(?:no|nope|nah|not really|neither)\b", re.I)
+_ASKS = re.compile(r"\?|^\s*(?:how|what|when|where|why|who|which|do|does|did|can|could|is|are"
+                   r"|will|would|should)\b", re.I)
+
+
+def is_question(text: str) -> bool:
+    """Phone speech rarely carries a "?" -- a leading question word counts too."""
+    return bool(_ASKS.search(text))
 
 
 def classify(text: str) -> Kind:
@@ -76,18 +83,28 @@ def classify(text: str) -> Kind:
 # -- Lines (code-owned; the model never writes these) -------------------------------------
 
 
-def disclosure(*, first_name: str | None, company: str, recording: bool) -> str:
+AI_LINE = "I help the team out as their AI assistant."  # the disclosure, said like a person
+RECORDED_LINE = "Just so you know, this call's recorded."
+GENERIC_HOOK = "You were in touch with us recently, so I thought I'd give you a quick ring."
+
+
+def opening(*, first_name: str | None, company: str, recording: bool, hook: str | None) -> str:
+    """The first thing said on an outbound call: who, the AI disclosure, why we're calling
+    (``hook``: written for this person from their chat + this business's knowledge base),
+    the recording notice, then a question that hands them the floor."""
     who = f" {first_name}" if first_name else ""
-    line = f"Hi{who}, this is Rebecca, an AI assistant calling on behalf of {company}."
-    return f"{line} This call is recorded for quality." if recording else line
+    parts = [f"Hi{who}, it's Rebecca with {company}.", AI_LINE, hook or GENERIC_HOOK]
+    if recording:
+        parts.append(RECORDED_LINE)
+    return " ".join([*parts, "Have you got a minute?"])
 
 
 def inbound_greeting(*, first_name: str | None, company: str, recording: bool) -> str:
     who = f" {first_name}" if first_name else ""
-    line = f"Hi{who}, thanks for calling {company}. This is Rebecca, an AI assistant."
+    parts = [f"Hi{who}, thanks for calling {company}, this is Rebecca.", AI_LINE]
     if recording:
-        line += " This call is recorded for quality."
-    return f"{line} How can I help?"
+        parts.append(RECORDED_LINE)
+    return " ".join([*parts, "What can I do for you today?"])
 
 
 def whisper(*, caller: str, asked: str | None) -> str:
@@ -96,8 +113,6 @@ def whisper(*, caller: str, asked: str | None) -> str:
     return f"Rebecca transferring a caller: {caller}.{about} Connecting you now."
 
 
-PURPOSE = ("You recently got in touch with us, and I'm calling to answer any questions and help "
-           "you book a time with our team if that's useful. Is now a good time?")
 ROBOT_LINE = "Yes, I'm an AI assistant. I can answer questions or book a time with our team."
 RECORDING_STOPPED = "No problem, I've stopped the recording."
 OPT_OUT_LINE = "Understood. I've removed your number and we won't call again. Goodbye."
@@ -119,6 +134,10 @@ NO_SLOTS_LINE = ("I don't see an open time right now, so I'll have our team reac
 WRAP_UP_LINE = "I want to respect your time, so I'll have our team follow up. Thanks, goodbye."
 ASK_WHICH = "Which works better for you?"
 ANYTHING_ELSE = "Is there anything else I can help with?"
+DISCOVERY_THANKS_LINE = ("Thanks, that's really helpful. Would you like me to find a time with "
+                         "our team to talk it through?")
+DISCOVERY_NO_LINE = ("No problem. Would you like me to find a time with our team, or is there "
+                     "anything I can answer for you?")
 NOT_OPEN = "I'm sorry, we're not available at that time. "
 DAY_FULL = "I'm sorry, we're not available that day. "
 DAY_BOOKED = "I'm sorry, that day is already fully booked. "
@@ -321,7 +340,8 @@ def say_email(email: str) -> str:
 
 # -- Per-call memory ------------------------------------------------------------------------
 
-Stage = Literal["talking", "asking_time", "offered", "confirming", "email_check", "email_ask"]
+Stage = Literal["talking", "discovery", "asking_time", "offered", "confirming", "email_check",
+                "email_ask"]
 
 
 @dataclass
@@ -334,13 +354,15 @@ class CallState:
     silences: int = 0
     misses: int = 0
     recording_started: bool = False
+    question: str | None = None  # asked if they say yes to the opening (written per contact)
     history: list[list[str]] = field(default_factory=list)  # [role, text]
 
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "offered": self.offered, "chosen": self.chosen,
                 "email": self.email, "email_tries": self.email_tries,
                 "silences": self.silences, "misses": self.misses,
-                "recording_started": self.recording_started, "history": self.history[-12:]}
+                "recording_started": self.recording_started, "question": self.question,
+                "history": self.history[-12:]}
 
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
@@ -351,4 +373,5 @@ class CallState:
                    silences=int(data.get("silences", 0)),
                    misses=int(data.get("misses", 0)),
                    recording_started=bool(data.get("recording_started", False)),
+                   question=data.get("question"),
                    history=[list(h) for h in data.get("history", [])])

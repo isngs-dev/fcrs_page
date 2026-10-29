@@ -63,7 +63,7 @@ def validate(
             continue
 
         at = now + step.offset - freed
-        gap_exempt = plan.kind == "inbound_auto" and index == 0 and step.channel == "email"
+        gap_exempt = plan.kind == "inbound_auto" and index == 0  # they just reached out
         if previous is not None and not gap_exempt and at < previous + gap:
             at = previous + gap
             notes.append(PolicyNote(step_index=index, code="GAP_CLAMPED", detail=at.isoformat()))

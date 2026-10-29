@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, time
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -201,6 +202,24 @@ async def test_call_consent_needs_the_clients_saved_wording(env: dict[str, Any])
     channels = {r["channel"] for r in await db.fetch(
         "SELECT channel FROM outreach_tasks WHERE tenant_id = $1", a)}
     assert channels == {"email", "call"}
+
+
+async def test_a_form_that_asks_for_a_call_is_rung_right_away(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    await upsert_agent_settings(db, _claims(a), AgentSettings(  # any hour: the test is about speed
+        enabled_channels=("call", "email"), inbound_auto_enabled=True,
+        physical_address="1 Main St", call_window_start=time(0, 0), call_window_end=time(23, 59)))
+    assert (await _config(env, a, call_consent_wording=_CALL_WORDING)).status_code == 200
+    await _form(env, a, name="Ana Ruiz", email="ana@example.com", phone="(415) 555-0100",
+                consent_to_call="on", submission_id="s-9", form="Roof quote")
+    await dispatch.dispatch_events(db, limit=10)
+    tasks = await db.fetch("SELECT channel, scheduled_at, intent FROM outreach_tasks "
+                           "WHERE tenant_id = $1 ORDER BY step_index", a)
+    assert [t["channel"] for t in tasks] == ["call", "email", "email"]
+    assert tasks[0]["scheduled_at"] <= datetime.now(UTC)  # due now: the next dispatch dials
+    assert "just filled in" in tasks[0]["intent"]
+    assert await db.fetchval("SELECT count(*) FROM outreach_tasks WHERE tenant_id = $1",
+                             env["b"]) == 0  # only the form's own tenant
 
 
 async def test_duplicates_never_make_a_second_lead_or_plan(env: dict[str, Any]) -> None:

@@ -113,7 +113,8 @@ async def _run_task(db: Database, task: outreach_repository.ClaimedTask, now: da
                       and task.plan_kind == "inbound_auto")
     gate = await compliance.check(db, claims, contact_id=task.contact_id,
                                   channel=channel, now=now, run_id=run_id,  # type: ignore[arg-type]
-                                  purpose="first_response" if first_response else "outreach")
+                                  purpose="first_response" if first_response
+                                  else "after_call" if task.goal == "thank_you" else "outreach")
     if not gate.ok:
         code = gate.code or "GATE_BLOCKED"
         if code in compliance.PERMANENT_CODES:

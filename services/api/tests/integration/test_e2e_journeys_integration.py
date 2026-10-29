@@ -66,6 +66,7 @@ _ENV = {
 }
 _NY = ZoneInfo("America/New_York")
 _KB = "We repair flat roofs and gutters. An inspection takes about an hour."
+_OPENER = "I wanted to see if we could help with your flat roof or gutters."
 
 
 def _open_zone() -> str:
@@ -96,6 +97,9 @@ class _Model:
                     "hour. Would a short call to find a time suit you?")
         elif "meeting start time" in system:
             text = self.proposed
+        elif "opening of a phone call" in system:
+            text = (f"LINE: {_OPENER}\nQUESTION: Is it the roof or the gutters giving you "
+                    "trouble?") if _KB in system else "Hello there!"
         else:
             text = "Yes, we repair flat roofs, and an inspection takes about an hour."
         return Completion(text=text, model=model, input_tokens=10, output_tokens=10)
@@ -344,8 +348,9 @@ async def test_h2_outbound_csv_to_ai_call_to_booked(env: dict[str, Any]) -> None
     call_id = str(await db.fetchval("SELECT call_id FROM call_sessions WHERE tenant_id = $1",
                                     tid))
     hello = call_service.spoken_text(await _plivo(env, call_id, "answer", {"CallUUID": "u-1"}))
-    assert hello.startswith("Hi Ana, this is Rebecca, an AI assistant calling on behalf of "
-                            "Acme Roofing. This call is recorded for quality.")
+    # The opening is written from this tenant's knowledge base, not a stock AI intro
+    assert hello == call_service.script.opening(first_name="Ana", company="Acme Roofing",
+                                                recording=True, hook=_OPENER)
     said = call_service.spoken_text(await _plivo(env, call_id, "turn", {
         "Speech": "Do you fix flat roofs?", "CallUUID": "u-1"}))
     assert "we repair flat roofs" in said
