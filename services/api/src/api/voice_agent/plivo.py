@@ -113,10 +113,14 @@ def listen(prompt: str, action_url: str, voice: str) -> str:
     """Speak ``prompt`` and capture the caller's next utterance (posted to
     ``action_url`` as ``Speech``). No input -> the Redirect posts there empty.
     Don't change these attributes without a live call: en-IN + hints (2026-10-29) made
-    Plivo hear nothing at all, every turn timed out silent."""
+    Plivo hear nothing at all, every turn timed out silent.
+    executionTimeout counts from when Rebecca stops speaking (Plivo logs: 14 s line + 20 s);
+    20 s of dead air made people hang up, so a missed reply is re-asked after 6 s.
+    ponytail: one timeout for every question; if long answers come back cut short
+    (call_turn_heard word counts), give the open questions a longer one."""
     return (
         f'<GetInput action={quoteattr(action_url)} method="POST" inputType="speech" '
-        'language="en-US" speechModel="phone_call" executionTimeout="20" '
+        'language="en-US" speechModel="phone_call" executionTimeout="6" '
         'speechEndTimeout="auto" redirect="true">'
         f"{speak(prompt, voice)}</GetInput>"
         f'<Redirect method="POST">{escape(action_url)}</Redirect>'

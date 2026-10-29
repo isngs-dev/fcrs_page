@@ -53,7 +53,9 @@ Silence: re-prompt once, then close politely; repeated question / two misses / a
 transfer (rules already in `voice_agent/agent.py:CallSession`, generalised). Recogniser: `en-US`,
 `phone_call` model, no hints, for every call. *(2026-10-29: `en-IN` for +91 plus `hints` made
 Plivo hear nothing, every turn timed out silent; reverted. Change these only one at a time,
-proven on a live call.)* Each turn logs `call_turn_heard` (word count + confidence, no text). Barge-in on P1 is
+proven on a live call.)* Each turn logs `call_turn_heard` (word count + confidence, no text).
+No reply within 6 s of Rebecca finishing (`executionTimeout`, counted after her line per Plivo's
+logs) → "Sorry, I didn't catch that…" *(was 20 s: callers hung up in the dead air, 2026-10-29)*. Barge-in on P1 is
 **unverified** (ADR-002) — measured in A6; P2 (Audio Streaming) adds it if required.
 
 ## 3. Script (non-negotiable order)

@@ -610,3 +610,12 @@ def test_listening_keeps_the_recogniser_settings_that_heard_callers() -> None:
     xml = listen("Have you got a minute?", "https://x.test/turn", "Polly.Joanna")
     assert 'language="en-US" speechModel="phone_call"' in xml
     assert "hints=" not in xml
+
+
+def test_a_missed_reply_is_re_asked_before_the_caller_gives_up() -> None:
+    # 2026-10-29: a person heard the opening, got ~5 s of dead air and hung up; Rebecca
+    # waited 20 s (counted after she stops speaking, per Plivo's logs) before re-asking.
+    from api.voice_agent.plivo import listen  # noqa: PLC0415
+
+    xml = listen("Have you got a minute?", "https://x.test/turn", "Polly.Joanna")
+    assert 'executionTimeout="6"' in xml
