@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from common.auth import AuthClaims, Role
 from common.errors import NotFoundError, ValidationError
+from common.logging import get_logger
 from common.phone import to_e164
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
@@ -35,6 +36,7 @@ router = APIRouter(prefix="/admin/outreach", tags=["call-agent"])
 tenant_scoped_router = APIRouter(prefix="/admin/tenants/{tenant_id}/outreach",
                                  tags=["call-agent"])
 public_router = APIRouter(prefix="/public/call-agent", tags=["call-agent"])
+_log = get_logger(__name__)
 
 
 class CallConfigBody(BaseModel):
@@ -186,6 +188,11 @@ async def turn(call_id: str, request: Request) -> Response:
     session, params, claims = await _verified(request, call_id)
     db = request.app.state.db
     speech = (params.get("Speech") or "").strip()
+    # What Plivo's recogniser made of the caller (no text: it's PII) -- evidence for mishearing.
+    confidence = params.get("SpeechConfidenceScore") or "?"
+    _log.info("caller heard", extra={
+        "event": "call_turn_heard", "kind": "speech" if speech else "silence",
+        "reason": f"{len(speech.split())} words, confidence {confidence}"})
     if speech:
         await repo.add_turn(db, claims, call_id, speaker="caller", text=speech)
     result = await service.handle_turn(db, claims, session, speech)

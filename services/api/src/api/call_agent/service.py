@@ -61,7 +61,7 @@ from api.scheduling.repository import (
 )
 from api.scheduling.slots import compute_slots
 from api.voice_agent.agent import answer_from_knowledge, opening_lines
-from api.voice_agent.plivo import listen, speak
+from api.voice_agent.plivo import asr_language, listen, speak
 
 _log = get_logger(__name__)
 
@@ -231,8 +231,13 @@ class TurnResult:
     end: bool = False
 
 
-def _listen(text: str, call_id: str, voice: str) -> str:
-    return listen(text, call_url(call_id, "turn"), voice)
+def _listen(text: str, call_id: str, voice: str, person: str | None = None) -> str:
+    """``person``: the number of whoever Rebecca is talking to (picks the recogniser's accent)."""
+    return listen(text, call_url(call_id, "turn"), voice, asr_language(person))
+
+
+def _person(session: repo.CallSessionRow) -> str:
+    return session.from_e164 if session.direction == "inbound" else session.to_e164
 
 
 def _hangup(text: str, voice: str) -> str:
@@ -255,7 +260,7 @@ async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSession
                               answered_at=datetime.now(UTC), provider_call_uuid=call_uuid,
                               session=script.CallState(question=written.get("question")).to_json())
     await repo.add_turn(db, claims, session.call_id, speaker="rebecca", text=line)
-    return _listen(line, session.call_id, config.voice)
+    return _listen(line, session.call_id, config.voice, _person(session))
 
 
 async def _calendar_provider(calendar: CalendarConfig) -> Any:
@@ -391,7 +396,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     async def say(text: str) -> TurnResult:
         state.history.append(["assistant", text])
         await repo.update_session(db, claims, call_id, session=state.to_json())
-        return TurnResult(_listen(text, call_id, voice))
+        return TurnResult(_listen(text, call_id, voice, _person(session)))
 
     async def bye(text: str, outcome: str) -> TurnResult:
         if session.outcome == "booked" and outcome == "completed":
@@ -896,7 +901,7 @@ async def inbound_answer(db: Database, claims: AuthClaims, *, caller: str, calle
                                    recording=config.recording_enabled)
     await repo.update_session(db, claims, call_id, session=script.CallState().to_json())
     await repo.add_turn(db, claims, call_id, speaker="rebecca", text=line)
-    return _listen(line, call_id, config.voice)
+    return _listen(line, call_id, config.voice, caller)
 
 
 async def whisper_xml(db: Database, claims: AuthClaims, session: repo.CallSessionRow) -> str:
