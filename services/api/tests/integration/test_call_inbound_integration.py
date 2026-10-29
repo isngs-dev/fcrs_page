@@ -97,11 +97,6 @@ async def test_non_us_numbers_in_plivos_format_are_routed(routed: dict[str, Any]
     caller = await db.fetchval(
         "SELECT from_e164 FROM call_sessions WHERE provider_call_uuid = 'in-india'")
     assert caller == "+919812345591"
-    # Indian callers are heard with the Indian-English recogniser, every turn.
-    assert 'language="en-IN"' in r.text
-    call_id = await db.fetchval(
-        "SELECT call_id FROM call_sessions WHERE provider_call_uuid = 'in-india'")
-    assert 'language="en-IN"' in await _turn(routed, str(call_id), "hello")
     # Same tenant check as for US numbers: B's token can't answer for A's Indian number.
     forged = await _inbound(routed, "answer", {"From": "919812345591", "To": "912264233234",
                                                "CallUUID": "x2"}, token=_TOKENS["b"])

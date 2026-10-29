@@ -51,9 +51,9 @@ dispatchers poll every 5 s, so form → event → plan → dial is about 10–20
 (voice prompt: short, spoken, one question) → `<GetInput speech><Speak>reply</Speak></GetInput>` → repeat.
 Silence: re-prompt once, then close politely; repeated question / two misses / asks for a person →
 transfer (rules already in `voice_agent/agent.py:CallSession`, generalised). Recogniser: `en-US`,
-`en-IN` when the person's number is +91 (test market; en-US misheard Indian English, 2026-10-29 —
-`en-IN` isn't in Plivo's documented list: confirm on a live call), with `hints` for yes/no/days/
-times; each turn logs `call_turn_heard` (word count + confidence, no text). Barge-in on P1 is
+`phone_call` model, no hints, for every call. *(2026-10-29: `en-IN` for +91 plus `hints` made
+Plivo hear nothing, every turn timed out silent; reverted. Change these only one at a time,
+proven on a live call.)* Each turn logs `call_turn_heard` (word count + confidence, no text). Barge-in on P1 is
 **unverified** (ADR-002) — measured in A6; P2 (Audio Streaming) adds it if required.
 
 ## 3. Script (non-negotiable order)

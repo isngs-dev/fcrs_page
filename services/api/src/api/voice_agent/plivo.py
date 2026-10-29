@@ -109,27 +109,15 @@ def speak(text: str, voice: str) -> str:
     return f"<Speak voice={quoteattr(voice)}>{body}</Speak>"
 
 
-# Boosts the short answers Rebecca asks for: a test call heard "up" for "yup" (2026-10-29).
-HINTS = ",".join([
-    "yes", "yeah", "yup", "yep", "sure", "okay", "no", "nope", "not now", "call me later",
-    "today", "tomorrow", "next week", "morning", "afternoon", "evening", "a.m.", "p.m.",
-    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
-])
-
-
-def asr_language(e164: str | None) -> str:
-    """Recogniser accent for the person on the line: en-US mishears Indian English.
-    ponytail: +91 only (the test market); add a country map when another one goes live."""
-    return "en-IN" if (e164 or "").startswith("+91") else "en-US"
-
-
-def listen(prompt: str, action_url: str, voice: str, language: str = "en-US") -> str:
+def listen(prompt: str, action_url: str, voice: str) -> str:
     """Speak ``prompt`` and capture the caller's next utterance (posted to
-    ``action_url`` as ``Speech``). No input -> the Redirect posts there empty."""
+    ``action_url`` as ``Speech``). No input -> the Redirect posts there empty.
+    Don't change these attributes without a live call: en-IN + hints (2026-10-29) made
+    Plivo hear nothing at all, every turn timed out silent."""
     return (
         f'<GetInput action={quoteattr(action_url)} method="POST" inputType="speech" '
-        f'language={quoteattr(language)} speechModel="phone_call" executionTimeout="20" '
-        f'speechEndTimeout="auto" hints={quoteattr(HINTS)} redirect="true">'
+        'language="en-US" speechModel="phone_call" executionTimeout="20" '
+        'speechEndTimeout="auto" redirect="true">'
         f"{speak(prompt, voice)}</GetInput>"
         f'<Redirect method="POST">{escape(action_url)}</Redirect>'
     )

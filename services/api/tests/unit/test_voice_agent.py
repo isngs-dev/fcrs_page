@@ -603,20 +603,10 @@ def test_plivo_built_in_voices_get_no_ssml() -> None:
     assert speak("Hi", "WOMAN") == '<Speak voice="WOMAN">Hi</Speak>'
 
 
-def test_listening_hints_the_short_answers_rebecca_asks_for() -> None:
-    # A 2026-10-29 call heard "up" for "yup", so the opening's yes was lost.
-    from api.voice_agent.plivo import listen
+def test_listening_keeps_the_recogniser_settings_that_heard_callers() -> None:
+    # en-IN + hints (2026-10-29) made Plivo hear nothing: every turn timed out silent.
+    from api.voice_agent.plivo import listen  # noqa: PLC0415
 
     xml = listen("Have you got a minute?", "https://x.test/turn", "Polly.Joanna")
-    hints = xml.split('hints="')[1].split('"')[0].split(",")
-    assert {"yes", "yup", "no", "tomorrow", "Monday"} <= set(hints)
-
-
-def test_indian_numbers_are_heard_in_indian_english() -> None:
-    from api.voice_agent.plivo import asr_language, listen
-
-    assert asr_language("+919890068591") == "en-IN"
-    assert asr_language("+12025550123") == "en-US"
-    assert asr_language(None) == "en-US"
-    assert 'language="en-IN"' in listen("Hi", "https://x.test/turn", "Polly.Joanna", "en-IN")
-    assert 'language="en-US"' in listen("Hi", "https://x.test/turn", "Polly.Joanna")
+    assert 'language="en-US" speechModel="phone_call"' in xml
+    assert "hints=" not in xml
