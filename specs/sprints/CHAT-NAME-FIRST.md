@@ -38,3 +38,25 @@ bot message.
 `tests/unit/test_orchestrator_service.py`, `tests/integration/test_chat_identity_flow_integration.py`
 (full multi-turn conversation on a real DB), plus a chat-capture case in
 `tests/integration/test_inbound_leads_integration.py`.
+
+## Natural asks + the call when the chat ends (2026-10-30)
+
+Product owner: *"Don't keep it fixed of asking the mail on 3rd question and number on 5th … keep it
+natural … before ending the conversation the chatbot should somehow collect the user's name, mail and
+phone number, as the chat ends the agent should detect the user's number and start calling."*
+**Replaces N4 and P2's fixed turns, and P5 for chat numbers.** P1/P3 (exact disclosure, consent only
+right after it) are unchanged.
+
+| # | Behaviour | Why |
+|---|---|---|
+| C1 | Until there's an email, every prompt carries `EMAIL_GUIDANCE`: the model asks for the best email **only when it helps the visitor** (a price, quote, availability, details to look over, a next step), with a reason, once, and never asks for a number itself | The model picks the moment; the disclosure stays code-owned |
+| C2 | The number (with `PHONE_ASK`) is asked: in the email thank-you; after an email given inside a longer message (suffix); or when the visitor asks for a call / a person (`wants_a_call` → fixed "Happy to set that up! …", no LLM) | Natural moments, not turn counts |
+| C3 | A goodbye (`is_closing`: short, no "?", e.g. "ok thanks, that's all", "bye") with name/email/number still missing gets **one** fixed "Before you go …" ask for just what's missing (`WRAP_UP_INTENT`, or `WRAP_UP_PHONE_INTENT` when it carries `PHONE_ASK` — a number after it is consent). A name typed with the details ("Sam Lee, sam@…, 786…") is saved. Any later goodbye, or one with nothing missing → fixed goodbye (`chat_goodbye`). A bare "thanks"/"ok" isn't a goodbye | Collect before they leave, ask once |
+| C4 | A number consented in the chat → `inbound_auto` plan **call first** (`CHAT_CALL_INTENT`, then the usual emails). It replaces an active plan even if an email already went out | They're on the site now: speed to lead |
+| C5 | Dispatch holds a chat call until the visitor has been quiet for `CHAT_IDLE` (2 min) since their last chat message (`VISITOR_CHATTING`, no attempt used); the goodbye (C3) rings it at once (`hooks.chat_ended` → `bring_call_forward`) | "As the chat ends … start calling" |
+| C6 | Gate purpose `first_response` for a chat call (and the inbound first email) skips the touch gap — not consent, suppression, the contact-local calling window, max touches/attempts | Answering someone who just asked isn't a follow-up |
+
+**Tests:** `tests/unit/test_identity_capture.py` (closing/call-request phrases, wrap-up text),
+`tests/integration/test_chat_identity_flow_integration.py` (natural asks, wrap-up once, call waits for
+quiet/goodbye, another tenant's chat never holds the call, number after an email still gets the call),
+`tests/integration/test_agents_integration.py` (first_response skips the gap).

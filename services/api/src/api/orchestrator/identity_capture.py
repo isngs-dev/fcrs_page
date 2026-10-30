@@ -1,10 +1,12 @@
 """Conversational identity capture (replaces the SR-14 up-front name+email form).
 
 When a tenant has the identity gate on, the bot asks only for the visitor's
-first name on their first message, answers their question by name, and later
-in the chat (the ``EMAIL_ASK_TURN``-th substantive turn) asks naturally for an
-email so the team can follow up. Anything the visitor types that looks like
-an email is captured whenever it appears. Never asks twice for either.
+first name on their first message and answers their question by name. No fixed
+turn after that (2026-10-30): the model asks for an email when it genuinely
+helps (``EMAIL_GUIDANCE``); the number is asked with the exact call-consent
+disclosure (``PHONE_ASK``) right after an email, or when they ask for a call;
+and a goodbye with details still missing gets one "before you go" ask.
+Anything that looks like an email or number is captured whenever it appears.
 
 Visitor text only reaches a system prompt as a validated first name
 (letters only) -- never raw.
@@ -39,8 +41,11 @@ ASK_NAME_INTENT = "ask_name"
 ASK_PHONE_INTENT = "ask_phone"
 EMAIL_CAPTURED_INTENT = "email_captured"
 PHONE_CAPTURED_INTENT = "phone_captured"
-EMAIL_ASK_TURN = 3  # the visitor's 3rd substantive turn ends with a natural email ask
-PHONE_ASK_TURN = 5  # if the email thank-you didn't already ask for the number
+WRAP_UP_INTENT = "wrap_up"  # "before you go" without the number question
+WRAP_UP_PHONE_INTENT = "wrap_up_phone"  # with PHONE_ASK: a number after it is call consent
+GOODBYE_INTENT = "chat_goodbye"  # the chat is over: a waiting chat call rings now
+# A number typed right after a bot message with one of these intents is AI-call consent.
+PHONE_ASK_INTENTS = (ASK_PHONE_INTENT, WRAP_UP_PHONE_INTENT)
 CHAT_EMAIL_CONSENT_VERSION = "chat-2026-10-a"  # see api.agents.consent_wording
 
 ASK_NAME_REPLY = "Happy to help with that! Before we dive in, what's your name?"
@@ -51,6 +56,13 @@ ASK_NAME_REPLY = "Happy to help with that! Before we dive in, what's your name?"
 PHONE_ASK = ("And what's the best number to reach you? If you share it, our team may call you "
              "about your enquiry, including with our AI assistant, and you can ask us to stop "
              "anytime.")
+# Shown to the model on every turn until they've shared an email: it picks the moment.
+EMAIL_GUIDANCE = (
+    "Until they've shared an email: when it would genuinely help them -- they want a price, "
+    "a quote, availability, details to look over, or seem ready for a next step -- end your "
+    "reply with one short, friendly question offering to send that over or have the team "
+    "follow up, and ask for the best email. Give a real reason it helps them. Don't ask if "
+    "you already asked in this conversation, and never ask for a phone number yourself.")
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _LEADIN_RE = re.compile(
@@ -125,6 +137,61 @@ def phone_in(message: str) -> str | None:
 def is_only_phone(message: str) -> bool:
     rest = _PHONE_RE.sub("", _EMAIL_RE.sub("", message)).strip(" .,!-:\n")
     return len(rest.split()) <= 4 and "?" not in rest
+
+
+_CALL_RE = re.compile(
+    r"\b(?:call me|ring me|phone me|give me a (?:call|ring)|call (?:me )?back|call instead"
+    r"|(?:can|could|would|will) (?:someone|somebody|anyone|you) (?:please )?(?:call|ring|phone)"
+    r"|(?:talk|speak) (?:to|with) (?:a |an |some )?(?:real )?(?:person|human|someone|somebody"
+    r"|agent|rep|representative|specialist|expert)|(?:a )?phone call)\b", re.I)
+_CLOSING_RE = re.compile(
+    r"\b(?:(?:good)?bye|bye[- ]?bye|see (?:you|ya)|that'?s (?:all|it|everything)"
+    r"|no (?:more|other|further) questions?|nothing (?:else|more)|i'?m (?:all set|done|good)"
+    r"|(?:have a )?(?:good|great|nice|lovely) (?:day|evening|night|weekend|one)"
+    r"|talk (?:to you )?(?:later|soon)|(?:gotta|got to|have to) go|cheers)\b", re.I)
+
+
+def wants_a_call(message: str) -> bool:
+    """They asked to be called or to talk to a person."""
+    return bool(_CALL_RE.search(message))
+
+
+def is_closing(message: str) -> bool:
+    """A short goodbye ("ok thanks, that's all"). A bare "thanks"/"ok" mid-chat isn't one.
+    ponytail: phrase list; a closing worded some other way just gets a normal answer."""
+    text = message.strip()
+    return "?" not in text and len(text.split()) <= 10 and bool(_CLOSING_RE.search(text))
+
+
+def call_offer_reply(first_name: str | None) -> str:
+    who = f", {first_name}" if first_name else ""
+    return f"Happy to set that up{who}! {PHONE_ASK}"
+
+
+def wrap_up_reply(first_name: str | None, *, need_name: bool, need_email: bool,
+                  need_phone: bool) -> str:
+    """One "before you go" ask for whatever is still missing (the number with the exact
+    disclosure, so a number typed after it is consent)."""
+    who = f", {first_name}" if first_name else ""
+    wants = [w for w, need in (("your name", need_name), ("the best email for you", need_email))
+             if need]
+    parts = [f"Before you go{who}, I'd love for our team to follow up properly."]
+    if wants:
+        parts.append(f"Could I get {' and '.join(wants)}?")
+    if need_phone:
+        parts.append(PHONE_ASK)
+    return " ".join(parts)
+
+
+def goodbye_reply(first_name: str | None) -> str:
+    who = f", {first_name}" if first_name else ""
+    return f"Thanks for chatting{who}, it was great to help! Have a lovely day."
+
+
+def name_in_details(message: str) -> str | None:
+    """The name in a "Sam Lee, sam@x.com, 786 823 3553" reply to the wrap-up ask."""
+    rest = _PHONE_RE.sub(" ", _EMAIL_RE.sub(" ", message))
+    return name_from_reply(" ".join(re.sub(r"[,;:]+", " ", rest).split()))
 
 
 def phone_ack_reply(first_name: str | None, *, consented: bool) -> str:
@@ -215,10 +282,7 @@ def personalize(prompt: list[ChatMessage], *, first_name: str | None,
         notes.append(f"The visitor's first name is {first_name}. Use it naturally now and "
                      "then (not in every message).")
     if ask_email:
-        notes.append(
-            "After answering, end with one short, friendly sentence asking for the best "
-            "email to reach them so the team can follow up. Keep it natural and optional; "
-            "don't ask for anything else.")
+        notes.append(EMAIL_GUIDANCE)
     if not notes and not deferred:
         return prompt
     out = list(prompt)

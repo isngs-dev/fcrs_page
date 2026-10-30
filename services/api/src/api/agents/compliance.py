@@ -172,8 +172,10 @@ async def _decide(
 
     stats = await touch_stats(db, claims, contact_id, now=now)
     gap = timedelta(hours=settings.min_hours_between_touches)
+    # The gap spaces OUR follow-ups; answering someone who just asked (the inbound first
+    # email, the call to a number shared in the chat) or thanking them after a call isn't one.
     if (stats.last_touch_at is not None and now - stats.last_touch_at < gap
-            and purpose != "after_call"):
+            and purpose not in ("after_call", "first_response")):
         return _block("CADENCE_LIMIT", stats.last_touch_at + gap, touches=stats.touches)
     if stats.touches >= settings.max_touches_per_contact:
         return _block("MAX_TOUCHES", touches=stats.touches)

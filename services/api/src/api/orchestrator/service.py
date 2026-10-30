@@ -48,6 +48,7 @@ from common.db import Database
 from common.errors import ValidationError
 from common.logging import get_logger
 
+from api.agents import hooks as agent_hooks
 from api.config import get_api_settings
 from api.conversation_store.repository import (
     append_message,
@@ -698,7 +699,9 @@ async def _resolve_turn(
     # all the message was); the thank-you then asks for a phone number with
     # the call-consent disclosure. A number shared right after that
     # disclosure is AI-call consent; one shared without it is just saved.
-    # The natural email ask and the later phone ask are added at Step 6.5.
+    # Asking for a call gets the number question; a goodbye with details still
+    # missing gets one "before you go" ask, then a goodbye that rings any chat
+    # call waiting for them. The model picks its moment for the email (6.5).
     first_name: str | None = None
     deferred: str | None = None
     lead_has_email = True
@@ -709,7 +712,11 @@ async def _resolve_turn(
     if cfg.identity_gate_enabled:
         lead = await identity_capture.visitor_lead(db, claims)
         recent_bot = await get_recent_assistant_intents(db, claims, conversation_id, limit=20)
-        asked_phone = identity_capture.ASK_PHONE_INTENT in recent_bot
+        asked_phone = any(i in recent_bot for i in identity_capture.PHONE_ASK_INTENTS)
+        number_asked_last = (recent_bot[:1] != []
+                             and recent_bot[0] in identity_capture.PHONE_ASK_INTENTS)
+        wrapped_up = recent_bot[:1] in ([identity_capture.WRAP_UP_INTENT],
+                                        [identity_capture.WRAP_UP_PHONE_INTENT])
         if not (lead and lead.name):
             asked = await count_messages(
                 db, claims, conversation_id, role="bot", decision="identity_gate",
@@ -735,9 +742,11 @@ async def _resolve_turn(
                 deferred = identity_capture.deferred_question(memory["messages"])
                 if deferred:
                     message = deferred  # classify/retrieve the question they actually asked
+            elif wrapped_up and (name := identity_capture.name_in_details(message)):
+                lead = await identity_capture.save_name(db, claims, lead, name)
         phone = identity_capture.phone_in(message)
         if phone and not (lead and lead.phone):
-            consented = recent_bot[:1] == [identity_capture.ASK_PHONE_INTENT]
+            consented = number_asked_last
             lead = await identity_capture.save_phone(
                 db, claims, lead, phone, consented=consented, timezone=timezone)
             captured_phone = True
@@ -767,8 +776,7 @@ async def _resolve_turn(
             return _FixedOutcome(
                 conversation_id=conversation_id,
                 assistant_id=assistant_id,
-                reply=identity_capture.phone_ack_reply(
-                    first_name, consented=recent_bot[:1] == [identity_capture.ASK_PHONE_INTENT]),
+                reply=identity_capture.phone_ack_reply(first_name, consented=number_asked_last),
                 decision="answer",
                 confidence=None,
                 sources=[],
@@ -779,6 +787,48 @@ async def _resolve_turn(
             )
         lead_has_email = bool(lead and lead.email)
         lead_has_phone = bool(lead and lead.phone)
+        if not lead_has_phone and identity_capture.wants_a_call(message):
+            await provider.aclose()
+            return _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=identity_capture.call_offer_reply(first_name),
+                decision="answer",
+                confidence=None,
+                sources=[],
+                intent=identity_capture.ASK_PHONE_INTENT,
+                action=None,
+                grounded=False,
+                tokens=None,
+            )
+        if identity_capture.is_closing(message):
+            need = {"need_name": not (lead and lead.name), "need_email": not lead_has_email,
+                    "need_phone": not lead_has_phone}
+            already = any(i in recent_bot for i in (identity_capture.WRAP_UP_INTENT,
+                                                    identity_capture.WRAP_UP_PHONE_INTENT))
+            if any(need.values()) and not already:
+                reply = identity_capture.wrap_up_reply(first_name, **need)
+                closing_intent = (identity_capture.WRAP_UP_PHONE_INTENT if need["need_phone"]
+                                  else identity_capture.WRAP_UP_INTENT)
+            else:
+                reply = identity_capture.goodbye_reply(first_name)
+                closing_intent = identity_capture.GOODBYE_INTENT
+            await provider.aclose()
+            outcome = _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=reply,
+                decision="answer",
+                confidence=None,
+                sources=[],
+                intent=closing_intent,
+                action=None,
+                grounded=False,
+                tokens=None,
+            )
+            if closing_intent == identity_capture.GOODBYE_INTENT and lead is not None:
+                await agent_hooks.chat_ended(db, claims, lead_id=lead.lead_id)
+            return outcome
 
     # Step 5.55: the visitor's answer to "would you like to reschedule?" --
     # "no" keeps the booking; "yes" or a new day/time opens the booking card in
@@ -928,13 +978,12 @@ async def _resolve_turn(
     )
     turns = raw_turns - gate_turns
 
-    # Step 6.5: the natural email ask rides on the EMAIL_ASK_TURN-th answer.
-    ask_email = (cfg.identity_gate_enabled and not lead_has_email
-                 and turns == identity_capture.EMAIL_ASK_TURN)
-    # The number, asked once, a couple of turns after the email ask -- as a
-    # code-owned suffix so the call-consent disclosure is exact.
-    phone_ask = (cfg.identity_gate_enabled and not lead_has_phone and not asked_phone
-                 and not ask_email and turns >= identity_capture.PHONE_ASK_TURN)
+    # Step 6.5: until there's an email the model may ask for one when it fits
+    # (no fixed turn, 2026-10-30). An email given inside a longer message gets
+    # the number question -- a code-owned suffix so the disclosure is exact.
+    ask_email = cfg.identity_gate_enabled and not lead_has_email
+    phone_ask = (cfg.identity_gate_enabled and captured_email and not lead_has_phone
+                 and not asked_phone)
     suffix = identity_capture.PHONE_ASK if phone_ask else None
     suffix_intent = identity_capture.ASK_PHONE_INTENT if phone_ask else None
 

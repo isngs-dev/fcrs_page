@@ -88,16 +88,22 @@ async def handle_inbound_lead(db: Database, claims: AuthClaims, payload: dict[st
                           "captured_at": payload.get("captured_at"),
                           "form": payload.get("form")})
     replanned = False
+    chat_call = "call" in channels and payload.get("form") == "chat"
     if "call" in channels:
         # Call consent arriving after the email-only plan (chat: email, then number):
-        # rebuild the plan so it includes the call -- only if nothing has gone out yet.
+        # rebuild the plan so it includes the call -- only if nothing has gone out yet,
+        # except from the chat: they're on the site now, so the call wins (the gate's
+        # cadence/touch limits still space any repeat email).
         active = await get_active_plan(db, claims, contact_id)
-        if active is not None and not any(t.status == "completed" for t in active["tasks"]):
+        if active is not None and (
+                chat_call or not any(t.status == "completed" for t in active["tasks"])):
             await stop_plan(db, claims, active["plan_id"], reason="replanned_new_consent")
             replanned = True
     # A website form (it carries its own consent evidence) that said yes to calls: ring now.
-    steps = (planner.call_first_steps(settings)
-             if "call" in channels and payload.get("consents") else None)
+    # A number shared in the chat: ring once the chat is over (dispatch waits for that).
+    steps = (planner.call_first_steps(settings) if "call" in channels and payload.get("consents")
+             else planner.call_first_steps(settings, planner.CHAT_CALL_INTENT) if chat_call
+             else None)
     try:
         outcome = await planner.create_plan(db, claims, contact_id=contact_id, kind="inbound_auto",
                                             goal="follow_up", now=datetime.now(UTC), steps=steps)

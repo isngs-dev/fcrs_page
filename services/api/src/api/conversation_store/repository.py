@@ -1015,6 +1015,35 @@ async def purge_expired(
     return 0
 
 
+
+@dataclass(frozen=True)
+class LatestChatMessage:
+    created_at: datetime
+    role: str
+    intent: str | None
+
+
+async def latest_chat_message(
+    db: Database, claims: AuthClaims, visitor_ids: list[str],
+) -> LatestChatMessage | None:
+    """The newest message in any of these visitors' chats (this tenant only) -- lets a
+    chat call wait until the person has stopped chatting."""
+    _reject_global(claims)
+    if not visitor_ids:
+        return None
+    row = await db.fetchrow(
+        "SELECT m.created_at, m.role, m.intent FROM messages m "
+        "JOIN conversations c ON c.tenant_id = m.tenant_id "
+        "AND c.conversation_id = m.conversation_id "
+        "WHERE m.tenant_id = $1 AND c.visitor_id = ANY($2::text[]) "
+        "ORDER BY m.created_at DESC LIMIT 1",
+        claims.tenant_id, visitor_ids,
+    )
+    if row is None:
+        return None
+    return LatestChatMessage(created_at=row["created_at"], role=str(row["role"]),
+                             intent=row["intent"])
+
 @dataclass(frozen=True)
 class ClosedConversation:
     """A single row flipped active -> ended by ``close_idle_conversations``."""

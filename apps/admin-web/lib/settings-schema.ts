@@ -253,6 +253,7 @@ export interface SettingsFieldValues {
   tone: string;
   turnCap: string;
   lowConfidenceStreakCap: string;
+  identityGateEnabled: boolean;
 }
 
 /** Derives the field values a fresh/reset form should show for a given
@@ -276,6 +277,7 @@ export function fieldValuesFromSettings(settings: BotSettings): SettingsFieldVal
     tone: settings.tone ?? "",
     turnCap: String(settings.turnCap),
     lowConfidenceStreakCap: String(settings.lowConfidenceStreakCap),
+    identityGateEnabled: settings.identityGateEnabled,
   };
 }
 

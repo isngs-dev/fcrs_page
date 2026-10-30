@@ -338,6 +338,7 @@ const baseSettings: BotSettings = {
   escalateThreshold: 0.4,
   turnCap: 7,
   lowConfidenceStreakCap: 5,
+  identityGateEnabled: true,
   llmProvider: null,
   llmModel: null,
 };
@@ -360,6 +361,7 @@ describe("fieldValuesFromSettings", () => {
       tone: "friendly",
       turnCap: "7",
       lowConfidenceStreakCap: "5",
+      identityGateEnabled: true,
     });
   });
 
@@ -391,6 +393,7 @@ describe("fieldValuesFromSettings", () => {
       tone: "",
       turnCap: "7",
       lowConfidenceStreakCap: "5",
+      identityGateEnabled: true,
     });
   });
 });

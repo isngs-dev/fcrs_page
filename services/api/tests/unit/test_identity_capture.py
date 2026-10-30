@@ -67,7 +67,7 @@ def test_deferred_question_is_the_message_before_the_name_ask() -> None:
 def test_personalize() -> None:
     prompt = [ChatMessage(role="system", content="Rules."), ChatMessage(role="user", content="Jane")]
     out = ic.personalize(prompt, first_name="Jane", deferred="How much is a roof?", ask_email=True)
-    assert "first name is Jane" in out[0].content and "email to reach them" in out[0].content
+    assert "first name is Jane" in out[0].content and ic.EMAIL_GUIDANCE in out[0].content
     assert out[-1].content == "My name is Jane. How much is a roof?"
     assert prompt[0].content == "Rules."  # the input list is not mutated
     assert ic.personalize(prompt, first_name=None, deferred=None, ask_email=False) is prompt
@@ -96,3 +96,35 @@ def test_disclosure_shown_is_exactly_the_stored_call_wording() -> None:
     record = consent_record("call", ic.CHAT_EMAIL_CONSENT_VERSION)
     assert record["basis"] == "express_consent"  # typed in chat: express, enough for D5
     assert "AI assistant" in ic.PHONE_ASK and "stop" in ic.PHONE_ASK
+
+
+@pytest.mark.parametrize(("text", "closing"), [
+    ("bye", True), ("ok thanks, that's all", True), ("Thanks, bye!", True),
+    ("that's it for now", True), ("no more questions, have a great day", True),
+    ("I'm all set", True), ("talk soon", True),
+    ("thanks", False), ("ok", False),  # mid-chat acknowledgements, not goodbyes
+    ("that's all I need to know about pricing?", False),
+    ("Bye the way, do you fix gutters and also clean them every season for us", False),
+])
+def test_is_closing(text: str, closing: bool) -> None:
+    assert ic.is_closing(text) is closing
+
+
+@pytest.mark.parametrize(("text", "wants"), [
+    ("Can someone call me about a quote?", True), ("can you call me instead", True),
+    ("I'd rather talk to a person", True), ("give me a ring", True),
+    ("call me back tomorrow", True), ("Do you do gutters?", False),
+    ("what do you call this kind of roof?", False),
+])
+def test_wants_a_call(text: str, wants: bool) -> None:
+    assert ic.wants_a_call(text) is wants
+
+
+def test_wrap_up_asks_only_for_what_is_missing_and_keeps_the_exact_disclosure() -> None:
+    everything = ic.wrap_up_reply(None, need_name=True, need_email=True, need_phone=True)
+    assert "name" in everything and "email" in everything and everything.endswith(ic.PHONE_ASK)
+    phone_only = ic.wrap_up_reply("Sam", need_name=False, need_email=False, need_phone=True)
+    assert phone_only.startswith("Before you go, Sam") and phone_only.endswith(ic.PHONE_ASK)
+    assert "email" not in phone_only.replace(ic.PHONE_ASK, "")
+    email_only = ic.wrap_up_reply("Sam", need_name=False, need_email=True, need_phone=False)
+    assert "email" in email_only and ic.PHONE_ASK not in email_only

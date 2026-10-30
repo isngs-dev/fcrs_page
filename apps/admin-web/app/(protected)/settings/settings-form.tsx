@@ -240,7 +240,8 @@ export function SettingsForm({
     fields.escalationPolicy !== serverFields.escalationPolicy ||
     fields.tone !== serverFields.tone ||
     fields.turnCap !== serverFields.turnCap ||
-    fields.lowConfidenceStreakCap !== serverFields.lowConfidenceStreakCap;
+    fields.lowConfidenceStreakCap !== serverFields.lowConfidenceStreakCap ||
+    fields.identityGateEnabled !== serverFields.identityGateEnabled;
 
   function handleDiscard() {
     setFields(serverFields);
@@ -561,7 +562,6 @@ export function SettingsForm({
               label="Repeated low-confidence escalation"
               description="If the bot can't confidently answer this many questions in a row on the same topic, it stops trying to clarify and offers to connect with sales instead of waiting out the full turn cap."
               htmlFor="lowConfidenceStreakCap"
-              isLast
             >
               <div className="flex flex-wrap items-center gap-2">
                 <label
@@ -592,6 +592,26 @@ export function SettingsForm({
                   {fieldErrors.lowConfidenceStreakCap}
                 </p>
               ) : null}
+            </SetRow>
+
+            <SetRow
+              label="Ask visitors for their details"
+              description="The chatbot asks for the visitor's name on their first message, their email a few questions in, then their phone number with a note that our team, including the AI assistant, may call them. A number shared after that note counts as consent to calls."
+              htmlFor="identityGateEnabled"
+              isLast
+            >
+              <label className="flex items-center gap-2 text-[13px] text-foreground" htmlFor="identityGateEnabled">
+                <input
+                  id="identityGateEnabled"
+                  name="identityGateEnabled"
+                  type="checkbox"
+                  checked={fields.identityGateEnabled}
+                  onChange={(e) =>
+                    setFields((f) => ({ ...f, identityGateEnabled: e.target.checked }))
+                  }
+                />
+                Ask for name, email and phone number in the chat
+              </label>
             </SetRow>
           </div>
 

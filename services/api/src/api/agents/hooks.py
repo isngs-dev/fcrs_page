@@ -52,3 +52,20 @@ async def inbound_lead_created(
     except Exception as exc:  # noqa: BLE001 -- the lead already committed
         _log.error("inbound_lead_created hook failed", extra={
             "event": "agent_inbound_lead_hook_failed", "reason": type(exc).__name__})
+
+
+async def chat_ended(db: Database, claims: AuthClaims, *, lead_id: str) -> None:
+    """The visitor said goodbye in the chat: a chat call waiting for them to go quiet
+    rings now (the gate still applies). Logged and swallowed like the other hooks."""
+    from api.agents.outreach_repository import bring_call_forward  # noqa: PLC0415 -- cycle
+    from api.agents.planner import CHAT_CALL_INTENT  # noqa: PLC0415
+    from api.contacts.repository import get_contact_by_lead_id  # noqa: PLC0415
+
+    try:
+        contact = await get_contact_by_lead_id(db, claims, lead_id)
+        if contact is not None:
+            await bring_call_forward(db, claims, contact.contact_id, at=datetime.now(UTC),
+                                     intent=CHAT_CALL_INTENT)
+    except Exception as exc:  # noqa: BLE001 -- the goodbye already went out
+        _log.error("chat_ended hook failed", extra={
+            "event": "agent_chat_ended_hook_failed", "reason": type(exc).__name__})

@@ -43,6 +43,11 @@ step is the call, due now** (then the usual emails); exempt from the touch gap (
 still inside the contact-local window (a night-time form is called next morning). Event and task
 dispatchers poll every 5 s, so form → event → plan → dial is about 10–20 s plus ringing.
 
+**Website chat → call when the chat ends** *(added 2026-10-30)*: a number shared in the chat right
+after the consent disclosure gets the same call-first plan (`CHAT_CALL_INTENT`). The call waits until
+the visitor has been quiet for 2 minutes, or rings at once on their goodbye; the opening is written
+from that chat. Details: `sprints/CHAT-NAME-FIRST.md` C1–C6.
+
 **Inbound:** Plivo answer webhook on the tenant number → `X-Plivo-Signature-V3` verified → tenant from
 `telephony_numbers` → caller ID → `contacts.phone_e164` (tenant-scoped) → known-contact context or
 "new caller" → same turn loop. No AMD on inbound (Plivo supports it on outbound only).

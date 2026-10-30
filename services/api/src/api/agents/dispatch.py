@@ -105,16 +105,45 @@ async def dispatch_events(db: Database, *, limit: int) -> dict[str, int]:
 # -- Tasks ---------------------------------------------------------------------
 
 
+def gate_purpose(task: outreach_repository.ClaimedTask) -> compliance.Purpose:
+    """The inbound first email, or the call to someone who just shared their number in the
+    chat, answers them (no cadence hold); the thank-you follows a call; the rest is outreach."""
+    if task.channel == "call" and task.intent == planner.CHAT_CALL_INTENT:
+        return "first_response"
+    if task.channel == "email" and task.step_index == 0 and task.plan_kind == "inbound_auto":
+        return "first_response"
+    return "after_call" if task.goal == "thank_you" else "outreach"
+
+
+async def chat_call_wait(db: Database, claims: AuthClaims, task: outreach_repository.ClaimedTask,
+                         now: datetime) -> datetime | None:
+    """When a chat call should wait until: ``CHAT_IDLE`` after the visitor's last chat
+    message, unless the chat ended with our goodbye. ``None`` = ring now."""
+    if task.channel != "call" or task.intent != planner.CHAT_CALL_INTENT:
+        return None
+    from api.agents.memory import visitor_ids  # noqa: PLC0415 -- cycle
+    from api.conversation_store.repository import latest_chat_message  # noqa: PLC0415
+    from api.orchestrator.identity_capture import GOODBYE_INTENT  # noqa: PLC0415
+
+    last = await latest_chat_message(db, claims, await visitor_ids(db, claims, task.contact_id))
+    if last is None or last.intent == GOODBYE_INTENT:
+        return None
+    quiet_at = last.created_at + planner.CHAT_IDLE
+    return quiet_at if quiet_at > now else None
+
+
 async def _run_task(db: Database, task: outreach_repository.ClaimedTask, now: datetime) -> str:
     claims = system_claims(task.tenant_id)
     channel = task.channel
+    wait = await chat_call_wait(db, claims, task, now)
+    if wait is not None:  # still chatting: ring once they've gone quiet (no attempt used)
+        await outreach_repository.reschedule_task(db, claims, task.task_id, at=wait,
+                                                  reason="VISITOR_CHATTING")
+        return "chatting"
     run_id = await start_run(db, claims, agent="email" if channel == "email" else "call")
-    first_response = (channel == "email" and task.step_index == 0
-                      and task.plan_kind == "inbound_auto")
     gate = await compliance.check(db, claims, contact_id=task.contact_id,
                                   channel=channel, now=now, run_id=run_id,  # type: ignore[arg-type]
-                                  purpose="first_response" if first_response
-                                  else "after_call" if task.goal == "thank_you" else "outreach")
+                                  purpose=gate_purpose(task))
     if not gate.ok:
         code = gate.code or "GATE_BLOCKED"
         if code in compliance.PERMANENT_CODES:

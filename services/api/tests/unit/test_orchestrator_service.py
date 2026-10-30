@@ -1519,7 +1519,7 @@ async def test_name_reply_is_saved_and_the_original_question_answered_by_name() 
     prompt = p.provider.generate.await_args.args[0]
     assert "first name is Jane" in prompt[0].content
     assert prompt[-1].content == "My name is Jane. How much does it cost?"
-    assert "email to reach them" not in prompt[0].content
+    assert identity_capture.EMAIL_GUIDANCE in prompt[0].content  # the model picks its moment
 
 
 async def test_a_non_name_reply_is_just_answered_and_never_re_asked() -> None:
@@ -1537,8 +1537,9 @@ async def test_a_non_name_reply_is_just_answered_and_never_re_asked() -> None:
     assert p.provider.classify.await_args.args[0] == "Do you repair flat roofs?"
 
 
-@pytest.mark.parametrize(("turns", "asks"), [(2, False), (3, True), (4, False)])
-async def test_email_is_asked_naturally_once_on_the_third_turn(turns: int, asks: bool) -> None:
+@pytest.mark.parametrize("turns", [1, 2, 3, 5])
+async def test_until_there_is_an_email_the_model_may_ask_on_any_turn(turns: int) -> None:
+    """No fixed turn (2026-10-30): the guidance is there every turn; the model decides."""
     p = _Patched(
         orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
         lead=_lead(name="Jane Doe", email=None), count_messages_return=turns,
@@ -1550,7 +1551,8 @@ async def test_email_is_asked_naturally_once_on_the_third_turn(turns: int, asks:
     assert result.decision == "answer"
     system = p.provider.generate.await_args.args[0][0].content
     assert "first name is Jane" in system
-    assert ("email to reach them" in system) is asks
+    assert identity_capture.EMAIL_GUIDANCE in system
+    assert identity_capture.PHONE_ASK not in result.reply  # no turn-count number ask either
 
 
 async def test_no_email_ask_once_the_email_is_known() -> None:
@@ -1561,7 +1563,7 @@ async def test_no_email_ask_once_the_email_is_known() -> None:
     )
     with p:
         await answer_turn(db=object(), claims=_claims(), message="And gutters?")
-    assert "email to reach them" not in p.provider.generate.await_args.args[0][0].content
+    assert identity_capture.EMAIL_GUIDANCE not in p.provider.generate.await_args.args[0][0].content
 
 
 async def test_an_email_on_its_own_is_captured_and_acknowledged() -> None:
@@ -1663,25 +1665,20 @@ async def test_phone_without_the_disclosure_is_saved_but_not_consent() -> None:
     assert p.save_phone.await_args.kwargs["consented"] is False
 
 
-@pytest.mark.parametrize(("turns", "recent", "has_phone", "asks"), [
-    (4, [], False, False),                                    # too early
-    (5, [], False, True),                                     # the later ask
-    (7, [], False, True),                                     # still not asked -> ask now
-    (5, [identity_capture.ASK_PHONE_INTENT], False, False),   # asked once already
-    (5, [], True, False),                                     # number already known
+@pytest.mark.parametrize(("message", "recent", "asks"), [
+    ("jane@example.com is best. And gutters?", [], True),     # email inside a question
+    ("jane@example.com is best. And gutters?",
+     [identity_capture.ASK_PHONE_INTENT], False),             # asked once already
+    ("And gutters?", [], False),                              # no turn-count ask any more
 ])
-async def test_phone_ask_suffix(turns: int, recent: list[str | None], has_phone: bool,
-                                asks: bool) -> None:
-    lead = _lead(name="Jane", email="jane@example.com")
-    if has_phone:
-        lead = Lead(**{**lead.__dict__, "phone": "+17868233553"})
+async def test_phone_ask_suffix(message: str, recent: list[str | None], asks: bool) -> None:
     p = _Patched(
         orchestrator_config=_orch_cfg(identity_gate_enabled=True, turn_cap=20), lead_id="lead-1",
-        lead=lead, count_messages_return=turns, recent_intents=recent,
+        lead=_lead(name="Jane", email=None), count_messages_return=7, recent_intents=recent,
         classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
     )
     with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="And gutters?")
+        result = await answer_turn(db=object(), claims=_claims(), message=message)
 
     assert result.reply.endswith(identity_capture.PHONE_ASK) is asks
     bot_call = p._append_calls[-1]
@@ -1692,12 +1689,13 @@ async def test_phone_ask_suffix(turns: int, recent: list[str | None], has_phone:
 async def test_phone_ask_is_never_added_to_an_escalation() -> None:
     p = _Patched(
         orchestrator_config=_orch_cfg(identity_gate_enabled=True, turn_cap=20), lead_id="lead-1",
-        lead=_lead(name="Jane", email="jane@example.com"), count_messages_return=5,
+        lead=_lead(name="Jane", email=None), count_messages_return=5,
         classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
         completion=Completion(text=_NO_ANSWER_SENTINEL, model="m", input_tokens=1, output_tokens=1),
     )
     with p:
-        result = await answer_turn(db=object(), claims=_claims(), message="Obscure question?")
+        result = await answer_turn(db=object(), claims=_claims(),
+                                   message="jane@example.com -- and an obscure question?")
     assert identity_capture.PHONE_ASK not in result.reply
     assert p._append_calls[-1]["intent"] != identity_capture.ASK_PHONE_INTENT
 
@@ -1705,13 +1703,13 @@ async def test_phone_ask_is_never_added_to_an_escalation() -> None:
 async def test_streamed_answer_gets_the_phone_ask_as_a_final_delta() -> None:
     p = _Patched(
         orchestrator_config=_orch_cfg(identity_gate_enabled=True, turn_cap=20), lead_id="lead-1",
-        lead=_lead(name="Jane", email="jane@example.com"), count_messages_return=5,
+        lead=_lead(name="Jane", email=None), count_messages_return=5,
         classify_return="question", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
         stream_chunks=["Yes, ", "we do gutters."],
     )
     with p:
-        events = [e async for e in answer_turn_stream(db=object(), claims=_claims(),
-                                                      message="Gutters?")]
+        events = [e async for e in answer_turn_stream(
+            db=object(), claims=_claims(), message="jane@example.com -- gutters too?")]
 
     deltas = "".join(e.data["text"] for e in events if e.type == "delta")
     done = next(e for e in events if e.type == "done")

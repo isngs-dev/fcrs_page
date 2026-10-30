@@ -44,12 +44,19 @@ FORM_CALL_INTENT = ("They just filled in the contact form on our website a momen
                     "them, ask what they need, answer questions and offer to book a meeting.")
 
 
-def call_first_steps(settings: AgentSettings) -> list[AgentTask]:
-    """A website form that asked for a call: ring right away (speed to lead), then the
-    usual inbound emails. The policy still keeps the call inside the contact's window."""
+CHAT_CALL_INTENT = ("They were just chatting with us on our website and shared their number: "
+                    "thank them, pick up where the chat left off, answer questions and offer to "
+                    "book a meeting.")
+# A chat call waits until the visitor has gone this quiet (or said goodbye) -- dispatch.
+CHAT_IDLE = timedelta(minutes=2)
+
+
+def call_first_steps(settings: AgentSettings, intent: str = FORM_CALL_INTENT
+                     ) -> list[AgentTask]:
+    """A website form (or a chat) that asked for a call: ring right away (speed to lead),
+    then the usual inbound emails. The gate still keeps the call inside the contact's window."""
     email, call, last = default_plan("inbound_auto", settings).steps
-    return [call.model_copy(update={"offset": timedelta(0), "intent": FORM_CALL_INTENT}),
-            email, last]
+    return [call.model_copy(update={"offset": timedelta(0), "intent": intent}), email, last]
 
 
 @dataclass(frozen=True)

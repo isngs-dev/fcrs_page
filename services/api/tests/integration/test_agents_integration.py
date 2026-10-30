@@ -229,6 +229,11 @@ async def test_gate_cadence_touches_and_attempts(db: Database) -> None:
     cadence = await _gate(db, a, contact_id, "email")
     assert cadence.code == "CADENCE_LIMIT"
     assert cadence.retry_at == _NOW + timedelta(hours=45)
+    # Someone who just asked (a number given in the chat, a form) isn't held 48 h.
+    run_id = await start_run(db, a, agent="orchestrator")
+    asked = await check(db, a, contact_id=contact_id, channel="email", now=_NOW, run_id=run_id,
+                        purpose="first_response")
+    assert asked.code != "CADENCE_LIMIT"
 
     await db.execute("UPDATE outreach_tasks SET status = 'completed', completed_at = $2 "
                      "WHERE tenant_id = $1", a.tenant_id, _NOW - timedelta(days=5))

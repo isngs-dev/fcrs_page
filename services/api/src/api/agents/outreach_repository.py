@@ -363,6 +363,21 @@ async def bring_email_forward(db: Database, claims: AuthClaims, plan_id: str, *,
     return len(rows)
 
 
+
+async def bring_call_forward(db: Database, claims: AuthClaims, contact_id: str, *,
+                             at: datetime, intent: str) -> int:
+    """Ring the contact's waiting ``intent`` call (the chat call) at ``at``. Returns 1/0."""
+    _reject_global(claims)
+    rows = await db.fetch(
+        "UPDATE outreach_tasks SET scheduled_at = LEAST(scheduled_at, $3) "
+        "WHERE (tenant_id, task_id) IN (SELECT t.tenant_id, t.task_id FROM outreach_tasks t "
+        "  JOIN outreach_plans p ON p.tenant_id = t.tenant_id AND p.plan_id = t.plan_id "
+        "  WHERE t.tenant_id = $1 AND p.contact_id = $2 AND p.status = 'active' "
+        "  AND t.channel = 'call' AND t.status = 'scheduled' AND t.intent = $4) "
+        "RETURNING task_id",
+        claims.tenant_id, contact_id, at, intent)
+    return len(rows)
+
 # -- Console reads (A8) ------------------------------------------------------------------
 
 

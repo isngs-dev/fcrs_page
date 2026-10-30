@@ -811,3 +811,72 @@ async def test_put_settings_bad_text_color_422(app: Any, field: str) -> None:
         )
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# identity_gate_enabled -- "Ask visitors for their name, email and number in chat"
+# (2026-10-30: it was only settable by SQL, so no tenant's chatbot ever asked)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_settings_shows_the_identity_gate_off_by_default(app: Any) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/admin/settings", cookies={"access_token": _token(Role.CLIENT_AGENT)})
+
+    assert response.status_code == 200
+    assert response.json()["identity_gate_enabled"] is False
+
+
+async def test_put_settings_identity_gate_on_preserves_the_rest_of_the_config(
+    app: Any, db: _StubDatabase
+) -> None:
+    db.seed_orchestrator_config(tenant_id=_TENANT_ID, answer_threshold=0.8,
+                                escalate_threshold=0.3, turn_cap=6, low_confidence_streak_cap=3)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.put(
+            "/admin/settings", json={"identity_gate_enabled": True},
+            cookies={"access_token": _token(Role.CLIENT_ADMIN)})
+
+    assert response.status_code == 200
+    assert response.json()["identity_gate_enabled"] is True
+    stored = db._orchestrator_configs[_TENANT_ID]
+    assert stored["identity_gate_enabled"] is True
+    assert (stored["turn_cap"], stored["low_confidence_streak_cap"]) == (6, 3)
+    assert (stored["answer_threshold"], stored["escalate_threshold"]) == (0.8, 0.3)
+
+
+async def test_put_settings_identity_gate_off_turns_it_off(app: Any, db: _StubDatabase) -> None:
+    db.seed_orchestrator_config(tenant_id=_TENANT_ID, answer_threshold=0.8,
+                                escalate_threshold=0.3, turn_cap=6, identity_gate_enabled=True)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.put(
+            "/admin/settings", json={"identity_gate_enabled": False},
+            cookies={"access_token": _token(Role.CLIENT_ADMIN)})
+
+    assert response.json()["identity_gate_enabled"] is False
+    assert db._orchestrator_configs[_TENANT_ID]["identity_gate_enabled"] is False
+
+
+async def test_put_settings_identity_gate_client_agent_403(app: Any, db: _StubDatabase) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.put(
+            "/admin/settings", json={"identity_gate_enabled": True},
+            cookies={"access_token": _token(Role.CLIENT_AGENT)})
+
+    assert response.status_code == 403
+    assert "tenant_orchestrator_configs" not in db.updated_tables
+
+
+async def test_identity_gate_is_tenant_isolated(app: Any, db: _StubDatabase) -> None:
+    tenant_b = "tenant-b-456"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.put("/admin/settings", json={"identity_gate_enabled": True},
+                         cookies={"access_token": _token(Role.CLIENT_ADMIN, _TENANT_ID)})
+        tenant_b_response = await client.get(
+            "/admin/settings", cookies={"access_token": _token(Role.CLIENT_ADMIN, tenant_b)})
+
+    assert tenant_b_response.json()["identity_gate_enabled"] is False
+    assert tenant_b not in db._orchestrator_configs
