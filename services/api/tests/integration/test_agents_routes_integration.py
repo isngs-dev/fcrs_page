@@ -262,3 +262,48 @@ async def test_recipe_plan_flow_and_audit_verify(env: dict[str, Any]) -> None:
     platform = _cookie(Role.PLATFORM_ADMIN, None, subject="root")
     r = await c.get(f"/admin/tenants/{a}/audit/verify", cookies=platform)
     assert r.status_code == 200 and r.json()["ok"] is True
+
+
+async def test_the_ask_for_details_switch_lives_in_outreach_settings(env: dict[str, Any]) -> None:
+    """The chatbot's name/email/number capture is set next to the channels it feeds (moved
+    from /admin/settings, 2026-10-30): a save without it changes nothing, and the rest of the
+    orchestrator config survives the full-row write."""
+    from api.orchestrator.config_repository import (  # noqa: PLC0415
+        get_orchestrator_config,
+        upsert_orchestrator_config,
+    )
+
+    c, db, a, b = env["client"], env["db"], env["a"], env["b"]
+    admin, other_admin = _cookie(Role.CLIENT_ADMIN, a), _cookie(Role.CLIENT_ADMIN, b)
+    agent = _cookie(Role.CLIENT_AGENT, a, subject="agent-a")
+    platform = _cookie(Role.PLATFORM_ADMIN, None, subject="root")
+    claims = AuthClaims(subject="admin-a", role=Role.CLIENT_ADMIN, tenant_id=a)
+    await upsert_orchestrator_config(db, claims, answer_threshold=0.8, escalate_threshold=0.3,
+                                     turn_cap=9)
+
+    first = await c.get("/admin/outreach/settings", cookies=admin)
+    assert first.json()["identity_gate_enabled"] is False
+    on = await c.put("/admin/outreach/settings", json={"identity_gate_enabled": True},
+                     cookies=admin)
+    assert on.status_code == 200 and on.json()["identity_gate_enabled"] is True
+    config = await get_orchestrator_config(db, claims)
+    assert (config.identity_gate_enabled, config.turn_cap) == (True, 9)
+    assert (config.answer_threshold, config.escalate_threshold) == (0.8, 0.3)
+
+    kept = await c.put("/admin/outreach/settings", json={}, cookies=admin)
+    assert kept.json()["identity_gate_enabled"] is True
+
+    r = await c.put("/admin/outreach/settings", json={"identity_gate_enabled": False},
+                    cookies=agent)
+    assert r.status_code == 403
+    assert (await get_orchestrator_config(db, claims)).identity_gate_enabled is True
+
+    # Tenant isolation: A's switch isn't B's.
+    r = await c.get("/admin/outreach/settings", cookies=other_admin)
+    assert r.json()["identity_gate_enabled"] is False
+
+    # PLATFORM_ADMIN sets it only through the tenant-scoped router.
+    r = await c.put(f"/admin/tenants/{a}/outreach/settings",
+                    json={"identity_gate_enabled": False}, cookies=platform)
+    assert r.status_code == 200 and r.json()["identity_gate_enabled"] is False
+    assert (await get_orchestrator_config(db, claims)).identity_gate_enabled is False

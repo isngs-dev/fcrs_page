@@ -47,35 +47,6 @@ describe("saveSettings", () => {
     revalidatePathMock.mockReset();
   });
 
-
-  it("sends the 'ask visitors for their details' checkbox and reflects the saved value", async () => {
-    adminApiFetchMock.mockImplementation(async () =>
-      jsonResponse(
-        {
-          greeting: "Hi there!",
-          business_hours: null,
-          escalation_policy: null,
-          tone: null,
-          answer_threshold: 0.7,
-          escalate_threshold: 0.4,
-          turn_cap: 7,
-          low_confidence_streak_cap: 3,
-          identity_gate_enabled: true,
-          llm_provider: null,
-          llm_model: null,
-        },
-        200
-      )
-    );
-
-    const on = await saveSettings(undefined, { status: "idle" }, buildFormData({ identityGateEnabled: "on" }));
-    expect(JSON.parse(adminApiFetchMock.mock.calls[0][1].body).identity_gate_enabled).toBe(true);
-    expect(on.status === "saved" && on.settings.identityGateEnabled).toBe(true);
-
-    // An unticked checkbox isn't in the form data at all: that means off.
-    await saveSettings(undefined, { status: "idle" }, buildFormData());
-    expect(JSON.parse(adminApiFetchMock.mock.calls[1][1].body).identity_gate_enabled).toBe(false);
-  });
   it("returns the PUT response body's values as the saved state, NOT the submitted form values (confirmed, not optimistic)", async () => {
     // The submitted greeting differs from what the "backend" returns, to
     // prove the returned state reflects the response body.

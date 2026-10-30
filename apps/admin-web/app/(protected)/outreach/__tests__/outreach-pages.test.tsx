@@ -145,7 +145,8 @@ describe("Outreach pages (A8)", () => {
       "/settings": { enabled_channels: [], email_mode: "draft_for_review", outreach_paused: true, region_profile: "US",
         call_window_start: "09:00", call_window_end: "20:00", max_touches_per_contact: 3, max_call_attempts: 2,
         min_hours_between_touches: 48, first_inbound_email_delay_minutes: 5, monthly_cost_cap_micros: 150000000,
-        physical_address: null, inbound_auto_enabled: false, email_window_start: "08:00", email_window_end: "18:00" },
+        physical_address: null, inbound_auto_enabled: false, identity_gate_enabled: true,
+        email_window_start: "08:00", email_window_end: "18:00" },
       "/email-config": { configured: true, provider: "sendgrid", from_address: "a@b.com", has_api_key: true },
       "/call-config": { configured: true, plivo_auth_id: "MA1", from_number: "+18884810711", has_auth_token: true,
         recording_retention_days: 30 },
@@ -155,6 +156,7 @@ describe("Outreach pages (A8)", () => {
     expect(html).toContain("Resume outreach");
     expect(html).toContain('value="150.00"');
     expect(html).toMatch(/name="email_window_start"[^>]*value="08:00"/); // A12 F4
+    expect(html).toMatch(/name="ask_details"[^>]*checked/); // moved from Settings, 2026-10-30
     expect(html).toContain("leave blank to keep");
     expect(html).toMatch(/name="retention_days"[^>]*value="30"/); // A9 H8: shown, so a save keeps it
     expect(html).not.toMatch(/name="auth_token"[^>]*value=/);

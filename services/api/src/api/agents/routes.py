@@ -39,6 +39,10 @@ from api.agents.repository import (
 from api.audit.chain import record_platform_audit
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
+from api.orchestrator.config_repository import (
+    get_orchestrator_config,
+    upsert_orchestrator_config,
+)
 
 router = APIRouter(prefix="/admin/outreach", tags=["outreach"])
 tenant_scoped_router = APIRouter(prefix="/admin/tenants/{tenant_id}/outreach", tags=["outreach"])
@@ -63,6 +67,9 @@ class SettingsBody(BaseModel):
     inbound_auto_enabled: bool = False
     email_window_start: time = time(8, 0)  # A12 F4
     email_window_end: time = time(18, 0)
+    # The chatbot asks for name, email and number. Stored with the orchestrator config it
+    # drives; ``None`` (omitted) leaves it as it is.
+    identity_gate_enabled: bool | None = None
 
     @model_validator(mode="after")
     def _check(self) -> SettingsBody:
@@ -75,8 +82,9 @@ class SettingsBody(BaseModel):
         return self
 
 
-def _settings_out(s: AgentSettings) -> dict[str, Any]:
+def _settings_out(s: AgentSettings, *, identity_gate_enabled: bool) -> dict[str, Any]:
     return {
+        "identity_gate_enabled": identity_gate_enabled,
         "enabled_channels": list(s.enabled_channels),
         "email_mode": s.email_mode,
         "outreach_paused": s.outreach_paused,
@@ -104,7 +112,10 @@ async def _require_contact(request: Request, claims: AuthClaims, contact_id: str
 
 
 async def _get_settings(request: Request, claims: AuthClaims) -> dict[str, Any]:
-    return _settings_out(await get_agent_settings(request.app.state.db, claims))
+    db = request.app.state.db
+    chat = await get_orchestrator_config(db, claims)
+    return _settings_out(await get_agent_settings(db, claims),
+                         identity_gate_enabled=chat.identity_gate_enabled)
 
 
 async def _put_settings(request: Request, claims: AuthClaims, body: SettingsBody) -> dict[str, Any]:
@@ -120,13 +131,24 @@ async def _put_settings(request: Request, claims: AuthClaims, body: SettingsBody
 
         await require_call_ready(db, claims)  # A6: CALL_NOT_READY without a call config
     new = AgentSettings(
-        **{**body.model_dump(), "enabled_channels": tuple(sorted(set(body.enabled_channels))),
+        **{**body.model_dump(exclude={"identity_gate_enabled"}),
+           "enabled_channels": tuple(sorted(set(body.enabled_channels))),
            "outreach_paused": current.outreach_paused})
     await upsert_agent_settings(db, claims, new)
+    chat = await get_orchestrator_config(db, claims)
+    gate = chat.identity_gate_enabled
+    if body.identity_gate_enabled is not None and body.identity_gate_enabled != gate:
+        gate = body.identity_gate_enabled
+        await upsert_orchestrator_config(  # a full-row write: keep everything else
+            db, claims, answer_threshold=chat.answer_threshold,
+            escalate_threshold=chat.escalate_threshold, turn_cap=chat.turn_cap,
+            identity_gate_enabled=gate,
+            low_confidence_streak_cap=chat.low_confidence_streak_cap)
+    out = _settings_out(new, identity_gate_enabled=gate)
     await record_audit(db, claims, action="outreach.settings_updated", target_type="agent_settings",
-                       target_id=claims.tenant_id, metadata=_settings_out(new),
+                       target_id=claims.tenant_id, metadata=out,
                        actor_context=get_platform_admin_actor(request))
-    return _settings_out(new)
+    return out
 
 
 async def _require_email_ready(db: Any, claims: AuthClaims, address: str | None) -> None:

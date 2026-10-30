@@ -80,7 +80,6 @@ interface AdminBotSettingsResponseBody {
   escalate_threshold: number;
   turn_cap: number;
   low_confidence_streak_cap: number;
-  identity_gate_enabled?: boolean;
   llm_provider: string | null;
   llm_model: string | null;
 }
@@ -104,7 +103,6 @@ function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
     escalateThreshold: body.escalate_threshold,
     turnCap: body.turn_cap,
     lowConfidenceStreakCap: body.low_confidence_streak_cap,
-    identityGateEnabled: body.identity_gate_enabled ?? false,
     llmProvider: body.llm_provider,
     llmModel: body.llm_model,
   };
@@ -236,8 +234,6 @@ export async function saveSettings(
     turn_cap: turnCap ?? null,
     // Same "null means not provided" contract as turn_cap.
     low_confidence_streak_cap: lowConfidenceStreakCap ?? null,
-    // A checkbox: an unticked one isn't in the form data at all, so absent = off.
-    identity_gate_enabled: formData.get("identityGateEnabled") === "on",
   };
 
   const path = tenantId

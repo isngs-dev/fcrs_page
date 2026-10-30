@@ -57,9 +57,6 @@ class AdminBotSettingsRequest(BaseModel):
     # Same "None means leave as-is" contract as turn_cap, for the repeated-
     # low-confidence early-escalate streak length.
     low_confidence_streak_cap: int | None = Field(default=None, ge=1)
-    # The chatbot asks for name, then email, then number (with the AI-call disclosure).
-    # Same "None means leave as-is" contract as the caps.
-    identity_gate_enabled: bool | None = None
 
     @field_validator("sidebar_workspace_label", "dashboard_title", "bot_name")
     @classmethod
@@ -103,7 +100,6 @@ class AdminBotSettingsResponse(BaseModel):
     escalate_threshold: float
     turn_cap: int
     low_confidence_streak_cap: int
-    identity_gate_enabled: bool
     llm_provider: str | None
     llm_model: str | None
 
@@ -127,7 +123,6 @@ def _to_response(settings: BotSettings) -> AdminBotSettingsResponse:
         escalate_threshold=settings.escalate_threshold,
         turn_cap=settings.turn_cap,
         low_confidence_streak_cap=settings.low_confidence_streak_cap,
-        identity_gate_enabled=settings.identity_gate_enabled,
         llm_provider=settings.llm_provider,
         llm_model=settings.llm_model,
     )
@@ -179,8 +174,7 @@ async def _put_settings(
         visitor_text_color=body.visitor_text_color,
     )
 
-    if (body.turn_cap is not None or body.low_confidence_streak_cap is not None
-            or body.identity_gate_enabled is not None):
+    if body.turn_cap is not None or body.low_confidence_streak_cap is not None:
         current_orchestrator_config = await get_orchestrator_config(db, claims)
         await upsert_orchestrator_config(
             db,
@@ -190,10 +184,7 @@ async def _put_settings(
             turn_cap=(
                 body.turn_cap if body.turn_cap is not None else current_orchestrator_config.turn_cap
             ),
-            identity_gate_enabled=(
-                body.identity_gate_enabled if body.identity_gate_enabled is not None
-                else current_orchestrator_config.identity_gate_enabled
-            ),
+            identity_gate_enabled=current_orchestrator_config.identity_gate_enabled,
             low_confidence_streak_cap=(
                 body.low_confidence_streak_cap
                 if body.low_confidence_streak_cap is not None

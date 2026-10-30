@@ -129,6 +129,7 @@ export interface AgentSettings {
   monthlyCostCapMicros: number | null;
   physicalAddress: string | null;
   inboundAutoEnabled: boolean;
+  identityGateEnabled: boolean;
   emailWindowStart: string;
   emailWindowEnd: string;
 }

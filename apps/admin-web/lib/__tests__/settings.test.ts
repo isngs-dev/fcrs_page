@@ -28,7 +28,6 @@ describe("getBotSettings", () => {
       escalate_threshold: 0.4,
       turn_cap: 7,
       low_confidence_streak_cap: 5,
-      identity_gate_enabled: true,
       llm_provider: null,
       llm_model: null,
     };
@@ -51,7 +50,6 @@ describe("getBotSettings", () => {
       expect(result.settings.escalateThreshold).toBe(0.4);
       expect(result.settings.turnCap).toBe(7);
       expect(result.settings.lowConfidenceStreakCap).toBe(5);
-      expect(result.settings.identityGateEnabled).toBe(true);
       // nulls preserved, never coerced to "" / 0
       expect(result.settings.llmProvider).toBeNull();
       expect(result.settings.llmModel).toBeNull();

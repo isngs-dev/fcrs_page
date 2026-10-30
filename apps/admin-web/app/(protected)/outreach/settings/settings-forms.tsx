@@ -106,6 +106,7 @@ export function AgentSettingsForm({ settings }: { settings: AgentSettings }) {
         monthly_cost_cap_micros: cap,
         physical_address: optional(data, "physical_address"),
         inbound_auto_enabled: data.get("inbound_auto") === "on",
+        identity_gate_enabled: data.get("ask_details") === "on",
       })
     );
   }
@@ -123,6 +124,7 @@ export function AgentSettingsForm({ settings }: { settings: AgentSettings }) {
           <Check name="channel_email" label="Email follow-up" defaultChecked={settings.enabledChannels.includes("email")} />
           <Check name="channel_call" label="AI calls" defaultChecked={settings.enabledChannels.includes("call")} />
           <Check name="inbound_auto" label="Follow up new chat leads automatically" defaultChecked={settings.inboundAutoEnabled} />
+          <Check name="ask_details" label="Chatbot asks for name, email and number" defaultChecked={settings.identityGateEnabled} />
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Emails">

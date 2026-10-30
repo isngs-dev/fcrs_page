@@ -31,8 +31,6 @@ export interface BotSettings {
   escalateThreshold: number;
   turnCap: number;
   lowConfidenceStreakCap: number;
-  /** The chatbot asks for name, email, then number (with the AI-call disclosure). */
-  identityGateEnabled: boolean;
   llmProvider: string | null;
   llmModel: string | null;
 }
@@ -55,7 +53,6 @@ interface AdminBotSettingsResponseBody {
   escalate_threshold: number;
   turn_cap: number;
   low_confidence_streak_cap: number;
-  identity_gate_enabled?: boolean;
   llm_provider: string | null;
   llm_model: string | null;
 }
@@ -83,7 +80,6 @@ function toBotSettings(body: AdminBotSettingsResponseBody): BotSettings {
     escalateThreshold: body.escalate_threshold,
     turnCap: body.turn_cap,
     lowConfidenceStreakCap: body.low_confidence_streak_cap,
-    identityGateEnabled: body.identity_gate_enabled ?? false,
     llmProvider: body.llm_provider,
     llmModel: body.llm_model,
   };

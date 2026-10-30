@@ -5,7 +5,9 @@
 > ask for gmail. It should feel natural."*
 
 Applies only to tenants with the identity gate on (`tenant_orchestrator_configs.identity_gate_enabled`);
-everyone else is unchanged.
+everyone else is unchanged. Set in the console under **Outreach → Settings → "Chatbot asks for name,
+email and number"** (`PUT /admin/outreach/settings`, `identity_gate_enabled`; moved from `/admin/settings`
+2026-10-30 so it sits with the channels it feeds; omitted = unchanged).
 
 | # | Behaviour | Why |
 |---|---|---|

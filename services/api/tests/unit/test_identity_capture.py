@@ -102,6 +102,8 @@ def test_disclosure_shown_is_exactly_the_stored_call_wording() -> None:
     ("bye", True), ("ok thanks, that's all", True), ("Thanks, bye!", True),
     ("that's it for now", True), ("no more questions, have a great day", True),
     ("I'm all set", True), ("talk soon", True),
+    ("No I have got the information I needed", True),  # a real chat, 2026-10-30
+    ("got what I needed, thanks", True), ("I have everything I need", True),
     ("thanks", False), ("ok", False),  # mid-chat acknowledgements, not goodbyes
     ("that's all I need to know about pricing?", False),
     ("Bye the way, do you fix gutters and also clean them every season for us", False),

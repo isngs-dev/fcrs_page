@@ -52,7 +52,6 @@ class BotSettings:
     escalate_threshold: float
     turn_cap: int
     low_confidence_streak_cap: int
-    identity_gate_enabled: bool
     llm_provider: str | None
     llm_model: str | None
 
@@ -124,7 +123,6 @@ async def get_bot_settings(db: Database, claims: AuthClaims) -> BotSettings:
         escalate_threshold=orchestrator_config.escalate_threshold,
         turn_cap=orchestrator_config.turn_cap,
         low_confidence_streak_cap=orchestrator_config.low_confidence_streak_cap,
-        identity_gate_enabled=orchestrator_config.identity_gate_enabled,
         llm_provider=str(llm_row["provider"]) if llm_row is not None else None,
         llm_model=str(llm_row["model"]) if llm_row is not None else None,
     )

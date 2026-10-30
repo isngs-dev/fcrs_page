@@ -29,7 +29,6 @@ const BLANK_SETTINGS: BotSettings = {
   escalateThreshold: 0.3,
   turnCap: 6,
   lowConfidenceStreakCap: 3,
-  identityGateEnabled: false,
   llmProvider: null,
   llmModel: null,
 };

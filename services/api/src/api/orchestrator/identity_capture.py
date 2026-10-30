@@ -148,7 +148,9 @@ _CLOSING_RE = re.compile(
     r"\b(?:(?:good)?bye|bye[- ]?bye|see (?:you|ya)|that'?s (?:all|it|everything)"
     r"|no (?:more|other|further) questions?|nothing (?:else|more)|i'?m (?:all set|done|good)"
     r"|(?:have a )?(?:good|great|nice|lovely) (?:day|evening|night|weekend|one)"
-    r"|talk (?:to you )?(?:later|soon)|(?:gotta|got to|have to) go|cheers)\b", re.I)
+    r"|talk (?:to you )?(?:later|soon)|(?:gotta|got to|have to) go|cheers"
+    r"|(?:got|have) (?:the|all the|what|everything|all) (?:\w+ ){0,3}?"
+    r"(?:need|needed|wanted|info|information|answers?))\b", re.I)
 
 
 def wants_a_call(message: str) -> bool:
