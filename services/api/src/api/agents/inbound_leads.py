@@ -20,6 +20,7 @@ from api.contacts.repository import (
     get_contact_id_by_identity,
     get_contact_timezone,
     set_contact_timezone,
+    update_contact,
 )
 from api.leads.repository import get_lead
 
@@ -61,6 +62,15 @@ async def handle_inbound_lead(db: Database, claims: AuthClaims, payload: dict[st
         return "LEAD_GONE"
 
     contact_id = await _ensure_contact(db, claims, lead)
+    if "call" in channels and lead.phone:
+        # The number they just agreed to be called on is the one to ring: the contact may
+        # predate it (made at the email, or an earlier visit with another number).
+        await update_contact(db, claims, contact_id, phone=lead.phone)
+        try:
+            await add_identity(db, claims, contact_id, identity_type="phone",
+                               identity_value=lead.phone)
+        except ValidationError:
+            pass  # already theirs, or another contact's: contacts.phone still rings it
     for label, answer in (payload.get("answers") or {}).items():  # A11 M4: form answers
         await memory.remember(db, claims, contact_id, channel=payload.get("form") or "form",
                               kind="need", text=f"{label}: {answer}")

@@ -166,11 +166,15 @@ async def has_capacity(db: Database, claims: AuthClaims) -> bool:
 
 
 async def _contact_phone(db: Database, claims: AuthClaims, contact_id: str) -> str | None:
+    """The contact's own number first: the latest one they gave (an older one stays as an
+    identity, so it still finds them when they call in)."""
+    contact = await get_contact(db, claims, contact_id)
+    if contact and contact.phone and (number := to_e164(contact.phone)):
+        return number
     for identity in await list_identities(db, claims, contact_id):
         if identity.identity_type == "phone":
             return identity.identity_value
-    contact = await get_contact(db, claims, contact_id)
-    return to_e164(contact.phone) if contact and contact.phone else None
+    return None
 
 
 async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id: str

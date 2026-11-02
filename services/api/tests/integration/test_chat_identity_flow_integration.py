@@ -377,3 +377,63 @@ async def test_a_number_given_after_the_first_email_went_out_still_gets_a_call(
     await dispatch.dispatch_events(db, limit=10)
     task, _ = await _chat_call(db, tenant)
     assert task.intent == planner.CHAT_CALL_INTENT
+
+
+async def _dialled(db: Database, tenant: str) -> str | None:
+    """The number the calling agent would ring for the chat call's contact."""
+    from api.call_agent.service import _contact_phone
+
+    task, _ = await _chat_call(db, tenant)
+    return await _contact_phone(db, dispatch.system_claims(tenant), task.contact_id)
+
+
+async def test_a_number_given_after_the_email_is_the_one_rebecca_dials(
+    chat: dict[str, Any],
+) -> None:
+    """Live 2026-11-02: email first (the contact is made then, with no number), number
+    second -> saved on the lead only, so the call had nothing to ring."""
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    say = _sayer(db, visitor)
+    for text in ("How much does it cost?", "Sainath", "sainath@example.com"):
+        await say(text)
+    await dispatch.dispatch_events(db, limit=10)  # contact made now, without a number
+    await say("+918828393252")
+    await dispatch.dispatch_events(db, limit=10)
+    assert await _dialled(db, tenant) == "+918828393252"
+
+
+async def test_a_returning_visitor_is_rung_on_the_number_they_just_gave(
+    chat: dict[str, Any],
+) -> None:
+    """Same email as an earlier contact: the chat joins that contact, whose old number
+    must not be the one rung. Another tenant's contact with the same email is untouched."""
+    from api.contacts.repository import add_identity, create_contact
+
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    admin = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=tenant)
+    old = await create_contact(db, admin, account_id=None, lead_id=None, name="Sainath",
+                               email="sainath@example.com", phone="+917000000001", consent={})
+    await add_identity(db, admin, old, identity_type="email", identity_value="sainath@example.com")
+    await add_identity(db, admin, old, identity_type="phone", identity_value="+917000000001")
+    other = f"t-{uuid4().hex[:10]}"
+    await db.execute("INSERT INTO client_accounts (id, name) VALUES ($1, $1)", other)
+    await db.execute("INSERT INTO tenants (id, name, slug, enabled, client_account_id) "
+                     "VALUES ($1, $1, $1, true, $1)", other)
+    elsewhere = await create_contact(
+        db, AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=other),
+        account_id=None, lead_id=None, name="Sainath", email="sainath@example.com",
+        phone="+917000000001", consent={})
+
+    say = _sayer(db, visitor)
+    for text in ("How much does it cost?", "Sainath", "sainath@example.com"):
+        await say(text)
+    await dispatch.dispatch_events(db, limit=10)
+    await say("+918828393252")
+    await dispatch.dispatch_events(db, limit=10)
+    task, _ = await _chat_call(db, tenant)
+    assert task.contact_id == old  # joined by email, as before
+    assert await _dialled(db, tenant) == "+918828393252"
+    assert await db.fetchval("SELECT phone FROM contacts WHERE tenant_id = $1 AND "
+                             "contact_id = $2", other, elsewhere) == "+917000000001"
