@@ -34,13 +34,14 @@ _CALLBACK = re.compile(
     r"|driving)\b", re.I)
 _BOOK = re.compile(
     r"\b(?:book|schedule|set up|arrange|make)\b.{0,25}"
-    r"\b(?:call|meeting|appointment|time|inspection|visit|consultation)\b"
+    r"\b(?:call|meeting|appointment|time|inspection|visit|consultation|demo|sales|team|book)\b"
     r"|\b(?:sounds good|i'?m interested|let'?s do it|sign me up)\b", re.I)
 _NOT_INTERESTED = re.compile(
     r"\bnot interested\b|\bno,? thanks?\b|\bno thank you\b|\balready (?:have|found|hired|got)\b"
     r"|\bnot (?:looking|in the market)\b", re.I)
 _YES = re.compile(r"^\s*(?:yes|yeah|yep|yup|sure|correct|that works|perfect|ok(?:ay)?|please"
-                  r"|book it|go ahead|sounds good)\b", re.I)
+                  r"|book it|go ahead|go with|do it|right|that'?s (?:right|correct|fine|good)"
+                  r"|sounds good)\b", re.I)
 _NO = re.compile(r"^\s*(?:no|nope|nah|not really|neither)\b", re.I)
 _ASKS = re.compile(r"\?|^\s*(?:how|what|when|where|why|who|which|do|does|did|can|could|is|are"
                    r"|will|would|should)\b", re.I)
@@ -49,6 +50,15 @@ _ASKS = re.compile(r"\?|^\s*(?:how|what|when|where|why|who|which|do|does|did|can
 def is_question(text: str) -> bool:
     """Phone speech rarely carries a "?" -- a leading question word counts too."""
     return bool(_ASKS.search(text))
+
+
+_CHANGE_MIND = re.compile(r"\b(?:but|change|instead|actually|wait|not sure)\b", re.I)
+
+
+def agrees(text: str) -> bool:
+    """A yes to the final check, however it's put: "yes that's it" isn't a goodbye there."""
+    return (bool(_YES.search(text)) and len(text.split()) <= 7 and "?" not in text
+            and not _CHANGE_MIND.search(text))
 
 
 def classify(text: str) -> Kind:
@@ -132,16 +142,21 @@ LINK_LINE = ("I'll have our team send you a link to pick a time that suits you. 
 NO_SLOTS_LINE = ("I don't see an open time right now, so I'll have our team reach out to find one. "
                  "Thanks, goodbye.")
 WRAP_UP_LINE = "I want to respect your time, so I'll have our team follow up. Thanks, goodbye."
-ASK_WHICH = "Which works better for you?"
 ANYTHING_ELSE = "Is there anything else I can help with?"
+CLOSING = "Thanks for your time, and have a great day. Goodbye."
 DISCOVERY_THANKS_LINE = ("Thanks, that's really helpful. Would you like me to find a time with "
                          "our team to talk it through?")
 DISCOVERY_NO_LINE = ("No problem. Would you like me to find a time with our team, or is there "
                      "anything I can answer for you?")
-NOT_OPEN = "I'm sorry, we're not available at that time. "
-DAY_FULL = "I'm sorry, we're not available that day. "
-DAY_BOOKED = "I'm sorry, that day is already fully booked. "
+WHICH_TIME = "What day and time works best for you?"
+ASK_TIME_LINE = f"Sure. {WHICH_TIME}"
+ASK_DAY_LINE = "And which day would you like?"
+TAKEN_LINE = ("I'm sorry, we already have a meeting scheduled at that time. "
+              "What other time would suit you?")
+DAY_FULL = "I'm sorry, we're not available that day. What other day would suit you?"
+DAY_BOOKED = "I'm sorry, that day is already fully booked. What other day would suit you?"
 OTHER_TIME_LINE = "No problem. What day and time would suit you better?"
+CHANGE_LINE = "No problem. What should I change, the day and time, or the email?"
 EMAIL_ASK_LINE = ("What email address should I send the meeting link to? "
                   "Please say it slowly, like john dot smith at gmail dot com.")
 EMAIL_RETRY_LINE = "Sorry, I didn't catch that. Could you say the email address again, slowly?"
@@ -162,76 +177,38 @@ def say_time(at: datetime, timezone: str) -> str:
             f"{'AM' if local.hour < 12 else 'PM'} {_ZONE_NAMES.get(timezone, timezone)} time")
 
 
-def offer_line(slots: list[datetime], timezone: str) -> str:
-    if len(slots) == 1:
-        return f"I can do {say_time(slots[0], timezone)}. Does that work for you?"
-    return (f"I have {say_time(slots[0], timezone)}, or {say_time(slots[1], timezone)}. "
-            f"{ASK_WHICH}")
+def ask_hour_line(day: date) -> str:
+    return f"What time would you like on {day:%A}, {day:%B} {day.day}?"
 
 
-def taken_line(slots: list[datetime], timezone: str) -> str:
-    """The time asked for already has a meeting: apologise, give the nearest, invite another."""
-    times = " or ".join(say_time(s, timezone) for s in slots)
-    which = "either of those" if len(slots) > 1 else "that"
-    return (f"I'm sorry, we already have a meeting scheduled at that time. The closest I have "
-            f"open is {times}. Would {which} work, or would you prefer another day and time?")
+def _clock(hhmm: str) -> str:
+    hour, minute = (int(x) for x in hhmm.split(":"))
+    return f"{hour % 12 or 12}{f':{minute:02}' if minute else ''} {'AM' if hour < 12 else 'PM'}"
 
 
-def confirm_line(slot: datetime, timezone: str) -> str:
-    return f"Great. Just to confirm, {say_time(slot, timezone)}. Shall I book that?"
+def not_open_line(windows: list[list[str]], timezone: str) -> str:
+    """Outside the hours: say what they are (not a slot) and let the caller pick."""
+    return (f"I'm sorry, we're not available at that time. That day we're open from "
+            f"{_clock(windows[0][0])} to {_clock(windows[-1][1])} "
+            f"{_ZONE_NAMES.get(timezone, timezone)} time. What other time would suit you?")
 
 
-def ask_time_line(earliest: datetime, timezone: str) -> str:
-    return (f"Sure. What day and time works best for you? The earliest I have is "
-            f"{say_time(earliest, timezone)}.")
-
-
-def email_check_line(email: str) -> str:
-    return f"I'll send the meeting details to {say_email(email)}. Is that the right email?"
-
-
-def email_heard_line(email: str) -> str:
-    return f"I heard {say_email(email)}. Is that right?"
+def final_check_line(slot: datetime, timezone: str, email: str | None) -> str:
+    """The one confirmation: every detail read back together."""
+    details = (f"and I'll send the meeting details to {say_email(email)}" if email
+               else "and our team will send you the meeting details")
+    return f"Just to confirm, that's {say_time(slot, timezone)}, {details}. Shall I book it?"
 
 
 def booked_line(slot: datetime, timezone: str, *, emailed: bool = True,
                 link: bool = False) -> str:
     when = f"You're booked for {say_time(slot, timezone)}."
     if not emailed:
-        return f"{when} Our team will send you the meeting details. {ANYTHING_ELSE}"
+        return f"{when} Our team will send you the meeting details. {CLOSING}"
     if link:
         return (f"{when} I'm sending the meeting link to your email now, and you'll get a "
-                f"reminder before the call. {ANYTHING_ELSE}")
-    return f"{when} You'll get a confirmation email and a reminder before the call. {ANYTHING_ELSE}"
-
-
-_FIRST = re.compile(r"\b(?:first|1st|earlier|former|the one)\b", re.I)
-_SECOND = re.compile(r"\b(?:second|2nd|later one|latter|other one|last one)\b", re.I)
-_HOUR = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?", re.I)
-
-
-def choose_slot(text: str, slots: list[datetime], timezone: str) -> int | None:
-    """Which offered slot the caller picked, or ``None`` if it's unclear."""
-    if not slots:
-        return None
-    if len(slots) == 1 and _YES.search(text):
-        return 0
-    if _SECOND.search(text) and len(slots) > 1:
-        return 1
-    if _FIRST.search(text):
-        return 0
-    local = [s.astimezone(ZoneInfo(timezone)) for s in slots]
-    days = [i for i, s in enumerate(local) if f"{s:%A}".lower() in text.lower()]
-    if len(days) == 1:
-        return days[0]
-    for match in _HOUR.finditer(text):
-        hour = int(match.group(1)) % 12
-        suffix = (match.group(3) or "").lower()
-        hits = [i for i, s in enumerate(local)
-                if s.hour % 12 == hour and (not suffix or (s.hour >= 12) == suffix.startswith("p"))]
-        if len(hits) == 1:
-            return hits[0]
-    return None
+                f"reminder before the call. {CLOSING}")
+    return f"{when} You'll get a confirmation email and a reminder before the call. {CLOSING}"
 
 
 # -- What the caller asks for: a day/time, an email address ---------------------------------
@@ -249,6 +226,28 @@ _DAY_MONTH = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MONTH})\
 _ORDINAL = re.compile(r"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b")
 _CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?\s?m\b\.?|p\.?\s?m\b\.?|o'?clock)?")
 _TIME_WORDS = {"at", "around", "about", "by", "morning", "afternoon", "evening", "night"}
+
+
+_ZONE_WORDS = {"est": "America/New_York", "edt": "America/New_York",
+               "eastern": "America/New_York", "cst": "America/Chicago",
+               "cdt": "America/Chicago", "central": "America/Chicago",
+               "mst": "America/Denver", "mdt": "America/Denver", "mountain": "America/Denver",
+               "pst": "America/Los_Angeles", "pdt": "America/Los_Angeles",
+               "pacific": "America/Los_Angeles", "ist": "Asia/Kolkata",
+               "india": "Asia/Kolkata", "indian": "Asia/Kolkata"}
+_ZONE_WORD = re.compile(r"\b(" + "|".join(_ZONE_WORDS) + r")\b", re.I)
+_ASKS_OPEN = re.compile(r"\b(?:earliest|soonest|available|availability|openings?|whenever"
+                        r"|any ?time)\b|\bwhat (?:times?|days?)\b", re.I)
+
+
+def parse_zone(text: str) -> str | None:
+    """The time zone the caller named, if any."""
+    m = _ZONE_WORD.search(text)
+    return _ZONE_WORDS[m.group(1).lower()] if m else None
+
+
+def asks_what_is_open(text: str) -> bool:
+    return bool(_ASKS_OPEN.search(text))
 
 
 def _on_or_after(today: date, year: int, month: int, day: int) -> date | None:
@@ -340,15 +339,16 @@ def say_email(email: str) -> str:
 
 # -- Per-call memory ------------------------------------------------------------------------
 
-Stage = Literal["talking", "discovery", "asking_time", "offered", "confirming", "email_check",
-                "email_ask"]
+Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask"]
 
 
 @dataclass
 class CallState:
     stage: Stage = "talking"
-    offered: list[str] = field(default_factory=list)  # ISO datetimes
-    chosen: str | None = None
+    day: str | None = None  # ISO date the caller asked for
+    at: list[int] | None = None  # [hour, minute] the caller asked for
+    zone: str | None = None  # a time zone they named; else the business's
+    chosen: str | None = None  # the open slot (ISO datetime) awaiting the final check
     email: str | None = None  # where the meeting details go
     email_tries: int = 0
     silences: int = 0
@@ -358,8 +358,8 @@ class CallState:
     history: list[list[str]] = field(default_factory=list)  # [role, text]
 
     def to_json(self) -> dict[str, Any]:
-        return {"stage": self.stage, "offered": self.offered, "chosen": self.chosen,
-                "email": self.email, "email_tries": self.email_tries,
+        return {"stage": self.stage, "day": self.day, "at": self.at, "zone": self.zone,
+                "chosen": self.chosen, "email": self.email, "email_tries": self.email_tries,
                 "silences": self.silences, "misses": self.misses,
                 "recording_started": self.recording_started, "question": self.question,
                 "history": self.history[-12:]}
@@ -367,8 +367,8 @@ class CallState:
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
         data = data or {}
-        return cls(stage=data.get("stage", "talking"), offered=list(data.get("offered", [])),
-                   chosen=data.get("chosen"), email=data.get("email"),
+        return cls(stage=data.get("stage", "talking"), day=data.get("day"), at=data.get("at"),
+                   zone=data.get("zone"), chosen=data.get("chosen"), email=data.get("email"),
                    email_tries=int(data.get("email_tries", 0)),
                    silences=int(data.get("silences", 0)),
                    misses=int(data.get("misses", 0)),

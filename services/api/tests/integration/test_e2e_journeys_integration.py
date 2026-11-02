@@ -358,10 +358,9 @@ async def test_h2_outbound_csv_to_ai_call_to_booked(env: dict[str, Any]) -> None
     ask = call_service.spoken_text(await _plivo(env, call_id, "turn", {
         "Speech": "I'd like to book a time", "CallUUID": "u-1"}))
     assert ask.startswith("Sure. What day and time works best for you?")
-    for speech in ("the earliest you have", "the first one", "Yes please"):
-        await _plivo(env, call_id, "turn", {"Speech": speech, "CallUUID": "u-1"})
+    await _plivo(env, call_id, "turn", {"Speech": "the earliest you have", "CallUUID": "u-1"})
     booked = call_service.spoken_text(await _plivo(env, call_id, "turn", {
-        "Speech": "yes", "CallUUID": "u-1"}))  # ana@example.com is the right email
+        "Speech": "yes", "CallUUID": "u-1"}))  # the one final check, ana@example.com included
     assert booked.startswith("You're booked for")
     await _plivo(env, call_id, "hangup", {"CallUUID": "u-1", "Duration": "120",
                                           "CallStatus": "completed"})

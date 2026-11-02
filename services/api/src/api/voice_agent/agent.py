@@ -72,13 +72,21 @@ _VOICE_SYSTEM_PROMPT = (
     "You are the AI phone assistant for this business, speaking with a caller on "
     "a live call. Answer using ONLY the context below. Speak naturally: 1 to 3 "
     "short sentences, plain words, no lists, no markdown, no links, no emoji. Say "
-    "numbers and prices the way a person says them aloud. If the caller only "
+    "numbers and prices the way a person says them aloud. The caller's words come from "
+    "speech recognition and can be cut off or wrong: if they make no sense, don't guess, "
+    "just ask them to say it again. If the caller only "
     "greets or thanks you, reply briefly and ask how you can help. If the context "
     "does not contain the answer, reply with exactly NO_ANSWER_FOUND and nothing "
     "else. Never guess, never promise, never say anything is booked, and never "
     "invent prices, dates or commitments."
 )
 _NO_ANSWER = "NO_ANSWER_FOUND"
+BOOK_A_TIME = "BOOK_A_TIME"  # the Calling Agent's booking flow takes over from the model
+_CAN_BOOK_PROMPT = (
+    "If the caller wants to book or schedule a call or meeting, or names a day or time for "
+    "one, reply with exactly BOOK_A_TIME and nothing else: the booking is handled for you. "
+    "Never ask for a day, a time or a time zone yourself."
+)
 _OPENING_PROMPT = (
     "You are Rebecca, calling someone back for this business. Write the opening of a phone "
     "call. LINE: one sentence that comes right after you have said hi and your name. Say why "
@@ -201,11 +209,12 @@ class CallSession:
 
 async def answer_from_knowledge(
     db: Database, claims: AuthClaims, question: str, history: list[ChatMessage],
-    *, model: str | None = None, about_caller: str | None = None,
+    *, model: str | None = None, about_caller: str | None = None, can_book: bool = False,
 ) -> str | None:
     """A short spoken answer grounded in the tenant's knowledge base, or ``None``
     when the knowledge base doesn't hold it (or the reply fails the output
-    guardrails). LLM/retrieval errors propagate -- the caller transfers."""
+    guardrails); with ``can_book``, ``BOOK_A_TIME`` when the caller wants to book.
+    LLM/retrieval errors propagate -- the caller transfers."""
     config = await get_llm_config(db, claims)
     if config is None or not config.embedding_model:
         raise LLMError("LLM or embeddings not configured for this tenant")
@@ -220,7 +229,8 @@ async def answer_from_knowledge(
     context = "\n".join(f"[{c.chunk_id}] {c.content}" for c in result.chunks)
     prompt = [
         ChatMessage(role="system", content=(
-            f"{_VOICE_SYSTEM_PROMPT}\n\nContext:\n{context}\n\n{frame_memory(about_caller)}"
+            f"{_VOICE_SYSTEM_PROMPT}{f' {_CAN_BOOK_PROMPT}' if can_book else ''}\n\n"
+            f"Context:\n{context}\n\n{frame_memory(about_caller)}"
         ).strip()),  # A11: the caller's story, as data
         *history[-_HISTORY_TURNS:],
         ChatMessage(role="user", content=question),
@@ -238,6 +248,8 @@ async def answer_from_knowledge(
     finally:
         await provider.aclose()
     reply = completion.text.strip()
+    if can_book and BOOK_A_TIME in reply:
+        return BOOK_A_TIME
     if not reply:
         miss = f"empty reply (stop_reason={completion.stop_reason})"
     elif _NO_ANSWER in reply:

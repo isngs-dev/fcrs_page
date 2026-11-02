@@ -109,19 +109,23 @@ def speak(text: str, voice: str) -> str:
     return f"<Speak voice={quoteattr(voice)}>{body}</Speak>"
 
 
-def listen(prompt: str, action_url: str, voice: str) -> str:
+# executionTimeout, seconds. It runs from when Rebecca stops speaking (Plivo logs: 14 s line
+# + 20 s) and is the TOTAL listening time (Plivo docs), not a wait for speech to start.
+OPENING_WAIT = 6  # dead air right after the opening made people hang up (2026-10-29)
+ANSWER_WAIT = 12  # 6 s cut sentences off: "will the leads be genuine" -> "so when" (2026-10-30)
+
+
+def listen(prompt: str, action_url: str, voice: str, *, wait: int = ANSWER_WAIT) -> str:
     """Speak ``prompt`` and capture the caller's next utterance (posted to
     ``action_url`` as ``Speech``). No input -> the Redirect posts there empty.
     Don't change these attributes without a live call: en-IN + hints (2026-10-29) made
-    Plivo hear nothing at all, every turn timed out silent.
-    executionTimeout counts from when Rebecca stops speaking (Plivo logs: 14 s line + 20 s);
-    20 s of dead air made people hang up, so a missed reply is re-asked after 6 s.
-    ponytail: one timeout for every question; if long answers come back cut short
-    (call_turn_heard word counts), give the open questions a longer one."""
+    Plivo hear nothing at all, every turn timed out silent. startInputTimeout would split
+    "wait for speech" from "total", but Plivo documents neither its range nor when it starts.
+    ponytail: a silent caller waits ``wait`` seconds; call_turn_heard shows if 12 s is wrong."""
     return (
         f'<GetInput action={quoteattr(action_url)} method="POST" inputType="speech" '
-        'language="en-US" speechModel="phone_call" executionTimeout="6" '
-        'speechEndTimeout="auto" redirect="true">'
+        'language="en-US" speechModel="phone_call" '
+        f'executionTimeout="{wait}" speechEndTimeout="auto" redirect="true">'
         f"{speak(prompt, voice)}</GetInput>"
         f'<Redirect method="POST">{escape(action_url)}</Redirect>'
     )

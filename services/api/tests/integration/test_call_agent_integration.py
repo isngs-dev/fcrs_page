@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from datetime import time as dtime
 from typing import Any
 from unittest.mock import MagicMock
 from urllib.parse import urlsplit
@@ -43,6 +44,7 @@ if _DEV_DB_URL and _TEST_DB_URL == _DEV_DB_URL:
 
 _JWT = "x" * 48
 _BASE = "https://api.example.com"
+_NY = ZoneInfo("America/New_York")  # the business's zone: every call time is in it
 _HOOK = "I saw you were asking about storm-damage repairs on our site."
 _QUESTION = "What's going on with your roof at the moment?"
 _ENV = {
@@ -132,7 +134,7 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, Any]]:
     monkeypatch.setattr(service, "send_notification", MagicMock())
 
     async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
-                     about_caller: Any = None) -> str | None:
+                     about_caller: Any = None, can_book: bool = False) -> str | None:
         return None if "warranty" in question else "We charge two hundred dollars for that."
 
     monkeypatch.setattr(service, "answer_from_knowledge", answer)
@@ -252,20 +254,15 @@ async def test_full_call_disclosure_recording_booking_and_settlement(env: dict[s
                              call_id) is False
 
     ask = service.spoken_text(await _say(env, call_id, "I'd like to book a time"))
-    assert ask.startswith("Sure. What day and time works best for you?")
-    offer = service.spoken_text(await _say(env, call_id, "whatever is earliest"))
-    assert offer.endswith(script.ASK_WHICH)
-    confirm = service.spoken_text(await _say(env, call_id, "the first one"))
-    assert confirm.startswith("Great. Just to confirm") and confirm.endswith("Shall I book that?")
-    check = service.spoken_text(await _say(env, call_id, "Yes please"))
-    assert check == script.email_check_line("jane@example.com")
-    booked = service.spoken_text(await _say(env, call_id, "yes"))
+    assert ask == script.ASK_TIME_LINE
+    confirm = service.spoken_text(await _say(env, call_id, "whatever is earliest"))
+    assert confirm.startswith("Just to confirm") and "jane at example dot com" in confirm
+    booked = service.spoken_text(await _say(env, call_id, "Yes please"))
     assert booked.startswith("You're booked for")
     assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 1
     assert await db.fetchval("SELECT count(*) FROM reminder_jobs r JOIN schedule_events e "
                              "USING (tenant_id, event_id) WHERE e.tenant_id = $1", a) == 3
 
-    await _say(env, call_id, "No, that's all, bye")
     await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "Duration": "95",
                                             "CallStatus": "completed"})
     session = await db.fetchrow("SELECT status, outcome, duration_s FROM call_sessions "
@@ -315,7 +312,7 @@ async def test_yes_to_the_opening_gets_a_question_about_what_they_need(
     remembered = await memory.items(db, claims, str(contact_id))  # the team sees what they said
     assert remembered[-1]["text"] == "the roof leaks over the kitchen"
     ask = service.spoken_text(await _say(env, call_id, "yes"))
-    assert ask.startswith("Sure. What day and time works best for you?")
+    assert ask == script.ASK_TIME_LINE
     # asked once only: a later "yes" never repeats the question
     assert _QUESTION not in ask
 
@@ -334,32 +331,29 @@ async def test_caller_names_the_time_and_the_email_the_meet_link_goes_to(
     Meet link from the connected calendar (stub provider here)."""
     from api.scheduling.calendar_config_repository import upsert_calendar_config
 
-    db, a, zone = env["db"], env["a"], ZoneInfo(env["zone"])
+    db, a = env["db"], env["a"]
     claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
     await upsert_calendar_config(db, claims, provider="stub", calendar_id=None,
                                  credentials=uuid4().hex, busy=[], enabled=True)
     call_id = await _answered(env, a)
 
     ask = service.spoken_text(await _say(env, call_id, "Can you schedule a meeting with the team"))
-    assert ask.startswith("Sure. What day and time works best for you?")
-    tomorrow = (datetime.now(zone) + timedelta(days=1)).date()
+    assert ask == script.ASK_TIME_LINE
+    tomorrow = (datetime.now(_NY) + timedelta(days=1)).date()
+    three = datetime.combine(tomorrow, dtime(15), tzinfo=_NY)
     confirm = service.spoken_text(await _say(env, call_id, "tomorrow at 3 pm"))
-    assert confirm == script.confirm_line(
-        datetime.combine(tomorrow, datetime.min.time().replace(hour=15), tzinfo=zone),
-        env["zone"])
-    assert service.spoken_text(await _say(env, call_id, "yes")) == script.email_check_line(
-        "jane@example.com")
-    assert service.spoken_text(await _say(env, call_id, "no")) == script.EMAIL_ASK_LINE
+    assert confirm == script.final_check_line(three, "America/New_York", "jane@example.com")
+    assert service.spoken_text(await _say(env, call_id, "no, the email")) == script.EMAIL_ASK_LINE
     heard = service.spoken_text(await _say(env, call_id, "it's jane dot doe at the rate gmail "
                                                          "dot com"))
-    assert heard == script.email_heard_line("jane.doe@gmail.com")
+    assert heard == script.final_check_line(three, "America/New_York", "jane.doe@gmail.com")
     booked = service.spoken_text(await _say(env, call_id, "yes"))
     assert booked.startswith("You're booked for") and "meeting link" in booked
 
     event = await db.fetchrow("SELECT event_id, email, timezone, meet_url, calendar_ref "
                               "FROM schedule_events WHERE tenant_id = $1", a)
     assert event is not None and event["email"] == "jane.doe@gmail.com"
-    assert event["timezone"] == env["zone"]  # the email shows the caller's own clock
+    assert event["timezone"] == "America/New_York"
     assert event["meet_url"] == f"https://meet.google.com/stub-{event['event_id']}"
     job = await db.fetchrow("SELECT recipient, body FROM notification_jobs WHERE tenant_id = $1 "
                             "AND dedupe_key = $2", a, f"booking_confirm:{event['event_id']}")
@@ -369,32 +363,231 @@ async def test_caller_names_the_time_and_the_email_the_meet_link_goes_to(
                              call_id) == "booked"
 
 
-async def test_a_taken_time_offers_the_nearest_open_ones(env: dict[str, Any]) -> None:
-    db, a, zone = env["db"], env["a"], ZoneInfo(env["zone"])
+async def test_the_callers_own_time_is_booked_with_one_confirmation(env: dict[str, Any]) -> None:
+    """The live call of 2026-10-30, replayed: asked for the 3rd at 6:30 PM EST, Rebecca lost it
+    all, pushed the earliest slot in India time, then took four more questions to book."""
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    day = (datetime.now(_NY) + timedelta(days=4)).date()
+
+    ask = service.spoken_text(await _say(env, call_id, "yes schedule a book with the sales"))
+    assert ask == script.ASK_TIME_LINE
+    time_ask = service.spoken_text(await _say(env, call_id, f"can you do it on {day:%B} {day.day}"))
+    assert time_ask == script.ask_hour_line(day)
+    final = service.spoken_text(await _say(env, call_id, "uh 6:30 p.m. EST"))
+    slot = datetime.combine(day, dtime(18, 30), tzinfo=_NY)
+    assert final == script.final_check_line(slot, "America/New_York", "jane@example.com")
+
+    end = await _say(env, call_id, "yes")
+    assert service.spoken_text(end) == script.booked_line(slot, "America/New_York")
+    assert end.endswith("<Hangup/></Response>")  # no "anything else?": the call ends here
+    event = await db.fetchrow("SELECT starts_at, timezone, email FROM schedule_events "
+                              "WHERE tenant_id = $1", a)
+    assert event is not None and event["starts_at"] == slot
+    assert (event["timezone"], event["email"]) == ("America/New_York", "jane@example.com")
+    assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
+                             call_id) == "booked"
+
+
+async def test_a_time_given_with_a_yes_is_kept(env: dict[str, Any]) -> None:
+    """Live: "yes 6:30 p.m. EST" to "find a time?" counted as a bare yes and the time was lost."""
+    call_id = await _answered(env, env["a"])
+    assert "find a time" in service.spoken_text(await _say(env, call_id, "what's the warranty"))
+    assert service.spoken_text(await _say(env, call_id, "yes 6:30 p.m. EST")) == script.ASK_DAY_LINE
+    day = (datetime.now(_NY) + timedelta(days=2)).date()
+    final = service.spoken_text(await _say(env, call_id, f"{day:%B} {day.day}"))
+    assert final == script.final_check_line(datetime.combine(day, dtime(18, 30), tzinfo=_NY),
+                                            "America/New_York", "jane@example.com")
+
+
+async def test_times_are_in_the_fixed_zone_not_the_contacts_browser_zone(
+        env: dict[str, Any]) -> None:
+    """US product: no zone is asked for, and an Indian test browser doesn't make it India time."""
+    db, a = env["db"], env["a"]
     claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
-    tomorrow = (datetime.now(zone) + timedelta(days=1)).date()
-    three = datetime.combine(tomorrow, datetime.min.time().replace(hour=15), tzinfo=zone)
+    call_id = await _answered(env, a)
+    contact_id = await db.fetchval("SELECT contact_id FROM call_sessions WHERE call_id = $1",
+                                   call_id)
+    await set_contact_timezone(db, claims, str(contact_id), "Asia/Kolkata")
+    await _say(env, call_id, "I'd like to book a time")
+    day = (datetime.now(_NY) + timedelta(days=1)).date()
+    final = service.spoken_text(await _say(env, call_id, "tomorrow at 3 pm"))
+    assert final == script.final_check_line(datetime.combine(day, dtime(15), tzinfo=_NY),
+                                            "America/New_York", "jane@example.com")
+    assert "Eastern time" in final and "India" not in final
+
+
+async def test_a_zone_the_caller_names_is_honoured(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    zone = ZoneInfo("America/Los_Angeles")
+    day = (datetime.now(zone) + timedelta(days=1)).date()
+    slot = datetime.combine(day, dtime(15), tzinfo=zone)
+    final = service.spoken_text(await _say(env, call_id, "tomorrow at 3 pm Pacific"))
+    assert final == script.final_check_line(slot, "America/Los_Angeles", "jane@example.com")
+    await _say(env, call_id, "yes")
+    assert await db.fetchval("SELECT starts_at FROM schedule_events WHERE tenant_id = $1", a) == slot
+
+
+async def test_a_taken_time_is_declined_and_nothing_is_proposed(env: dict[str, Any]) -> None:
+    db, a, b = env["db"], env["a"], env["b"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    tomorrow = (datetime.now(_NY) + timedelta(days=1)).date()
+    three = datetime.combine(tomorrow, dtime(15), tzinfo=_NY)
     from api.scheduling.repository import create_event
 
     await create_event(db, claims, starts_at=three, ends_at=three + timedelta(minutes=30),
-                       timezone=env["zone"], visitor_id=None, lead_id=None, email=None,
+                       timezone="America/New_York", visitor_id=None, lead_id=None, email=None,
+                       name=None, consent={"granted": True})
+    # Another tenant's meeting at the next time asked for must not count as taken here.
+    await create_event(db, AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=b),
+                       starts_at=three + timedelta(hours=1), ends_at=three + timedelta(minutes=90),
+                       timezone="America/New_York", visitor_id=None, lead_id=None, email=None,
                        name=None, consent={"granted": True})
     call_id = await _answered(env, a)
     await _say(env, call_id, "I'd like to book a time")
-    offer = service.spoken_text(await _say(env, call_id, "tomorrow at 3 pm"))
-    assert offer == script.taken_line(
-        [three - timedelta(minutes=30), three + timedelta(minutes=30)], env["zone"])
-    # "No" to both -> asked for another day and time (not dropped from booking)
-    assert service.spoken_text(await _say(env, call_id, "no")) == script.OTHER_TIME_LINE
-    confirm = service.spoken_text(await _say(env, call_id, "tomorrow at 4 pm"))
-    assert confirm == script.confirm_line(three + timedelta(hours=1), env["zone"])
+    assert service.spoken_text(await _say(env, call_id, "tomorrow at 3 pm")) == script.TAKEN_LINE
+    # The day is kept: they only need to give another time.
+    final = service.spoken_text(await _say(env, call_id, "4 pm"))
+    assert final == script.final_check_line(three + timedelta(hours=1), "America/New_York",
+                                            "jane@example.com")
 
 
 async def test_a_time_outside_business_hours_is_not_called_booked(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    await upsert_availability(db, claims, timezone="America/New_York", rules={
+        "slot_minutes": 30, "buffer_minutes": 0,
+        "weekly_hours": {d: [["09:00", "17:00"]] for d in
+                         ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}})
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    declined = service.spoken_text(await _say(env, call_id, "tomorrow at 6:30 pm EST"))
+    assert declined == script.not_open_line([["09:00", "17:00"]], "America/New_York")
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 0
+
+
+async def test_a_closed_day_is_said_before_asking_for_a_time(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    tomorrow = (datetime.now(_NY) + timedelta(days=1)).date()
+    open_days = [d for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+                 if d != f"{tomorrow:%a}".lower()]
+    await upsert_availability(db, claims, timezone="America/New_York", rules={
+        "slot_minutes": 30, "buffer_minutes": 0,
+        "weekly_hours": {d: [["09:00", "17:00"]] for d in open_days}})
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    assert service.spoken_text(await _say(env, call_id, "tomorrow")) == script.DAY_FULL
+
+
+async def test_a_day_weeks_away_can_be_booked(env: dict[str, Any]) -> None:
+    """Rebecca only looked 7 days ahead, so any later day sounded closed."""
+    a = env["a"]
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    day = (datetime.now(_NY) + timedelta(days=20)).date()
+    final = service.spoken_text(await _say(env, call_id, f"{day:%B} {day.day} at 3 pm"))
+    slot = datetime.combine(day, dtime(15), tzinfo=_NY)
+    assert final == script.final_check_line(slot, "America/New_York", "jane@example.com")
+    assert service.spoken_text(await _say(env, call_id, "yes")).startswith("You're booked for")
+
+
+async def test_the_earliest_time_is_given_only_when_they_ask_for_it(env: dict[str, Any]) -> None:
     call_id = await _answered(env, env["a"])
     await _say(env, call_id, "I'd like to book a time")
-    offer = service.spoken_text(await _say(env, call_id, "tomorrow at 11:45 pm"))
-    assert offer.startswith(script.NOT_OPEN) and "already" not in offer
+    final = service.spoken_text(await _say(env, call_id, "whatever is earliest"))
+    assert final.startswith("Just to confirm") and final.endswith("Shall I book it?")
+
+
+async def test_asking_if_a_time_is_available_checks_that_time(env: dict[str, Any]) -> None:
+    call_id = await _answered(env, env["a"])
+    await _say(env, call_id, "I'd like to book a time")
+    day = (datetime.now(_NY) + timedelta(days=1)).date()
+    final = service.spoken_text(await _say(env, call_id, "is tomorrow at 3 pm available"))
+    assert final == script.final_check_line(datetime.combine(day, dtime(15), tzinfo=_NY),
+                                            "America/New_York", "jane@example.com")
+
+
+async def test_the_details_can_be_changed_at_the_final_check(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    await _say(env, call_id, "tomorrow at 3 pm")
+    assert service.spoken_text(await _say(env, call_id, "no")) == script.CHANGE_LINE
+    assert service.spoken_text(await _say(env, call_id, "the email")) == script.EMAIL_ASK_LINE
+    day = (datetime.now(_NY) + timedelta(days=1)).date()
+    three = datetime.combine(day, dtime(15), tzinfo=_NY)
+    final = service.spoken_text(await _say(env, call_id, "jane dot doe at gmail dot com"))
+    assert final == script.final_check_line(three, "America/New_York", "jane.doe@gmail.com")
+    moved = service.spoken_text(await _say(env, call_id, "no make it 4 pm"))
+    assert moved == script.final_check_line(three + timedelta(hours=1), "America/New_York",
+                                            "jane.doe@gmail.com")
+    assert service.spoken_text(await _say(env, call_id, "the time")) == script.OTHER_TIME_LINE
+    await _say(env, call_id, "tomorrow at 5 pm")
+    await _say(env, call_id, "yes that's it")  # not a goodbye: a yes to the final check
+    event = await db.fetchrow("SELECT starts_at, email FROM schedule_events WHERE tenant_id = $1", a)
+    assert event is not None and event["email"] == "jane.doe@gmail.com"
+    assert event["starts_at"] == three + timedelta(hours=2)
+
+
+async def test_an_opt_out_at_the_final_check_is_never_read_as_a_yes(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    await _say(env, call_id, "tomorrow at 3 pm")
+    end = await _say(env, call_id, "yes don't call me again")
+    assert service.spoken_text(end) == script.OPT_OUT_LINE
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 0
+    assert await db.fetchval("SELECT count(*) FROM suppression_list WHERE tenant_id = $1", a) == 1
+
+
+async def test_without_an_email_on_file_it_is_asked_before_the_final_check(
+        env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    await db.execute("UPDATE contacts SET email = NULL WHERE tenant_id = $1", a)
+    await _say(env, call_id, "I'd like to book a time")
+    assert service.spoken_text(await _say(env, call_id, "tomorrow at 3 pm")) == script.EMAIL_ASK_LINE
+    final = service.spoken_text(await _say(env, call_id, "jane at gmail dot com"))
+    assert final.endswith("jane at gmail dot com. Shall I book it?")
+
+
+async def test_the_model_can_start_the_booking_and_never_asks_for_a_time_itself(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.voice_agent.agent import BOOK_A_TIME
+
+    async def wants(*args: Any, **kwargs: Any) -> str:
+        assert kwargs["can_book"] is True
+        return BOOK_A_TIME
+
+    call_id = await _answered(env, env["a"])
+    monkeypatch.setattr(service, "answer_from_knowledge", wants)
+    assert service.spoken_text(await _say(env, call_id, "could the sales folks ring me")) == (
+        script.ASK_TIME_LINE)
+
+
+async def test_a_question_mid_booking_is_answered_and_the_booking_goes_on(
+        env: dict[str, Any]) -> None:
+    call_id = await _answered(env, env["a"])
+    await _say(env, call_id, "I'd like to book a time")
+    said = service.spoken_text(await _say(env, call_id, "how much is a repair"))
+    assert "two hundred dollars" in said and said.endswith(script.WHICH_TIME)
+
+
+async def test_a_fragment_is_not_taken_as_their_answer(env: dict[str, Any]) -> None:
+    """Live: "so when" (a cut-off sentence) got "Thanks, that's really helpful"."""
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    said = service.spoken_text(await _say(env, call_id, "so when"))
+    assert said != script.DISCOVERY_THANKS_LINE  # the model handles it, and can ask again
+    contact_id = await db.fetchval("SELECT contact_id FROM call_sessions WHERE call_id = $1",
+                                   call_id)
+    assert all(m["text"] != "so when" for m in await memory.items(db, claims, str(contact_id)))
 
 
 async def _form_call(env: dict[str, Any], tenant: str) -> tuple[str, str]:
@@ -497,7 +690,7 @@ async def test_a_calendar_that_refuses_the_booking_undoes_it_and_hands_off(
 
     monkeypatch.setattr(service, "_calendar_provider", provider)
     call_id = await _answered(env, a)
-    for line in ("I'd like to book a time", "tomorrow at 3 pm", "yes"):
+    for line in ("I'd like to book a time", "tomorrow at 3 pm"):
         await _say(env, call_id, line)
     end = await _say(env, call_id, "yes")
     assert service.spoken_text(end) == script.SYNC_FAILED_LINE and "<Hangup" in end

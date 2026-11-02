@@ -158,7 +158,8 @@ def test_the_time_limit_hands_over_after_answering() -> None:
     assert line.startswith("Sure, we do that.")
 
 
-async def _answer_with(completion_text: str, stop_reason: str = "stop") -> tuple[str | None, AsyncMock]:
+async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_book: bool = False,
+                       ) -> tuple[str | None, AsyncMock]:
     from api.llm.provider import Completion
 
     generate = AsyncMock(return_value=Completion(
@@ -174,7 +175,8 @@ async def _answer_with(completion_text: str, stop_reason: str = "stop") -> tuple
         patch("api.voice_agent.agent.retrieve_hybrid", AsyncMock(return_value=SimpleNamespace(chunks=[chunk]))),
         patch("api.voice_agent.agent.provider_for", return_value=provider),
     ):
-        reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [])  # type: ignore[arg-type]
+        reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [],  # type: ignore[arg-type]
+                                            can_book=can_book)
     return reply, generate
 
 
@@ -615,7 +617,36 @@ def test_listening_keeps_the_recogniser_settings_that_heard_callers() -> None:
 def test_a_missed_reply_is_re_asked_before_the_caller_gives_up() -> None:
     # 2026-10-29: a person heard the opening, got ~5 s of dead air and hung up; Rebecca
     # waited 20 s (counted after she stops speaking, per Plivo's logs) before re-asking.
+    from api.voice_agent.plivo import OPENING_WAIT, listen  # noqa: PLC0415
+
+    xml = listen("Have you got a minute?", "https://x.test/turn", "Polly.Joanna",
+                 wait=OPENING_WAIT)
+    assert 'executionTimeout="6"' in xml
+
+
+def test_a_long_answer_is_not_cut_off() -> None:
+    # 2026-10-30: "Will the leads generated be genuine" came back as "so when", then "genuine".
+    # executionTimeout is the total listening time (Plivo docs), so 6 s ended a slow sentence.
     from api.voice_agent.plivo import listen  # noqa: PLC0415
 
-    xml = listen("Have you got a minute?", "https://x.test/turn", "Polly.Joanna")
-    assert 'executionTimeout="6"' in xml
+    assert 'executionTimeout="12"' in listen("What do you need?", "https://x.test/turn",
+                                             "Polly.Joanna")
+
+
+async def test_the_model_hands_a_booking_request_to_the_booking_flow() -> None:
+    """Live 2026-10-30: the model asked for the day, time and time zone itself, so nothing it
+    heard reached the booking flow."""
+    from api.voice_agent.agent import BOOK_A_TIME  # noqa: PLC0415
+
+    reply, generate = await _answer_with("BOOK_A_TIME", can_book=True)
+    assert reply == BOOK_A_TIME
+    system = generate.call_args.args[0][0].content
+    assert "BOOK_A_TIME" in system and "time zone" in system
+    # The browser "Call Us" agent has no booking flow: it never sees the token.
+    _, generate = await _answer_with("We repair roofs.")
+    assert "BOOK_A_TIME" not in generate.call_args.args[0][0].content
+
+
+async def test_a_garbled_utterance_is_asked_again_not_guessed_at() -> None:
+    _, generate = await _answer_with("Sorry, could you say that again?")
+    assert "speech recognition" in generate.call_args.args[0][0].content

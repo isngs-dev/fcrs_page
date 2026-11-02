@@ -43,7 +43,7 @@ from api.call_agent import repository as repo
 from api.call_agent import script
 from api.call_agent.telephony import PlivoTelephony, TelephonyProvider
 from api.config import get_api_settings
-from api.contacts.repository import get_contact, get_contact_timezone, list_identities
+from api.contacts.repository import get_contact, list_identities
 from api.llm.provider import ChatMessage
 from api.notifications.emit import emit_event_safe
 from api.notifications.repository import enqueue_notification
@@ -60,8 +60,8 @@ from api.scheduling.repository import (
     update_event_calendar_ref,
 )
 from api.scheduling.slots import compute_slots
-from api.voice_agent.agent import answer_from_knowledge, opening_lines
-from api.voice_agent.plivo import listen, speak
+from api.voice_agent.agent import BOOK_A_TIME, answer_from_knowledge, opening_lines
+from api.voice_agent.plivo import ANSWER_WAIT, OPENING_WAIT, listen, speak
 
 _log = get_logger(__name__)
 
@@ -231,8 +231,8 @@ class TurnResult:
     end: bool = False
 
 
-def _listen(text: str, call_id: str, voice: str) -> str:
-    return listen(text, call_url(call_id, "turn"), voice)
+def _listen(text: str, call_id: str, voice: str, wait: int = ANSWER_WAIT) -> str:
+    return listen(text, call_url(call_id, "turn"), voice, wait=wait)
 
 
 def _hangup(text: str, voice: str) -> str:
@@ -255,7 +255,7 @@ async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSession
                               answered_at=datetime.now(UTC), provider_call_uuid=call_uuid,
                               session=script.CallState(question=written.get("question")).to_json())
     await repo.add_turn(db, claims, session.call_id, speaker="rebecca", text=line)
-    return _listen(line, session.call_id, config.voice)
+    return _listen(line, session.call_id, config.voice, OPENING_WAIT)
 
 
 async def _calendar_provider(calendar: CalendarConfig) -> Any:
@@ -268,11 +268,12 @@ async def _calendar_provider(calendar: CalendarConfig) -> Any:
 
 async def next_open_slots(db: Database, claims: AuthClaims, now: datetime,
                           count: int | None = 2, ignore_bookings: bool = False,
-                          ) -> tuple[list[datetime], str] | None:
-    """The next open native slots (>= 2 h ahead, within 7 days; ``count=None`` = all), or
-    ``None`` when the tenant books through Calendly or has no availability. A connected
-    calendar (Google) only removes its busy times, like the widget (S8.2 decision 3).
-    ``ignore_bookings`` = business hours only (tells "already booked" from "closed")."""
+                          on: datetime | None = None) -> tuple[list[datetime], str] | None:
+    """The next open native slots (>= 2 h ahead, within 7 days, or on the day of ``on``;
+    ``count=None`` = all), or ``None`` when the tenant books through Calendly or has no
+    availability. A connected calendar (Google) only removes its busy times, like the widget
+    (S8.2 decision 3). ``ignore_bookings`` = business hours only (tells "already booked" from
+    "closed")."""
     calendar = await get_calendar_config(db, claims)
     if calendar is not None and calendar.enabled and calendar.provider == "calendly":
         return None
@@ -280,8 +281,8 @@ async def next_open_slots(db: Database, claims: AuthClaims, now: datetime,
     if availability is None:
         return None
     zone = ZoneInfo(availability.timezone)
-    start_day: date = now.astimezone(zone).date()
-    end_day = start_day + timedelta(days=7)
+    start_day: date = (on or now).astimezone(zone).date()
+    end_day = start_day if on else start_day + timedelta(days=7)
     window_start = datetime.combine(start_day, dtime(0), tzinfo=zone).astimezone(UTC)
     window_end = window_start + timedelta(days=8)
     booked = ([] if ignore_bookings else
@@ -305,7 +306,7 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
     meanwhile, ``("failed", None)`` when the connected calendar refused it (the booking is
     undone, like the widget: never a booked row without its calendar event)."""
     contact = await get_contact(db, claims, session.contact_id) if session.contact_id else None
-    slots = await next_open_slots(db, claims, datetime.now(UTC), count=None)
+    slots = await next_open_slots(db, claims, datetime.now(UTC), count=None, on=start)
     slot_list = slots[0] if slots else []
     if start not in slot_list:
         return "taken", None
@@ -413,11 +414,17 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     state.history.append(["user", speech])
     opening_question, state.question = state.question, None  # only right after the opening
     kind = script.classify(speech)
-    booking = state.stage != "talking"
-    tz = await _caller_tz(db, claims, session) if booking or kind in ("book", "yes") else ""
-    if (kind == "callback" and state.stage in ("asking_time", "offered")
-            and script.parse_when(speech, _today(tz)) != (None, None)):
+    # ponytail: any mention counts ("central Florida" -> Central time); the read-back catches it.
+    state.zone = script.parse_zone(speech) or state.zone
+    tz = state.zone or await _business_tz(db, claims)
+    when = script.parse_when(speech, _today(tz))
+    named_time = when != (None, None)
+    if kind == "callback" and state.stage in ("asking_time", "confirming") and named_time:
         kind = "other"  # "I'm busy Monday, how about Tuesday at 3" is a time, not a callback
+    # Only these: "yes, don't call me again" must stay an opt-out.
+    if (state.stage == "confirming" and kind in ("goodbye", "book", "other")
+            and script.agrees(speech)):
+        kind = "yes"
 
     provider = None
     if kind == "recording_objection":
@@ -483,25 +490,47 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if kind == "not_interested":
         return await bye(script.NOT_INTERESTED_LINE, "not_interested")
 
+    def final_check() -> str:
+        return script.final_check_line(datetime.fromisoformat(state.chosen or ""), tz, state.email)
+
+    async def confirm() -> TurnResult:
+        state.stage = "confirming"
+        return await say(final_check())
+
+    async def ready() -> TurnResult:
+        """The slot is open: the email it goes to is the last detail, then one final check."""
+        if state.email is None and state.email_tries < 2 and session.contact_id:
+            contact = await get_contact(db, claims, session.contact_id)
+            state.email = contact.email if contact else None
+        if state.email or state.email_tries >= 2:
+            return await confirm()
+        state.stage = "email_ask"
+        return await say(script.EMAIL_ASK_LINE)
+
+    async def pick_time() -> TurnResult:
+        return await _pick_time(db, claims, state, say, bye, ready, tz, when, speech)
+
     async def finish_booking(email: str | None) -> TurnResult:
         chosen = datetime.fromisoformat(state.chosen or "")
         status, meet_url = await _book(db, claims, session, chosen, tz, email)
         if status == "failed":
             await _handoff(db, claims, session, "calendar_sync_failed")
             return await bye(script.SYNC_FAILED_LINE, "escalated")
-        state.stage, state.offered, state.chosen = "talking", [], None
-        if status == "taken":
-            return await _offer(db, claims, state, say, bye, tz, taken=True)
-        await repo.update_session(db, claims, call_id, outcome="booked")
+        if status == "taken":  # it went while they were confirming
+            state.stage, state.chosen, state.at = "asking_time", None, None
+            return await say(script.TAKEN_LINE)
         if not email:
             await _handoff(db, claims, session, "email_needed")
-        return await say(script.booked_line(chosen, tz, emailed=bool(email), link=bool(meet_url)))
+        return await bye(script.booked_line(chosen, tz, emailed=bool(email), link=bool(meet_url)),
+                         "booked")
 
     if state.stage == "discovery":  # they were asked what they need
         state.stage = "talking"
         if kind == "no":
             return await say(script.DISCOVERY_NO_LINE)
-        if kind == "other" and not script.is_question(speech):
+        # A word or two is a cut-off sentence more often than an answer: the model can ask again.
+        if (kind == "other" and not script.is_question(speech) and len(speech.split()) > 3
+                and None in when):
             if session.contact_id:  # the team (and later emails) see what they told us
                 await memory.remember(db, claims, session.contact_id, channel="call",
                                       kind="need", text=speech)
@@ -510,59 +539,49 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         state.stage = "discovery"
         return await say(f"Great. {opening_question}")
 
-    # Booking (L6, extended 2026-10-28): the caller names a day and time -> read it back ->
-    # "yes" -> confirm (or ask for) the email the meeting link goes to -> book.
-    if state.stage == "email_check" and state.email:
-        if kind == "yes":
-            return await finish_booking(state.email)
-        heard = script.parse_spoken_email(speech)  # they may have just said the right one
-        if heard:
-            state.email = heard
-            return await say(script.email_heard_line(heard))
-        if kind == "no":
-            state.stage, state.email = "email_ask", None
-            return await say(script.EMAIL_ASK_LINE)
-        return await say(script.email_check_line(state.email))
+    # Booking (L6, 2026-10-30): the caller's day and time -> their email if we don't have it ->
+    # one final check of all of it -> book and close the call.
     if state.stage == "email_ask":
         heard = script.parse_spoken_email(speech)
         if heard:
-            state.stage, state.email = "email_check", heard
-            return await say(script.email_heard_line(heard))
+            state.email = heard
+            return await confirm()
         state.email_tries += 1
         if state.email_tries >= 2:  # book anyway; the team sends the details
-            return await finish_booking(None)
+            return await confirm()
         return await say(script.EMAIL_RETRY_LINE)
     if state.stage == "confirming" and state.chosen:
         if kind == "yes":
-            contact = (await get_contact(db, claims, session.contact_id)
-                       if session.contact_id else None)
-            state.email = contact.email if contact else None
-            if state.email:
-                state.stage = "email_check"
-                return await say(script.email_check_line(state.email))
-            state.stage = "email_ask"
+            return await finish_booking(state.email)
+        heard = script.parse_spoken_email(speech)
+        if heard:
+            state.email = heard
+            return await confirm()
+        if named_time:
+            return await pick_time()
+        if re.search(r"\be-?mail\b", speech, re.I):
+            state.stage, state.email, state.email_tries = "email_ask", None, 0
             return await say(script.EMAIL_ASK_LINE)
-        if kind == "no":
-            state.stage = "asking_time"
+        if re.search(r"\b(?:day|date|time)\b", speech, re.I):
+            state.stage, state.at = "asking_time", None
             return await say(script.OTHER_TIME_LINE)
-    if state.stage == "offered" and state.offered:
-        slots = [datetime.fromisoformat(s) for s in state.offered]
-        picked = script.choose_slot(speech, slots, tz)
-        if picked is not None:
-            state.stage, state.chosen = "confirming", slots[picked].isoformat()
-            return await say(script.confirm_line(slots[picked], tz))
-    if state.stage in ("asking_time", "offered"):
-        if kind == "no" and script.parse_when(speech, _today(tz)) == (None, None):
-            if state.stage == "offered":  # neither of those -> ask for another day and time
-                state.stage, state.offered = "asking_time", []
-                return await say(script.OTHER_TIME_LINE)
+        if kind == "no":
+            return await say(script.CHANGE_LINE)
+        if not script.is_question(speech):
+            return await confirm()
+    elif state.stage == "asking_time":
+        if named_time or script.asks_what_is_open(speech):
+            return await pick_time()
+        if kind == "no":
             state.stage = "talking"
             await repo.update_session(db, claims, call_id, outcome="interested")
             return await say(f"No problem. {script.ANYTHING_ELSE}")
-        return await _pick_time(db, claims, state, say, bye, tz, speech)
+        if not script.is_question(speech):
+            return await pick_time()
 
-    if kind == "book" or (kind == "yes" and _last_said_offer(state)):
-        return await _offer(db, claims, state, say, bye, tz)
+    offered = _last_said_offer(state)
+    if kind == "book" or (offered and (kind == "yes" or named_time)) or None not in when:
+        return await pick_time()
     if kind == "yes":
         return await say("Great! What questions can I answer, or would you like me to find a "
                          "time with our team?")
@@ -576,16 +595,21 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         about = (await memory.render(db, claims, session.contact_id)
                  if session.contact_id else None)
         reply = await answer_from_knowledge(db, claims, speech, history, model=config.voice_model,
-                                            about_caller=about)
+                                            about_caller=about, can_book=True)
     except Exception as exc:  # noqa: BLE001 -- the team follows up instead
         _log.warning("call answer failed", extra={"event": "call_answer_failed",
                                                   "reason": type(exc).__name__})
         await _handoff(db, claims, session, "agent_error")
         return await bye(script.TEAM_LINE, "escalated")
+    if reply == BOOK_A_TIME:
+        return await pick_time()
+    back = (script.WHICH_TIME if state.stage == "asking_time"
+            else final_check() if state.stage == "confirming" else None)
     if reply is None:
         state.misses += 1
-        return await say(f"{script.MISS_LINE} Would you like me to find a time with them?")
-    return await say(reply)
+        reply = script.MISS_LINE
+        back = back or "Would you like me to find a time with them?"
+    return await say(f"{reply} {back}" if back else reply)
 
 
 def _last_said_offer(state: script.CallState) -> bool:
@@ -593,10 +617,9 @@ def _last_said_offer(state: script.CallState) -> bool:
     return "find a time" in last or "book a time" in last
 
 
-async def _caller_tz(db: Database, claims: AuthClaims, session: repo.CallSessionRow) -> str:
-    """Times are said and heard in the caller's own zone; the business's when unknown."""
-    if session.contact_id and (zone := await get_contact_timezone(db, claims, session.contact_id)):
-        return zone
+async def _business_tz(db: Database, claims: AuthClaims) -> str:
+    """US product, one fixed zone: times are said and heard in the business's, unless the
+    caller names their own. Rebecca never asks (a browser's zone isn't used: 2026-10-30)."""
     availability = await get_availability(db, claims)
     return availability.timezone if availability else "America/New_York"
 
@@ -605,69 +628,55 @@ def _today(tz: str) -> date:
     return datetime.now(ZoneInfo(tz or "UTC")).date()
 
 
-async def _offer(db: Database, claims: AuthClaims, state: script.CallState, say: Any, bye: Any,
-                 tz: str, taken: bool = False) -> TurnResult:
-    """Wants to book: ask which day and time suits them (or, after a clash, offer two)."""
-    found = await next_open_slots(db, claims, datetime.now(UTC))
+async def _pick_time(db: Database, claims: AuthClaims, state: script.CallState, say: Any, bye: Any,
+                     ready: Any, tz: str, when: tuple[date | None, tuple[int, int] | None],
+                     speech: str) -> TurnResult:
+    """Collect the day and time the caller wants and check exactly that slot. Open -> on to
+    the final check; taken or closed -> say so and ask for another. Rebecca proposes a time
+    only when they ask what's open."""
+    now, (day, at) = datetime.now(UTC), when
+    repeated = state.stage == "asking_time" and day is None and at is None
+    state.stage, state.chosen = "asking_time", None
+    state.day = day.isoformat() if day else state.day
+    state.at = list(at) if at else state.at
+    asked = (datetime.combine(date.fromisoformat(state.day), dtime(*(state.at or (12, 0))),
+                              tzinfo=ZoneInfo(tz)) if state.day else None)
+    found = await next_open_slots(db, claims, now, count=None, on=asked)
     if found is None:
         return await bye(script.LINK_LINE, "interested")  # type: ignore[no-any-return]
-    slots, _ = found
-    if not slots:
+    slots, business_tz = found
+    if asked is None and not slots:
         return await bye(script.NO_SLOTS_LINE, "interested")  # type: ignore[no-any-return]
-    if taken:
-        state.stage, state.offered = "offered", [s.isoformat() for s in slots]
-        return await say(script.taken_line(slots, tz))  # type: ignore[no-any-return]
-    state.stage = "asking_time"
-    return await say(script.ask_time_line(slots[0], tz))  # type: ignore[no-any-return]
-
-
-async def _pick_time(db: Database, claims: AuthClaims, state: script.CallState, say: Any,
-                     bye: Any, tz: str, speech: str) -> TurnResult:
-    """Match the day/time the caller asked for against the open slots: the exact slot is
-    read back for a yes; otherwise the nearest open times are offered."""
-    found = await next_open_slots(db, claims, datetime.now(UTC), count=None)
-    if found is None:
-        return await bye(script.LINK_LINE, "interested")  # type: ignore[no-any-return]
-    slots = found[0]
-    if not slots:
-        return await bye(script.NO_SLOTS_LINE, "interested")  # type: ignore[no-any-return]
-    zone = ZoneInfo(tz)
-    day, at = script.parse_when(speech, _today(tz))
-
-    def local(s: datetime) -> datetime:
-        return s.astimezone(zone)
-
-    async def offer(options: list[datetime], prefix: str = "", taken: bool = False) -> TurnResult:
-        state.stage, state.offered = "offered", [s.isoformat() for s in options]
-        line = script.taken_line(options, tz) if taken else prefix + script.offer_line(options, tz)
-        return await say(line)  # type: ignore[no-any-return]
-
-    async def in_hours() -> list[datetime]:  # open slots if nothing were booked yet
-        found = await next_open_slots(db, claims, datetime.now(UTC), count=None,
-                                      ignore_bookings=True)
-        return found[0] if found else []
-
-    same_day = [s for s in slots if day and local(s).date() == day]
-    if at is not None:
-        hits = [s for s in (same_day if day else slots)
-                if (local(s).hour, local(s).minute) == at]
-        if hits:
-            state.stage, state.chosen = "confirming", hits[0].isoformat()
-            return await say(script.confirm_line(hits[0], tz))  # type: ignore[no-any-return]
-        target = datetime.combine(day or _today(tz), dtime(*at), tzinfo=zone)
-        nearest = sorted(same_day or slots, key=lambda s: abs(s - target))[:2]
-        if target in await in_hours():  # a working-hours slot someone already has
-            return await offer(sorted(nearest), taken=True)
-        return await offer(sorted(nearest), script.NOT_OPEN)
-    if day is not None:
-        if same_day:
-            return await offer(same_day[:2])
-        booked_day = any(local(s).date() == day for s in await in_hours())
-        return await offer(slots[:2], script.DAY_BOOKED if booked_day else script.DAY_FULL)
-    if state.stage == "offered" and state.offered:  # nothing new: repeat the choice
-        return await say(script.offer_line(  # type: ignore[no-any-return]
-            [datetime.fromisoformat(s) for s in state.offered], tz))
-    return await offer(slots[:2])
+    if at is None and slots and script.asks_what_is_open(speech):
+        state.chosen = slots[0].isoformat()
+        return await ready()  # type: ignore[no-any-return]
+    if asked is None:
+        state.misses += repeated  # two blanks -> the team takes over
+        return await say(  # type: ignore[no-any-return]
+            script.ASK_DAY_LINE if state.at else
+            script.WHICH_TIME if repeated else script.ASK_TIME_LINE)
+    if state.at is None:
+        if slots:
+            return await say(script.ask_hour_line(asked.date()))  # type: ignore[no-any-return]
+        hours = await next_open_slots(db, claims, now, count=None, ignore_bookings=True, on=asked)
+        state.day = None
+        return await say(  # type: ignore[no-any-return]
+            script.DAY_BOOKED if hours and hours[0] else script.DAY_FULL)
+    if asked in slots:
+        state.chosen = asked.astimezone(UTC).isoformat()
+        return await ready()  # type: ignore[no-any-return]
+    state.at = None
+    hours = await next_open_slots(db, claims, now, count=None, ignore_bookings=True, on=asked)
+    if hours and asked in hours[0]:
+        return await say(script.TAKEN_LINE)  # type: ignore[no-any-return]
+    availability = await get_availability(db, claims)
+    rules = availability.rules if availability else {}
+    weekday = f"{asked.astimezone(ZoneInfo(business_tz)):%a}".lower()
+    windows = rules.get("weekly_hours", {}).get(weekday)
+    if not windows:
+        state.day = None
+        return await say(script.DAY_FULL)  # type: ignore[no-any-return]
+    return await say(script.not_open_line(windows, business_tz))  # type: ignore[no-any-return]
 
 
 # -- Voicemail + hangup -------------------------------------------------------------------------

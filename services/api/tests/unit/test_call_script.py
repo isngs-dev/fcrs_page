@@ -28,6 +28,7 @@ from api.config import get_api_settings
     ("No thanks, not interested", "not_interested"),
     ("We already have a roofer", "not_interested"),
     ("I'd like to book a time", "book"),
+    ("yes schedule a book with the sales", "book"),  # live 2026-10-30: the model took this one
     ("Sounds good", "book"),
     ("Yes", "yes"),
     ("Nope", "no"),
@@ -62,25 +63,20 @@ def test_opening_is_short_enough_to_answer() -> None:
     assert len(line.split()) <= 36
 
 
-def test_spoken_times_and_slot_choice() -> None:
+def test_spoken_times() -> None:
     tz = "America/New_York"
     slots = [datetime(2026, 10, 20, 19, 0, tzinfo=UTC), datetime(2026, 10, 21, 14, 30, tzinfo=UTC)]
     assert script.say_time(slots[0], tz) == "Tuesday, October 20 at 3 PM Eastern time"
     assert script.say_time(slots[1], tz) == "Wednesday, October 21 at 10:30 AM Eastern time"
-    assert script.choose_slot("the first one please", slots, tz) == 0
-    assert script.choose_slot("second works", slots, tz) == 1
-    assert script.choose_slot("Wednesday is better", slots, tz) == 1
-    assert script.choose_slot("3 pm", slots, tz) == 0
-    assert script.choose_slot("10:30", slots, tz) == 1
-    assert script.choose_slot("hmm let me think", slots, tz) is None
-    assert script.choose_slot("yes", slots[:1], tz) == 0
 
 
 def test_call_state_round_trip_keeps_recent_history() -> None:
-    state = script.CallState(stage="offered", offered=["2026-10-20T19:00:00+00:00"],
+    state = script.CallState(stage="asking_time", day="2026-11-03", at=[18, 30],
+                             zone="America/New_York",
                              history=[["user", str(i)] for i in range(30)])
     back = script.CallState.from_json(state.to_json())
-    assert back.stage == "offered" and back.offered == state.offered
+    assert (back.stage, back.day, back.at, back.zone) == (
+        "asking_time", "2026-11-03", [18, 30], "America/New_York")
     assert len(back.history) == 12
 
 
@@ -229,11 +225,76 @@ def test_booked_line_mentions_the_meeting_link_only_when_there_is_one() -> None:
     assert "our team will send" in script.booked_line(slot, tz, emailed=False, link=False).lower()
 
 
-def test_a_booked_time_is_declined_politely_with_the_nearest_and_an_open_question() -> None:
-    a = datetime(2026, 10, 29, 9, 0, tzinfo=UTC)
-    b = datetime(2026, 10, 29, 10, 0, tzinfo=UTC)
-    line = script.taken_line([a, b], "Asia/Kolkata")
-    assert line.startswith("I'm sorry, we already have a meeting scheduled at that time.")
-    assert "2:30 PM India time" in line and "3:30 PM India time" in line
-    assert line.endswith("or would you prefer another day and time?")
-    assert "another day and time" in script.taken_line([a], "Asia/Kolkata")
+def test_the_booking_ends_the_call_politely_without_another_question() -> None:
+    line = script.booked_line(datetime(2026, 11, 3, 23, 30, tzinfo=UTC), "America/New_York")
+    assert "?" not in line and line.endswith("Goodbye.")
+
+
+def test_the_final_check_reads_back_everything_once() -> None:
+    slot = datetime(2026, 11, 3, 23, 30, tzinfo=UTC)
+    assert script.final_check_line(slot, "America/New_York", "jane@example.com") == (
+        "Just to confirm, that's Tuesday, November 3 at 6:30 PM Eastern time, and I'll send the "
+        "meeting details to jane at example dot com. Shall I book it?")
+    assert "our team will send" in script.final_check_line(slot, "America/New_York", None)
+
+
+def test_rebecca_never_proposes_a_time_when_she_declines_one() -> None:
+    for line in (script.TAKEN_LINE, script.DAY_BOOKED, script.DAY_FULL,
+                 script.not_open_line([["09:00", "17:00"]], "America/New_York")):
+        assert line.startswith("I'm sorry") and line.endswith("?")
+    assert "scheduled at that time" in script.TAKEN_LINE
+    assert "from 9 AM to 5 PM Eastern time" in script.not_open_line(
+        [["09:00", "12:00"], ["13:00", "17:00"]], "America/New_York")
+    assert "from 8:30 AM to 12 PM" in script.not_open_line([["08:30", "12:00"]],
+                                                           "America/New_York")
+
+
+@pytest.mark.parametrize(("speech", "zone"), [
+    ("uh 6:30 p.m. EST", "America/New_York"),
+    ("3 pm Eastern", "America/New_York"),
+    ("two o'clock central time", "America/Chicago"),
+    ("10 am mountain", "America/Denver"),
+    ("4 PM PST", "America/Los_Angeles"),
+    ("go with 9:30 p.m. Indian time", "Asia/Kolkata"),
+    ("tomorrow at 3 pm", None),
+    ("my best guess", None),  # "est" inside a word
+])
+def test_a_time_zone_the_caller_names_is_understood(speech: str, zone: str | None) -> None:
+    assert script.parse_zone(speech) == zone
+
+
+@pytest.mark.parametrize(("speech", "agreed"), [
+    ("yes", True),
+    ("yes please book it", True),
+    ("yes that's it", True),  # would otherwise read as a goodbye
+    ("yeah that's correct thank you", True),
+    ("that's right", True),
+    ("go ahead", True),
+    ("yes but change the time", False),
+    ("right now I'm not sure", False),
+    ("yes can you tell me the price?", False),
+    ("no", False),
+])
+def test_what_counts_as_agreeing_to_the_final_check(speech: str, agreed: bool) -> None:
+    assert script.agrees(speech) is agreed
+
+
+@pytest.mark.parametrize(("speech", "asks"), [
+    ("whatever is earliest", True),
+    ("what's the soonest you have", True),
+    ("what times are available", True),
+    ("whenever suits you", True),
+    ("3 pm", False),
+    ("tuesday", False),
+])
+def test_asking_what_is_open_is_recognised(speech: str, asks: bool) -> None:
+    assert script.asks_what_is_open(speech) is asks
+
+
+def test_the_live_call_phrases_parse() -> None:
+    from datetime import date
+
+    today = date(2026, 10, 30)
+    assert script.parse_when("can you do it on 3rd November", today) == (date(2026, 11, 3), None)
+    assert script.parse_when("uh 6:30 p.m. EST", today) == (None, (18, 30))
+    assert script.parse_when("yes 6:30 p.m. EST", today) == (None, (18, 30))

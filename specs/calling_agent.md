@@ -59,8 +59,12 @@ transfer (rules already in `voice_agent/agent.py:CallSession`, generalised). Rec
 `phone_call` model, no hints, for every call. *(2026-10-29: `en-IN` for +91 plus `hints` made
 Plivo hear nothing, every turn timed out silent; reverted. Change these only one at a time,
 proven on a live call.)* Each turn logs `call_turn_heard` (word count + confidence, no text).
-No reply within 6 s of Rebecca finishing (`executionTimeout`, counted after her line per Plivo's
-logs) → "Sorry, I didn't catch that…" *(was 20 s: callers hung up in the dead air, 2026-10-29)*. Barge-in on P1 is
+`executionTimeout`, counted after her line per Plivo's logs, is the **total** listening time (Plivo
+docs): 6 s after the opening *(was 20 s: callers hung up in the dead air, 2026-10-29)*, 12 s after
+everything else *(6 s cut sentences off, 2026-10-30)*; no reply in that time → "Sorry, I didn't catch
+that…". A reply of three words or fewer isn't taken as their need; the model, told the text can be cut
+off or wrong, asks them to repeat what makes no sense. `startInputTimeout` isn't used: Plivo documents
+neither its range nor when it starts. Barge-in on P1 is
 **unverified** (ADR-002) — measured in A6; P2 (Audio Streaming) adds it if required.
 
 ## 3. Script (non-negotiable order)
@@ -80,19 +84,26 @@ logs) → "Sorry, I didn't catch that…" *(was 20 s: callers hung up in the dea
    (`need`) and Rebecca offers to find a time with the team. Asked once, only right after the opening.
 3. Grounded Q&A (answer / clarify / escalate bands; never invent price, discount, legal/financial terms).
 4. Qualify (existing qualification fields, one question per turn).
-5. Ask "What day and time works best?" (earliest open time as a hint) → the caller's day/time is
-   matched against open slots in **the caller's own timezone** (contact zone, else the business's);
-   already booked (our meetings or the Google calendar's busy times) → "I'm sorry, we already have a
-   meeting scheduled at that time" + the two nearest open times + "or would you prefer another day
-   and time?" ("no" → asked for another); outside business hours → "we're not available at that
-   time" + the nearest → read back time + timezone → explicit "yes".
-6. Email the meeting details go to: the contact's email is read back for a yes, or the caller says
-   one ("john dot smith at gmail dot com", "at the rate" understood) and it's read back; two misses
-   → booked anyway and the team is flagged (`email_needed`) → `book_meeting`.
-7. Book: a connected Google calendar gets the event + a Meet link (sync failure undoes the booking
-   and hands off, like the widget); Calendly tenants are still handed a link by the team. The
-   confirmation email carries the Meet link → polite close. *(Steps 5–7 changed 2026-10-28: the
-   caller was told "our team will send you a link" instead of being booked.)*
+5. Ask "What day and time works best?" and collect the caller's own day and time (a missing piece is
+   asked for; a time given with a "yes" is kept). Rebecca **never proposes a time** unless they ask
+   what's open (then the earliest goes straight to the final check). The exact slot is checked on
+   that day, however far ahead: taken (our meetings or the Google calendar's busy times) → "I'm
+   sorry, we already have a meeting scheduled at that time. What other time would suit you?"; outside
+   business hours → "not available", the hours, and the same question; closed or full day → asks for
+   another day. **Time zone: fixed**, the business's availability zone, never asked for and not taken
+   from the browser (US product); a zone the caller names (EST, Pacific…) is honoured for that call.
+6. The email the meeting details go to: only asked for if the contact has none ("john dot smith at
+   gmail dot com", "at the rate" understood); two misses → booked anyway and the team is flagged
+   (`email_needed`).
+7. **One final check of every detail** ("Just to confirm, that's Tuesday, November 3 at 11 AM Eastern
+   time, and I'll send the meeting details to … Shall I book it?"). A changed time or email is taken
+   there; a bare "no" → "What should I change?". A yes books it: a connected Google calendar gets the
+   event + a Meet link (sync failure undoes the booking and hands off, like the widget); Calendly
+   tenants are still handed a link by the team. The confirmation email carries the Meet link. Rebecca
+   then **closes the call herself** (no "anything else?"). *(Steps 5–7 changed 2026-10-30 after a
+   live call: the model took the booking on itself, so 3 Nov 6:30 PM EST was lost, Rebecca pushed
+   the earliest slot in India time and took six more questions to book. The model now hands booking
+   requests to this flow with `BOOK_A_TIME` and never asks for a day, time or zone.)*
 
 ## 4. Must-handle situations
 
