@@ -182,13 +182,23 @@ async def test_preview_answer_chitchat_skips_rag_entirely() -> None:
 
 
 async def test_preview_answer_off_topic_fixed_reply_no_generate() -> None:
-    with _Patched(classify_return="off_topic") as p:
+    not_in_kb = HybridResult(chunks=[_chunk()], confidence=0.1)
+    with _Patched(classify_return="off_topic", hybrid_result=not_in_kb) as p:
         result = await preview_answer(object(), _claims(), "what's the capital of France?")
 
     # Single-turn preview: always the polite decline, never the booking offer.
     assert result.decision == "clarify"
     p.provider.generate.assert_not_called()
-    p.retrieve_hybrid.assert_not_called()
+    p.assert_never_persisted()
+
+
+async def test_preview_answers_what_the_knowledge_base_covers_like_a_live_turn() -> None:
+    in_kb = HybridResult(chunks=[_chunk()], confidence=0.6)
+    with _Patched(classify_return="off_topic", hybrid_result=in_kb) as p:
+        result = await preview_answer(object(), _claims(), "explain performance marketing")
+
+    assert (result.decision, result.reply) == ("answer", "The answer.")
+    p.retrieve_hybrid.assert_awaited_once()
     p.assert_never_persisted()
 
 

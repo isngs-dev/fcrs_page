@@ -4,9 +4,9 @@
 intent gate + 3-way decision, into one turn: resolve the tenant's LLM config,
 resolve the tenant's orchestrator config, get-or-create the conversation,
 store the user turn, classify intent, branch on intent (chit-chat -> direct
-answer, scheduling_request -> escalate, off_topic -> decline (a call is
-offered on the 3rd in a row), question/other -> grounded
-RAG answer), store the assistant turn, and return the
+answer, scheduling_request -> escalate, off_topic -> decline unless the
+knowledge base covers it (a call is offered on the 3rd in a row),
+question/other -> grounded RAG answer), store the assistant turn, and return the
 answer + decision + sources. No new RAG/LLM/store *mechanisms* -- this module
 only composes their existing public functions, always with the caller's own
 VISITOR ``claims``.
@@ -59,13 +59,13 @@ from api.conversation_store.repository import (
     get_recent_assistant_intents,
     get_working_memory,
 )
-from api.llm.config_repository import get_llm_config
+from api.llm.config_repository import LLMConfig, get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, LLMError, LLMProvider
 from api.orchestrator import identity_capture
 from api.orchestrator.config_repository import get_orchestrator_config
 from api.orchestrator.guardrails import scan_output
-from api.rag.service import HybridMatch, retrieve_hybrid
+from api.rag.service import HybridMatch, HybridResult, retrieve_hybrid
 from api.scheduling.repository import ScheduleEvent, get_availability, get_upcoming_booking
 
 _log = get_logger(__name__)
@@ -1022,6 +1022,12 @@ async def _resolve_turn(
         message, _INTENT_LABELS, model=config.model, label_descriptions=_INTENT_LABEL_DESCRIPTIONS,
     )
 
+    known = None
+    if intent == "off_topic":
+        known = await _covered_by_knowledge(db, claims, config, message,
+                                            threshold=cfg.escalate_threshold)
+        intent = "question" if known else intent
+
     # Step 8: branch on intent -> decision -> plan (decisions 2 + 6).
     if intent == "chitchat":
         wm = await get_working_memory(
@@ -1146,7 +1152,7 @@ async def _resolve_turn(
             suffix_intent=suffix_intent,
         )
 
-    result = await retrieve_hybrid(db, claims, message, k=settings.orchestrator_rag_k)
+    result = known or await retrieve_hybrid(db, claims, message, k=settings.orchestrator_rag_k)
     confidence = result.confidence
 
     # Any retrieved knowledge -> let the model answer directly, grounded on it
@@ -1193,6 +1199,23 @@ async def _resolve_turn(
         grounded=False,
         tokens=None,
     )
+
+
+async def _covered_by_knowledge(db: Database, claims: AuthClaims, config: LLMConfig, message: str,
+                                *, threshold: float) -> HybridResult | None:
+    """The retrieval when this tenant's knowledge base covers an "off-topic" message, else
+    ``None``. The classifier sees only the message, not what the business does, so "Can you
+    explain performance marketing?" reads as general knowledge even at a marketing agency
+    (2026-11-02). The answer stays grounded: only the knowledge base can bring it back, and
+    search always returns something, so it's the confidence that decides."""
+    if not config.embedding_model:
+        return None
+    result = await retrieve_hybrid(db, claims, message, k=get_api_settings().orchestrator_rag_k)
+    covered = bool(result.chunks) and result.confidence >= threshold
+    _log.info("off-topic message checked against the knowledge base", extra={
+        "event": "off_topic_checked", "kind": "answered" if covered else "declined",
+        "reason": f"confidence {result.confidence:.2f}, needs {threshold:.2f}"})
+    return result if covered else None
 
 
 def _with_suffix(final: _FinalizedGeneration, plan: _GeneratePlan) -> tuple[str, str | None]:
@@ -1659,10 +1682,16 @@ async def preview_answer(db: Database, claims: AuthClaims, message: str) -> Prev
             label_descriptions=_INTENT_LABEL_DESCRIPTIONS,
         )
 
+        known = None
         if intent == "off_topic":
-            return PreviewResult(
-                reply=_OFF_TOPIC_REPLY, decision="clarify", confidence=None, sources=[],
-            )
+            cfg = await get_orchestrator_config(db, claims)
+            known = await _covered_by_knowledge(db, claims, config, message,
+                                                threshold=cfg.escalate_threshold)
+            if known is None:
+                return PreviewResult(
+                    reply=_OFF_TOPIC_REPLY, decision="clarify", confidence=None, sources=[],
+                )
+            intent = "question"
         if intent == "scheduling_request":
             return PreviewResult(
                 reply=_SCHEDULING_REPLY, decision="escalate", confidence=None, sources=[],
@@ -1682,7 +1711,8 @@ async def preview_answer(db: Database, claims: AuthClaims, message: str) -> Prev
                 provider=provider,
                 )
         else:
-            result = await retrieve_hybrid(db, claims, message, k=settings.orchestrator_rag_k)
+            result = known or await retrieve_hybrid(db, claims, message,
+                                                    k=settings.orchestrator_rag_k)
             # Same rule as a live turn: answer from whatever was retrieved.
             if not result.chunks:
                 return PreviewResult(

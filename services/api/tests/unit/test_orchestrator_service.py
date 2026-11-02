@@ -156,6 +156,10 @@ def _msg(role: str, content: str, message_id: str = "m1") -> Message:
     )
 
 
+_IN_KB = HybridResult(chunks=[_chunk()], confidence=0.6)
+_NOT_IN_KB = HybridResult(chunks=[_chunk()], confidence=0.1)  # search always returns something
+
+
 class _Patched:
     """Context manager patching all answer_turn dependencies at once."""
 
@@ -531,13 +535,15 @@ async def test_chitchat_answers_without_rag() -> None:
 
 async def test_off_topic_declines_without_offering_a_call() -> None:
     """First off-topic question: say it's out of scope and steer back -- no
-    booking card, no RAG, no generate. Stored as "clarify" (not "escalate"),
-    so analytics' escalation counts aren't inflated by polite declines."""
-    p = _Patched(classify_return="off_topic", availability=_availability())
+    booking card, no generate. Stored as "clarify" (not "escalate"),
+    so analytics' escalation counts aren't inflated by polite declines. The only
+    thing it costs is the knowledge-base check."""
+    p = _Patched(classify_return="off_topic", hybrid_result=_NOT_IN_KB,
+                 availability=_availability())
     with p:
         result = await answer_turn(db=object(), claims=_claims(), message="what is the capital of France?")
 
-    p.retrieve_hybrid.assert_not_awaited()
+    p.retrieve_hybrid.assert_awaited_once()
     p.provider.generate.assert_not_awaited()
     p.get_availability.assert_not_awaited()
 
@@ -553,7 +559,8 @@ async def test_off_topic_declines_without_offering_a_call() -> None:
 
 
 async def test_second_off_topic_in_a_row_still_declines() -> None:
-    p = _Patched(classify_return="off_topic", recent_intents=["off_topic"], availability=_availability())
+    p = _Patched(classify_return="off_topic", hybrid_result=_NOT_IN_KB, recent_intents=["off_topic"],
+                 availability=_availability())
     with p:
         result = await answer_turn(db=object(), claims=_claims(), message="and who won the world cup?")
 
@@ -564,6 +571,7 @@ async def test_second_off_topic_in_a_row_still_declines() -> None:
 async def test_third_off_topic_in_a_row_offers_a_call() -> None:
     p = _Patched(
         classify_return="off_topic",
+        hybrid_result=_NOT_IN_KB,
         recent_intents=["off_topic", "off_topic"],
         availability=_availability(),
     )
@@ -582,6 +590,7 @@ async def test_on_topic_turn_in_between_resets_the_off_topic_count() -> None:
     turns don't count -- this is only the 1st off-topic in a row."""
     p = _Patched(
         classify_return="off_topic",
+        hybrid_result=_NOT_IN_KB,
         recent_intents=["question", "off_topic"],
         availability=_availability(),
     )
@@ -590,6 +599,83 @@ async def test_on_topic_turn_in_between_resets_the_off_topic_count() -> None:
 
     assert result.reply == _OFF_TOPIC_REPLY
     assert result.action is None
+
+
+async def test_a_question_the_knowledge_base_covers_is_never_declined_as_off_topic() -> None:
+    """Live 2026-11-02: "Can you explain performance marketing in simple terms?" got the
+    off-topic decline. The classifier sees only the message, not what the business does."""
+    claims = _claims()
+    p = _Patched(classify_return="off_topic", hybrid_result=_IN_KB, recent_intents=["off_topic"])
+    with p:
+        result = await answer_turn(db=object(), claims=claims,
+                                   message="Can you explain performance marketing in simple terms?")
+
+    assert result.reply != _OFF_TOPIC_REPLY
+    assert (result.decision, result.confidence) == ("answer", 0.6)
+    assert p._append_calls[1]["intent"] == "question"  # breaks an off-topic streak too
+    p.provider.generate.assert_awaited_once()
+    p.retrieve_hybrid.assert_awaited_once()  # the check's result is reused, not searched twice
+    assert p.retrieve_hybrid.await_args.args[1] is claims  # this tenant's knowledge only
+
+
+async def test_the_knowledge_base_check_is_grounded_like_any_question() -> None:
+    """The same anti-invention guard: nothing in the context -> no made-up answer."""
+    p = _Patched(classify_return="off_topic", hybrid_result=_IN_KB,
+                 completion=Completion(text="NO_ANSWER_FOUND", model="m", input_tokens=1,
+                                       output_tokens=1))
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="explain seo")
+
+    assert "NO_ANSWER_FOUND" not in result.reply
+    assert result.decision == "escalate"
+
+
+async def test_exactly_at_the_threshold_counts_as_covered() -> None:
+    p = _Patched(classify_return="off_topic",
+                 hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.35))
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="explain seo")
+
+    assert result.decision == "answer"
+
+
+async def test_the_threshold_is_the_tenants_own() -> None:
+    p = _Patched(classify_return="off_topic", hybrid_result=_IN_KB,
+                 orchestrator_config=_orch_cfg(escalate_threshold=0.7))
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="explain seo")
+
+    assert result.reply == _OFF_TOPIC_REPLY
+
+
+async def test_no_chunks_is_never_covered() -> None:
+    p = _Patched(classify_return="off_topic",
+                 hybrid_result=HybridResult(chunks=[], confidence=0.9))
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="explain seo")
+
+    assert result.reply == _OFF_TOPIC_REPLY
+
+
+async def test_without_embeddings_off_topic_still_declines() -> None:
+    p = _Patched(classify_return="off_topic", config=_config(embedding_model=None))
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(), message="explain seo")
+
+    assert result.reply == _OFF_TOPIC_REPLY
+    p.retrieve_hybrid.assert_not_awaited()
+
+
+async def test_the_streaming_chat_gets_the_same_knowledge_base_check() -> None:
+    """The widget chats over the stream, so the fix has to hold there."""
+    p = _Patched(classify_return="off_topic", hybrid_result=_IN_KB,
+                 stream_chunks=["Performance ", "marketing is ..."])
+    with p:
+        events = await _collect(answer_turn_stream(
+            db=object(), claims=_claims(), message="Can you explain performance marketing?"))
+
+    deltas = "".join(e.data["text"] for e in events if e.type == "delta")
+    assert deltas == "Performance marketing is ..."
 
 
 def test_off_topic_replies_only_the_repeat_one_mentions_booking() -> None:
@@ -602,7 +688,7 @@ async def test_classify_is_called_with_intent_label_descriptions() -> None:
     "off_topic" MEANS, not just its bare name -- the actual fix for
     well-formed-but-unrelated questions ("What is the capital of France?")
     being misclassified as "question" instead of "off_topic"."""
-    p = _Patched(classify_return="off_topic")
+    p = _Patched(classify_return="off_topic", hybrid_result=_NOT_IN_KB)
     with p:
         await answer_turn(db=object(), claims=_claims(), message="what is the capital of France?")
 
@@ -1076,7 +1162,8 @@ async def test_blocked_and_escalate_are_distinguishable() -> None:
     """A genuine off-topic escalate -> decision=="escalate",
     guardrail_flag is None; a guardrail hit -> decision=="blocked",
     guardrail_flag=<rule>. Both carry action=="lead_form"."""
-    p_escalate = _Patched(classify_return="off_topic", recent_intents=["off_topic", "off_topic"])
+    p_escalate = _Patched(classify_return="off_topic", hybrid_result=_NOT_IN_KB,
+                 recent_intents=["off_topic", "off_topic"])
     with p_escalate:
         escalate_result = await answer_turn(
             db=object(), claims=_claims(), message="what is the capital of France?",
@@ -1146,7 +1233,8 @@ async def test_clean_chitchat_generation_passes_through_unflagged() -> None:
 async def test_off_topic_escalate_sets_action_lead_form_guardrail_flag_none() -> None:
     """A 3rd-in-a-row off_topic escalate (fixed template, never scanned) ->
     action=="lead_form", guardrail_flag is None."""
-    p = _Patched(classify_return="off_topic", recent_intents=["off_topic", "off_topic"])
+    p = _Patched(classify_return="off_topic", hybrid_result=_NOT_IN_KB,
+                 recent_intents=["off_topic", "off_topic"])
     with p:
         result = await answer_turn(
             db=object(), claims=_claims(), message="what is the capital of France?",
@@ -1198,7 +1286,7 @@ async def test_scan_output_not_consulted_on_escalate_branch() -> None:
     """A spy on scan_output confirms it is NOT called on the fixed-template
     escalate branch (off_topic)."""
     with patch("api.orchestrator.service.scan_output") as spy_scan:
-        p = _Patched(classify_return="off_topic")
+        p = _Patched(classify_return="off_topic", hybrid_result=_NOT_IN_KB)
         with p:
             await answer_turn(db=object(), claims=_claims(), message="what is the capital of France?")
 
@@ -1726,6 +1814,7 @@ async def test_escalate_intent_action_conditional_on_availability(classify_label
     lead_form otherwise; get_availability called with the turn's own claims."""
     p_avail = _Patched(
         classify_return=classify_label,
+        hybrid_result=_NOT_IN_KB,
         availability=_availability(True),
         recent_intents=["off_topic", "off_topic"],
     )
@@ -1740,6 +1829,7 @@ async def test_escalate_intent_action_conditional_on_availability(classify_label
 
     p_none = _Patched(
         classify_return=classify_label,
+        hybrid_result=_NOT_IN_KB,
         availability=_availability(False),
         recent_intents=["off_topic", "off_topic"],
     )
@@ -2123,7 +2213,8 @@ async def test_stream_turn_cap_emits_no_deltas() -> None:
 
 @pytest.mark.parametrize("classify_label", ["off_topic", "scheduling_request"])
 async def test_stream_escalate_branches_emit_no_deltas(classify_label: str) -> None:
-    p = _Patched(classify_return=classify_label, recent_intents=["off_topic", "off_topic"])
+    p = _Patched(classify_return=classify_label, hybrid_result=_NOT_IN_KB,
+                 recent_intents=["off_topic", "off_topic"])
     with p:
         events = await _collect(
             answer_turn_stream(db=object(), claims=_claims(), message="msg"),
