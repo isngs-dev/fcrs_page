@@ -99,7 +99,8 @@ neither its range nor when it starts. Barge-in on P1 is
    time, and I'll send the meeting details to … Shall I book it?"). A changed time or email is taken
    there; a bare "no" → "What should I change?". A yes books it: a connected Google calendar gets the
    event + a Meet link (sync failure undoes the booking and hands off, like the widget); Calendly
-   tenants are still handed a link by the team. The confirmation email carries the Meet link. Rebecca
+   tenants are still handed a link by the team. The confirmation email carries the Meet link, and the
+   connected calendar's owner gets the same "New call booked" email as a widget booking. Rebecca
    then **closes the call herself** (no "anything else?"). *(Steps 5–7 changed 2026-10-30 after a
    live call: the model took the booking on itself, so 3 Nov 6:30 PM EST was lost, Rebecca pushed
    the earliest slot in India time and took six more questions to book. The model now hands booking

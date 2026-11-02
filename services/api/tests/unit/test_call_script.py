@@ -191,6 +191,16 @@ _WED = __import__("datetime").date(2026, 10, 28)  # a Wednesday
     ("three p.m. works", None, (15, 0)),
     ("Thursday", (2026, 10, 29), None),
     ("whenever suits you", None, None),
+    # Live call: the hour next to a month was taken for the day of the month.
+    ("no I want to book a call on 4th November 6:30 p.m. EST", (2026, 11, 4), (18, 30)),
+    ("uh Port November 6:30 p.m. EST", None, (18, 30)),  # "4th" misheard: the time still counts
+    ("4th November 6 pm", (2026, 11, 4), (18, 0)),
+    ("November 6 pm", None, (18, 0)),
+    ("November 4th at 6:30 pm", (2026, 11, 4), (18, 30)),
+    ("November 6 at 3", (2026, 11, 6), (15, 0)),
+    ("6:30 p.m. November 4th", (2026, 11, 4), (18, 30)),
+    ("6:30 November 4", (2026, 11, 4), (18, 30)),  # not "30 November"
+    ("30 p.m. EST", None, None),  # half a time isn't a time
 ])
 def test_parse_when_reads_the_day_and_time_the_caller_asks_for(
         text: str, day: tuple[int, int, int] | None, at: tuple[int, int] | None) -> None:

@@ -30,6 +30,7 @@ from api.call_agent.executor import place_call
 from api.call_agent.telephony import PlacedCall, Recording
 from api.config import get_api_settings
 from api.contacts.repository import add_identity, create_contact, set_contact_timezone
+from api.scheduling.calendar import CalendarRef
 from api.scheduling.repository import upsert_availability
 from api.voice_agent.plivo import compute_signature
 
@@ -44,6 +45,7 @@ if _DEV_DB_URL and _TEST_DB_URL == _DEV_DB_URL:
 
 _JWT = "x" * 48
 _BASE = "https://api.example.com"
+_REP = "rep@example.com"  # the connected calendar's owner
 _NY = ZoneInfo("America/New_York")  # the business's zone: every call time is in it
 _HOOK = "I saw you were asking about storm-damage repairs on our site."
 _QUESTION = "What's going on with your roof at the moment?"
@@ -389,6 +391,35 @@ async def test_the_callers_own_time_is_booked_with_one_confirmation(env: dict[st
                              call_id) == "booked"
 
 
+async def test_a_date_with_the_time_right_after_it_is_heard_correctly(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11: "4th November 6:30 p.m. EST" was read as November 6 with no time, so
+    Rebecca kept asking what time on the wrong day."""
+    call_id = await _answered(env, env["a"])
+    await _say(env, call_id, "can I schedule the meet with your team")
+    day = (datetime.now(_NY) + timedelta(days=2)).date()
+    said = service.spoken_text(await _say(env, call_id, f"uh Port {day:%B} 6:30 p.m. EST"))
+    assert said == script.ASK_DAY_LINE  # "Port" isn't a date, but the time is kept
+    final = service.spoken_text(await _say(
+        env, call_id, f"no I want to book a call on {day.day}th {day:%B} 6:30 p.m. EST"))
+    assert final == script.final_check_line(datetime.combine(day, dtime(18, 30), tzinfo=_NY),
+                                            "America/New_York", "jane@example.com")
+
+
+async def test_a_time_she_cant_make_out_doesnt_loop_forever(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    day = (datetime.now(_NY) + timedelta(days=1)).date()
+    assert service.spoken_text(await _say(env, call_id, "tomorrow")) == script.ask_hour_line(day)
+    again = service.spoken_text(await _say(env, call_id, "30 p.m. EST"))
+    assert again == f"{script.TIME_AGAIN} {script.ask_hour_line(day)}"
+    await _say(env, call_id, "30 p.m. EST")
+    end = await _say(env, call_id, "30 p.m. EST")  # the team takes over
+    assert service.spoken_text(end) == script.TEAM_LINE and "<Hangup" in end
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 0
+
+
 async def test_a_time_given_with_a_yes_is_kept(env: dict[str, Any]) -> None:
     """Live: "yes 6:30 p.m. EST" to "find a time?" counted as a bare yes and the time was lost."""
     call_id = await _answered(env, env["a"])
@@ -697,6 +728,100 @@ async def test_a_calendar_that_refuses_the_booking_undoes_it_and_hands_off(
     assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 0
     assert await db.fetchval("SELECT count(*) FROM agent_events WHERE tenant_id = $1 "
                              "AND kind = 'meeting_booked'", a) == 0
+
+
+class _Google:
+    """A calendar that reports its owner, as Google does on a created event."""
+
+    async def free_busy(self, *args: Any) -> list[Any]:
+        return []
+
+    async def create_event(self, claims: Any, event: Any) -> CalendarRef:
+        return CalendarRef(provider="google", external_id=f"g-{event.event_id}",
+                           meet_url="https://meet.google.com/abc", organizer_email=_REP)
+
+
+async def _book_on_a_call(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch,
+                          *, email_on_file: bool = True) -> str:
+    from api.scheduling.calendar_config_repository import upsert_calendar_config
+
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    await upsert_calendar_config(db, claims, provider="stub", calendar_id=None,
+                                 credentials=uuid4().hex, busy=[], enabled=True)
+
+    async def provider(calendar: Any) -> _Google:
+        return _Google()
+
+    monkeypatch.setattr(service, "_calendar_provider", provider)
+    call_id = await _answered(env, a)
+    if not email_on_file:
+        await db.execute("UPDATE contacts SET email = NULL WHERE tenant_id = $1", a)
+    await _say(env, call_id, "I'd like to book a time")
+    await _say(env, call_id, "tomorrow at 3 pm")
+    return call_id
+
+
+async def test_a_booking_on_a_call_tells_the_calendar_owner(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-02: the caller got a confirmation, the person taking the call got nothing.
+    The widget's bookings already told them; this route never did."""
+    db, a, b = env["db"], env["a"], env["b"]
+    call_id = await _book_on_a_call(env, monkeypatch)
+    await _say(env, call_id, "yes")
+
+    event_id = await db.fetchval("SELECT event_id FROM schedule_events WHERE tenant_id = $1", a)
+    job = await db.fetchrow("SELECT subject, body, dedupe_key FROM notification_jobs "
+                            "WHERE tenant_id = $1 AND recipient = $2", a, _REP)
+    assert job is not None and job["subject"] == "New call booked: Jane Doe"
+    assert job["dedupe_key"] == f"booking_rep_notify:{event_id}"  # exactly once per booking
+    for detail in ("jane@example.com", "+12025550123", "https://meet.google.com/abc"):
+        assert detail in job["body"]
+    assert "Eastern" not in job["subject"]
+    assert service.send_notification.delay.call_count == 2  # the caller's and the owner's
+    assert await db.fetchval("SELECT count(*) FROM notification_jobs WHERE tenant_id = $1",
+                             b) == 0
+
+
+async def test_the_owner_is_told_even_when_the_caller_gave_no_email(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _book_on_a_call(env, monkeypatch, email_on_file=False)
+    for line in ("I don't remember", "no idea"):  # two misses: booked, the team sends details
+        await _say(env, call_id, line)
+    await _say(env, call_id, "yes")
+    assert await db.fetchval("SELECT count(*) FROM notification_jobs WHERE tenant_id = $1 "
+                             "AND recipient = $2", a, _REP) == 1
+
+
+async def test_a_failed_notice_to_the_owner_never_loses_the_booking(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    db, a = env["db"], env["a"]
+    real = service.enqueue_notification
+
+    async def picky(db: Any, claims: Any, **kw: Any) -> Any:
+        if kw["recipient"] == _REP:
+            raise RuntimeError("queue down")
+        return await real(db, claims, **kw)
+
+    monkeypatch.setattr(service, "enqueue_notification", picky)
+    call_id = await _book_on_a_call(env, monkeypatch)
+    end = await _say(env, call_id, "yes")
+    assert service.spoken_text(end).startswith("You're booked for")
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 1
+    assert await db.fetchval("SELECT count(*) FROM notification_jobs WHERE tenant_id = $1 "
+                             "AND recipient = 'jane@example.com'", a) == 1
+
+
+async def test_without_a_calendar_owner_only_the_caller_is_emailed(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    await _say(env, call_id, "tomorrow at 3 pm")
+    await _say(env, call_id, "yes")
+    recipients = [r["recipient"] for r in await db.fetch(
+        "SELECT recipient FROM notification_jobs WHERE tenant_id = $1", a)]
+    assert recipients == ["jane@example.com"]
 
 
 async def test_dont_call_me_suppresses_and_ends_the_call(env: dict[str, Any]) -> None:

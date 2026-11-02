@@ -48,7 +48,10 @@ from api.llm.provider import ChatMessage
 from api.notifications.emit import emit_event_safe
 from api.notifications.repository import enqueue_notification
 from api.notifications.tasks import send_notification
-from api.notifications.templates import booking_confirmation_message
+from api.notifications.templates import (
+    booking_confirmation_message,
+    rep_booking_notification_message,
+)
 from api.scheduling.calendar import CalendarEvent, calendar_provider_for_async
 from api.scheduling.calendar_config_repository import CalendarConfig, get_calendar_config
 from api.scheduling.reminder_repository import create_reminder_jobs
@@ -368,6 +371,21 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
         except Exception as exc:  # noqa: BLE001 -- reminders backstop the confirmation
             _log.warning("call booking confirmation not sent", extra={
                 "event": "call_booking_confirm_failed", "reason": type(exc).__name__})
+    if organizer:  # whoever takes the call hears about it, like the widget's bookings
+        try:
+            subject, body = rep_booking_notification_message(
+                starts_at=event.starts_at, timezone=timezone, visitor_name=name,
+                visitor_email=email, visitor_phone=customer_number(session), meet_url=meet_url)
+            job_id = await enqueue_notification(
+                db, claims, channel="email", recipient=organizer, subject=subject, body=body,
+                dedupe_key=f"booking_rep_notify:{event.event_id}",
+                payload={"kind": "booking_rep_notify", "event_id": event.event_id})
+            if job_id is not None:
+                send_notification.delay(job_id=job_id, tenant_id=claims.tenant_id,
+                                        correlation_id="")
+        except Exception as exc:  # noqa: BLE001 -- the calendar event still shows the call
+            _log.warning("call booking rep notice not sent", extra={
+                "event": "call_booking_rep_notify_failed", "reason": type(exc).__name__})
     if session.contact_id:  # the call knows the contact: no email lookup needed
         await emit(db, claims, "meeting_booked", {"contact_id": session.contact_id})
     return "booked", meet_url
@@ -657,7 +675,10 @@ async def _pick_time(db: Database, claims: AuthClaims, state: script.CallState, 
             script.WHICH_TIME if repeated else script.ASK_TIME_LINE)
     if state.at is None:
         if slots:
-            return await say(script.ask_hour_line(asked.date()))  # type: ignore[no-any-return]
+            state.misses += repeated
+            line = script.ask_hour_line(asked.date())
+            return await say(  # type: ignore[no-any-return]
+                f"{script.TIME_AGAIN} {line}" if repeated else line)
         hours = await next_open_slots(db, claims, now, count=None, ignore_bookings=True, on=asked)
         state.day = None
         return await say(  # type: ignore[no-any-return]

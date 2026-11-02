@@ -151,6 +151,7 @@ DISCOVERY_NO_LINE = ("No problem. Would you like me to find a time with our team
 WHICH_TIME = "What day and time works best for you?"
 ASK_TIME_LINE = f"Sure. {WHICH_TIME}"
 ASK_DAY_LINE = "And which day would you like?"
+TIME_AGAIN = "Sorry, I didn't catch the time."
 TAKEN_LINE = ("I'm sorry, we already have a meeting scheduled at that time. "
               "What other time would suit you?")
 DAY_FULL = "I'm sorry, we're not available that day. What other day would suit you?"
@@ -221,8 +222,11 @@ _NUMBERS = {w: str(i) for i, w in enumerate(
     ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
      "twelve"), start=1)}
 _NUMBER_WORD = re.compile(r"\b(" + "|".join(_NUMBERS) + r")\b")
-_MONTH_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b")
-_DAY_MONTH = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MONTH})\b")
+# A number next to a month can be the hour: "4th November 6:30 p.m." is the 4th, not the 6th,
+# and "6:30 November 4" isn't the 30th.
+_MONTH_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b"
+                        r"(?!:\d|\s*[ap]\.?\s?m\b|\s*o'?clock)")
+_DAY_MONTH = re.compile(rf"(?<!:)\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MONTH})\b")
 _ORDINAL = re.compile(r"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b")
 _CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?\s?m\b\.?|p\.?\s?m\b\.?|o'?clock)?")
 _TIME_WORDS = {"at", "around", "about", "by", "morning", "afternoon", "evening", "night"}
@@ -263,7 +267,7 @@ def parse_when(text: str, today: date) -> tuple[date | None, tuple[int, int] | N
     Hours 1-7 without am/pm mean the afternoon (nobody books a 3 AM call)."""
     t = _NUMBER_WORD.sub(lambda m: _NUMBERS[m.group(1)], text.lower())
     day: date | None = None
-    if (m := _MONTH_DAY.search(t)) or (m := _DAY_MONTH.search(t)):
+    if (m := _DAY_MONTH.search(t)) or (m := _MONTH_DAY.search(t)):
         month_name, number = ((m.group(1), m.group(2)) if m.re is _MONTH_DAY
                               else (m.group(2), m.group(1)))
         month = _MONTHS.index(month_name) + 1
