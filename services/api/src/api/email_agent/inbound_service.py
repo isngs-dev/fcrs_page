@@ -6,8 +6,9 @@ processes SendGrid's signed event webhook (F12).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -51,6 +52,12 @@ from api.email_agent.providers import OutboundEmail
 from api.email_agent.service import _booking_line, provider_for_tenant, send_message
 from api.leads.repository import add_activity
 from api.notifications.emit import emit_event_safe
+from api.scheduling.booking import (
+    CalendarSyncFailed,
+    busy_times,
+    notify_organizer,
+    sync_to_calendar,
+)
 from api.scheduling.calendar_config_repository import get_calendar_config
 from api.scheduling.reminder_repository import create_reminder_jobs, skip_pending_reminders
 from api.scheduling.repository import (
@@ -222,16 +229,23 @@ async def _act(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact: A
                                                  email=contact.email)
         if current is not None:
             moved = await _try_book(db, claims, ctx, contact)
-            if moved is not None:
+            if moved == "sync_failed":
+                return await _handoff(db, claims, ctx, contact, label, "CALENDAR_SYNC_FAILED")
+            if isinstance(moved, _Booked):
                 await cancel_event(db, claims, current.event_id)
                 await skip_pending_reminders(db, claims, current.event_id)
                 await memory.remember(db, claims, contact.contact_id, channel="email",
-                                      kind="booked", text=f"Moved their meeting to {moved}")
+                                      kind="booked", text=f"Moved their meeting to {moved.when}")
                 return await _reply(db, claims, ctx, contact, config,
-                                    f"Hi {first},\n\nDone — your call is now {moved}. We'll "
-                                    "send you a reminder before it.", band="template",
-                                    sources=[], action="rescheduled", force_send=True)
-        label = "book_meeting"  # no booking to move, or that time isn't free: offer times
+                                    f"Hi {first},\n\nDone — your call is now {moved.when}. "
+                                    f"We'll send you a reminder before it.{moved.join_line}",
+                                    band="template", sources=[], action="rescheduled",
+                                    force_send=True)
+            if moved == "taken":
+                return await _reply(db, claims, ctx, contact, config,
+                                    f"Hi {first},\n\n{TIME_TAKEN}", band="template",
+                                    sources=[], action="time_taken")
+        label = "book_meeting"  # no booking to move, or no time given: ask for one
     if label == "cancel_meeting":  # A11 M5
         current = await get_upcoming_for_contact(db, claims, lead_id=contact.lead_id,
                                                  email=contact.email)
@@ -270,16 +284,24 @@ async def _act(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact: A
         return "no_emails"
     if label == "book_meeting":
         booked = await _try_book(db, claims, ctx, contact)
-        if booked is not None:
+        if booked == "sync_failed":
+            return await _handoff(db, claims, ctx, contact, label, "CALENDAR_SYNC_FAILED")
+        if isinstance(booked, _Booked):
             await memory.remember(db, claims, contact.contact_id, channel="email",
-                                  kind="booked", text=f"Booked a call for {booked}")
+                                  kind="booked", text=f"Booked a call for {booked.when}")
             return await _reply(db, claims, ctx, contact, config,
-                                f"Hi {first},\n\nYou're booked for {booked}. We'll send you a "
-                                "reminder before the call.", band="template", sources=[],
-                                action="booked", force_send=True)
+                                f"Hi {first},\n\nYou're booked for {booked.when}. We'll send "
+                                f"you a reminder before the call.{booked.join_line}",
+                                band="template", sources=[], action="booked", force_send=True)
+        if booked == "taken":  # their time, declined; we never pick one for them
+            return await _reply(db, claims, ctx, contact, config,
+                                f"Hi {first},\n\n{TIME_TAKEN}", band="template",
+                                sources=[], action="time_taken")
         line = await _booking_line(db, claims, config)
-        if "http" not in line:  # no link to offer -> a person agrees the time
-            return await _handoff(db, claims, ctx, contact, label, "NO_BOOKING_LINK")
+        if "http" not in line:  # no link: their reply with a day and time books it
+            return await _reply(db, claims, ctx, contact, config,
+                                f"Hi {first},\n\n{ASK_TIME}", band="template", sources=[],
+                                action="time_asked")
         return await _reply(db, claims, ctx, contact, config,
                             f"Hi {first},\n\nThanks — happy to set up a call. {line}",
                             band="template", sources=[], action="link_sent")
@@ -359,15 +381,34 @@ async def _reply(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact:
     return action if auto else f"{action}_draft"
 
 
-async def _try_book(db: Database, claims: AuthClaims, ctx: dict[str, Any],
-                    contact: Any) -> str | None:
-    """Book the exact open native slot the sender asked for (F10), else ``None``."""
+TIME_TAKEN = ("I'm sorry, that time isn't available. What other day and time would suit "
+              "you? Just reply with it and I'll book it.")
+ASK_TIME = ("Happy to set up a call. Which day and time suits you? Just reply with it and "
+            "I'll book it.")
+
+
+@dataclass(frozen=True)
+class _Booked:
+    when: str
+    meet_url: str | None
+
+    @property
+    def join_line(self) -> str:
+        return f"\n\nJoin the call: {self.meet_url}" if self.meet_url else ""
+
+
+async def _try_book(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact: Any
+                    ) -> _Booked | Literal["taken", "sync_failed"] | None:
+    """Book the exact open slot the sender asked for (F10): free in our hours and in the
+    connected calendar (2026-11-03: Google tenants used to be handed to a person). ``"taken"``
+    = they named a time that isn't open; ``None`` = no time, no availability, a Calendly
+    tenant, or a sender we can't trust to book."""
     auth = ctx["auth"] or {}
     if not (auth.get("spf") or auth.get("dkim")):
         return None
     calendar = await get_calendar_config(db, claims)
-    if calendar is not None and calendar.enabled:
-        return None  # busy times live in the calendar provider -> link/human
+    if calendar is not None and calendar.enabled and calendar.provider == "calendly":
+        return None  # Calendly books its own times -> the link
     availability = await get_availability(db, claims)
     if availability is None:
         return None
@@ -379,13 +420,14 @@ async def _try_book(db: Database, claims: AuthClaims, ctx: dict[str, Any],
     zone = ZoneInfo(availability.timezone)
     day: date = start.astimezone(zone).date()
     window_start = datetime.combine(day, time(0), tzinfo=zone).astimezone(UTC)
-    booked = await list_booked(db, claims, window_start=window_start,
-                               window_end=window_start + timedelta(days=1))
+    window_end = window_start + timedelta(days=1)
+    booked = [*await list_booked(db, claims, window_start=window_start, window_end=window_end),
+              *await busy_times(db, claims, window_start, window_end)]
     slots = compute_slots(availability.rules, availability.timezone, day, day, booked, now=now,
                           window_max_days=get_api_settings().schedule_slot_window_max_days)
     slot = next((s for s in slots if s.starts_at == start), None)
     if slot is None:
-        return None
+        return "taken"
     try:
         event = await create_event(
             db, claims, starts_at=slot.starts_at, ends_at=slot.ends_at,
@@ -394,12 +436,21 @@ async def _try_book(db: Database, claims: AuthClaims, ctx: dict[str, Any],
             consent={"granted": True, "purpose": "booking", "text": "Requested by email reply",
                      "email_message_id": ctx["message_id"], "captured_at": now.isoformat()})
     except AppException:  # SLOT_UNAVAILABLE race
-        return None
+        return "taken"
     await create_reminder_jobs(db, claims, event_id=event.event_id, starts_at=event.starts_at,
                                now=now)
+    try:
+        meet_url, organizer = await sync_to_calendar(
+            db, claims, event, attendee_email=contact.email, attendee_name=contact.name,
+            attendee_phone=contact.phone)
+    except CalendarSyncFailed:
+        return "sync_failed"
+    if organizer:
+        await notify_organizer(db, claims, event, organizer, name=contact.name,
+                               email=contact.email, phone=contact.phone, meet_url=meet_url)
     local = event.starts_at.astimezone(zone)
-    return (f"{local:%A %B} {local.day} at {local.hour % 12 or 12}:{local:%M %p} "
-            f"({availability.timezone})")
+    return _Booked(when=(f"{local:%A %B} {local.day} at {local.hour % 12 or 12}:{local:%M %p} "
+                         f"({availability.timezone})"), meet_url=meet_url)
 
 
 async def _suppress(db: Database, claims: AuthClaims, email: str, *, reason: str) -> None:

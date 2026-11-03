@@ -25,6 +25,8 @@
    price/discount/commitment; AI disclosure line "— Rebecca, AI assistant for {company}").
 4. `email_mode`: `auto_send` → send; `draft_for_review` → `email_messages.status=draft`, task
    `IN_PROGRESS(awaiting_approval)`; approve/edit/send from admin. Drafts older than N days auto-expire.
+   **Default `auto_send`** *(product owner 2026-11-03: "less human interaction, the whole workflow
+   handled by the agent")*; a tenant can still choose review in Outreach → Settings.
 5. **Send** through `TransactionalEmailProvider` (SendGrid API first; SMTP adapter wraps the existing
    `SmtpEmailProvider`). Headers: `Message-ID` (ours, stored), `In-Reply-To`/`References` when in a thread,
    `Reply-To` = tenant inbound address (route-tokened, ADR-003), `List-Unsubscribe: <https://…/unsubscribe/{signed}>, <mailto:…>`
@@ -50,7 +52,7 @@ backoff; the send is idempotent on the task's idempotency key (provider idempote
 | Class | Action |
 |---|---|
 | question | grounded answer (bands as §1) → reply in thread (mode applies) |
-| book_meeting | parse requested time → `get_available_slots` → book if exact match & confirmed by their text, else reply with 3 slots |
+| book_meeting | parse requested time → book that exact slot if it's open in our hours **and** the connected Google calendar (event + Meet link, the calendar owner emailed, like a phone booking) → "You're booked" reply with the link. Their time isn't open → "that time isn't available, what other day and time?" (no times proposed). No time → the booking link, or, without one, "which day and time suits you?". Only a calendar that refuses the event goes to a person. *(2026-11-03: a Google-connected tenant used to hand every email booking to a person.)* Booking needs an SPF/DKIM-authenticated sender |
 | interested | reply with booking link + slots |
 | not_interested | polite close, stop plan, lead stage → per tenant mapping |
 | unsubscribe | suppress email, stop plan, confirmation not required |

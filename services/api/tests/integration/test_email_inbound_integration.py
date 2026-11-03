@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from datetime import time as dtime
 from typing import Any
+from unittest.mock import MagicMock
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -138,6 +139,9 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, Any]]:
 
     monkeypatch.setattr(inbound_service, "provider_for_tenant", fake_provider)
     monkeypatch.setattr(replies, "classify_reply", llm.classify)
+    from api.scheduling import booking
+
+    monkeypatch.setattr(booking, "send_notification", MagicMock())
     monkeypatch.setattr(replies, "answer_question", llm.answer_question)
     monkeypatch.setattr(replies, "extract_requested_start", llm.extract)
     executors.register("email", email_executor)
@@ -388,6 +392,165 @@ async def test_email_booking_exact_slot_with_authenticated_sender(env: dict[str,
     llm.start = llm.start + timedelta(hours=1)
     assert (await _handle(env))[-1] == "book_meeting:link_sent_draft"
     assert await db.fetchval("SELECT count(*) FROM schedule_events") == 1
+
+
+_REP = "rep@acme.com"
+
+
+async def _hours(db: Database, claims: AuthClaims) -> None:
+    await upsert_availability(db, claims, timezone="America/New_York", rules={
+        "slot_minutes": 30, "buffer_minutes": 0,
+        "weekly_hours": {d: [["09:00", "17:00"]] for d in
+                         ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}})
+
+
+async def _google(db: Database, claims: AuthClaims, busy: list[dict[str, str]] | None = None
+                  ) -> None:
+    from api.scheduling.calendar_config_repository import upsert_calendar_config
+
+    await upsert_calendar_config(db, claims, provider="stub", calendar_id=None,
+                                 credentials=uuid4().hex, busy=busy or [], enabled=True)
+
+
+def _three_pm(days: int = 2) -> datetime:
+    day = (datetime.now(_NY) + timedelta(days=days)).date()
+    return datetime(day.year, day.month, day.day, 15, 0, tzinfo=_NY).astimezone(UTC)
+
+
+async def test_a_booking_by_email_works_with_a_connected_google_calendar(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """2026-11-03: with Google connected, "can we meet Thursday at 3?" went to a person.
+    Now the agent books it like the phone agent: Meet link, and the owner is told."""
+    from api.scheduling import booking
+    from api.scheduling.calendar import CalendarRef
+
+    db, mailer, llm = env["db"], env["mailer"], env["llm"]
+    a, b = _claims(env["a"]), _claims(env["b"])
+    await _hours(db, a)
+    await _google(db, a)
+
+    class _Google:
+        async def free_busy(self, *args: Any) -> list[Any]:
+            return []
+
+        async def create_event(self, claims: Any, event: Any) -> CalendarRef:
+            return CalendarRef(provider="google", external_id=f"g-{event.event_id}",
+                               meet_url="https://meet.google.com/xyz", organizer_email=_REP)
+
+    async def provider(calendar: Any) -> _Google:
+        return _Google()
+
+    monkeypatch.setattr(booking, "calendar_provider", provider)
+    # Another tenant's meeting at the same time never makes this one taken.
+    from api.scheduling.repository import create_event
+
+    await create_event(db, b, starts_at=_three_pm(), ends_at=_three_pm() + timedelta(minutes=30),
+                       timezone="America/New_York", visitor_id=None, lead_id=None, email=None,
+                       name=None, consent={"granted": True})
+    _, sent = await _outreach(env)
+    llm.label, llm.start = "book_meeting", _three_pm()
+    await _post(env, _raw(body="Can we meet Thursday at 3pm?", in_reply_to=sent.message_id))
+    assert await _handle(env) == ["book_meeting:booked"]
+
+    event = await db.fetchrow("SELECT starts_at, email, calendar_ref, meet_url FROM "
+                              "schedule_events WHERE tenant_id = $1", env["a"])
+    assert event is not None and event["starts_at"] == llm.start
+    assert event["calendar_ref"].startswith("google:")
+    reply = next(e for e in mailer.sent if e.to == "jane@example.com" and "booked" in e.body_text)
+    assert "https://meet.google.com/xyz" in reply.body_text
+    rep = await db.fetchrow("SELECT subject, body FROM notification_jobs WHERE tenant_id = $1 "
+                            "AND recipient = $2", env["a"], _REP)
+    assert rep is not None and rep["subject"] == "New call booked: Jane Doe"
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE "
+                             "kind = 'agent_email_needs_human'") == 0
+
+
+async def test_a_time_the_calendar_shows_busy_is_declined_and_another_asked_for(
+        env: dict[str, Any]) -> None:
+    db, mailer, llm = env["db"], env["mailer"], env["llm"]
+    a = _claims(env["a"])
+    await _hours(db, a)
+    start = _three_pm()
+    await _google(db, a, busy=[{"start": start.isoformat(),
+                                "end": (start + timedelta(hours=1)).isoformat()}])
+    _, sent = await _outreach(env)
+    llm.label, llm.start = "book_meeting", start
+    await _post(env, _raw(body="Can we meet at 3pm?", in_reply_to=sent.message_id))
+    assert await _handle(env) == ["book_meeting:time_taken"]
+    assert await db.fetchval("SELECT count(*) FROM schedule_events") == 0
+    reply = mailer.sent[-1]
+    assert reply.to == "jane@example.com"
+    assert "isn't available" in reply.body_text and "What other day and time" in reply.body_text
+    assert "https://cal.com" not in reply.body_text  # no times proposed for them
+
+
+async def test_a_booking_request_without_a_time_is_asked_for_one_not_handed_over(
+        env: dict[str, Any]) -> None:
+    db, mailer, llm = env["db"], env["mailer"], env["llm"]
+    a = _claims(env["a"])
+    await _hours(db, a)
+    await _google(db, a)
+    _, sent = await _outreach(env)
+    await _tenant(db, a, booking_url=None)  # no link to send either
+    llm.label, llm.start = "book_meeting", None
+    await _post(env, _raw(body="Can we set up a call?", in_reply_to=sent.message_id))
+    assert await _handle(env) == ["book_meeting:time_asked"]
+    assert "Which day and time" in mailer.sent[-1].body_text
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE "
+                             "kind = 'agent_email_needs_human'") == 0
+
+
+async def test_a_calendar_that_refuses_an_email_booking_undoes_it_and_hands_over(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.scheduling import booking
+
+    db, llm = env["db"], env["llm"]
+    a = _claims(env["a"])
+    await _hours(db, a)
+    await _google(db, a)
+
+    class _Down:
+        async def free_busy(self, *args: Any) -> list[Any]:
+            return []
+
+        async def create_event(self, *args: Any) -> Any:
+            raise RuntimeError("Google said no")
+
+    async def provider(calendar: Any) -> _Down:
+        return _Down()
+
+    monkeypatch.setattr(booking, "calendar_provider", provider)
+    _, sent = await _outreach(env)
+    llm.label, llm.start = "book_meeting", _three_pm()
+    await _post(env, _raw(body="3pm works", in_reply_to=sent.message_id))
+    assert await _handle(env) == ["book_meeting:human"]
+    assert await db.fetchval("SELECT count(*) FROM schedule_events") == 0
+
+
+async def test_rescheduling_to_a_busy_time_never_cancels_the_booking(
+        env: dict[str, Any]) -> None:
+    db, llm = env["db"], env["llm"]
+    a = _claims(env["a"])
+    await _hours(db, a)
+    _, sent = await _outreach(env)
+    llm.label, llm.start = "book_meeting", _three_pm()
+    await _post(env, _raw(body="3pm please", in_reply_to=sent.message_id))
+    await _handle(env)
+    busy = _three_pm(days=3)
+    await _google(db, a, busy=[{"start": busy.isoformat(),
+                                "end": (busy + timedelta(hours=1)).isoformat()}])
+    llm.label, llm.start = "reschedule_meeting", busy
+    await _post(env, _raw(body="Can we move it to Friday 3pm?", in_reply_to=sent.message_id))
+    assert (await _handle(env))[-1] == "reschedule_meeting:time_taken"
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE "
+                             "status = 'booked'") == 1
+
+
+def test_new_clients_send_automatically() -> None:
+    """2026-11-03, product owner: emails go out without waiting for an admin."""
+    from api.agents.repository import AgentSettings
+
+    assert AgentSettings().email_mode == "auto_send"
 
 
 # -- Event webhook -------------------------------------------------------------------------------

@@ -40,7 +40,8 @@ Health: `GET /healthz` (process up), `GET /readyz` (DB + Redis). Call-turn laten
    number, business name, optional transfer number, recording + retention days. In the Plivo console create an
    **Application** with the shown Answer and Hangup URLs (POST) and attach the number. A number can belong to
    one client only (`NUMBER_IN_USE`). After setup, **regenerate the Plivo token** and paste the new one.
-3. **Agent settings** — channels, email mode (start with *draft for review*), calling window, limits, monthly
+3. **Agent settings** — channels, email mode (*send automatically* by default; *draft for review* holds
+   each email for approval), calling window, limits, monthly
    cost cap, the business postal address (required for email; CAN-SPAM).
 4. **Widget consent** — the chat asks name → email → phone; the phone is call consent only when given right
    after the disclosure. Leads with ticked boxes are followed up when "Follow up new chat leads automatically"

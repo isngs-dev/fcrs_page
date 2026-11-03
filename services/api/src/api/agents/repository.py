@@ -42,7 +42,7 @@ class AgentSettings:
     """A tenant's outreach settings. The defaults ARE the product defaults (A1 D3/D4)."""
 
     enabled_channels: tuple[str, ...] = ()
-    email_mode: str = "draft_for_review"
+    email_mode: str = "auto_send"  # product owner 2026-11-03: no admin approval by default
     outreach_paused: bool = False
     region_profile: str = "US"
     call_window_start: time = time(9, 0)

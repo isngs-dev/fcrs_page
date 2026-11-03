@@ -54,7 +54,7 @@ _PLATFORM = resolve_tenant_scope(Role.CLIENT_ADMIN)
 
 class SettingsBody(BaseModel):
     enabled_channels: list[Literal["email", "call"]] = Field(default_factory=list, max_length=2)
-    email_mode: Literal["auto_send", "draft_for_review"] = "draft_for_review"
+    email_mode: Literal["auto_send", "draft_for_review"] = "auto_send"
     region_profile: str = "US"
     call_window_start: time = time(9, 0)
     call_window_end: time = time(20, 0)

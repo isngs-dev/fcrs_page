@@ -48,19 +48,19 @@ from api.llm.provider import ChatMessage
 from api.notifications.emit import emit_event_safe
 from api.notifications.repository import enqueue_notification
 from api.notifications.tasks import send_notification
-from api.notifications.templates import (
-    booking_confirmation_message,
-    rep_booking_notification_message,
+from api.notifications.templates import booking_confirmation_message
+from api.scheduling.booking import (
+    CalendarSyncFailed,
+    busy_times,
+    notify_organizer,
+    sync_to_calendar,
 )
-from api.scheduling.calendar import CalendarEvent, calendar_provider_for_async
-from api.scheduling.calendar_config_repository import CalendarConfig, get_calendar_config
+from api.scheduling.calendar_config_repository import get_calendar_config
 from api.scheduling.reminder_repository import create_reminder_jobs
 from api.scheduling.repository import (
     create_event,
-    delete_event,
     get_availability,
     list_booked,
-    update_event_calendar_ref,
 )
 from api.scheduling.slots import compute_slots
 from api.voice_agent.agent import BOOK_A_TIME, answer_from_knowledge, opening_lines
@@ -265,14 +265,6 @@ async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSession
     return _listen(line, session.call_id, config.voice, OPENING_WAIT)
 
 
-async def _calendar_provider(calendar: CalendarConfig) -> Any:
-    settings = get_api_settings()
-    return await calendar_provider_for_async(
-        calendar, timeout_seconds=settings.calendar_http_timeout_seconds,
-        google_client_id=settings.google_oauth_client_id,
-        google_client_secret=settings.google_oauth_client_secret)
-
-
 async def next_open_slots(db: Database, claims: AuthClaims, now: datetime,
                           count: int | None = 2, ignore_bookings: bool = False,
                           on: datetime | None = None) -> tuple[list[datetime], str] | None:
@@ -294,14 +286,8 @@ async def next_open_slots(db: Database, claims: AuthClaims, now: datetime,
     window_end = window_start + timedelta(days=8)
     booked = ([] if ignore_bookings else
               await list_booked(db, claims, window_start=window_start, window_end=window_end))
-    if calendar is not None and calendar.enabled and not ignore_bookings:
-        try:
-            provider = await _calendar_provider(calendar)
-            busy = await provider.free_busy(claims, (window_start, window_end))
-            booked += [(b.start, b.end) for b in busy]
-        except Exception:  # noqa: BLE001 -- best effort; the calendar sync at booking decides
-            _log.warning("call free-busy degraded to native slots", extra={
-                "event": "calendar_freebusy_degraded", "provider": calendar.provider})
+    if not ignore_bookings:
+        booked += await busy_times(db, claims, window_start, window_end)
     slots = compute_slots(availability.rules, availability.timezone, start_day, end_day, booked,
                           now=now + timedelta(hours=2), window_max_days=8)
     return [s.starts_at for s in slots[:count]], availability.timezone
@@ -332,24 +318,12 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
         return "taken", None
     await create_reminder_jobs(db, claims, event_id=event.event_id, starts_at=event.starts_at,
                                now=datetime.now(UTC))
-    meet_url = organizer = None
-    calendar = await get_calendar_config(db, claims)
-    if calendar is not None and calendar.enabled:
-        try:
-            provider = await _calendar_provider(calendar)
-            ref = await provider.create_event(claims, CalendarEvent(
-                event_id=event.event_id, starts_at=event.starts_at, ends_at=event.ends_at,
-                timezone=timezone, attendee_email=email, attendee_name=name,
-                attendee_phone=customer_number(session)))
-        except Exception as exc:  # noqa: BLE001 -- undone + handed to the team by the caller
-            await delete_event(db, claims, event.event_id)  # its reminders cascade
-            _log.warning("call booking calendar sync failed", extra={
-                "event": "calendar_sync_failed", "provider": calendar.provider,
-                "reason": type(exc).__name__})
-            return "failed", None
-        meet_url, organizer = ref.meet_url, ref.organizer_email
-        await update_event_calendar_ref(db, claims, event.event_id,
-                                        f"{ref.provider}:{ref.external_id}", meet_url)
+    try:  # the caller hands a refusal to the team
+        meet_url, organizer = await sync_to_calendar(
+            db, claims, event, attendee_email=email, attendee_name=name,
+            attendee_phone=customer_number(session))
+    except CalendarSyncFailed:
+        return "failed", None
     if contact is not None:  # A11 M4
         await memory.remember(db, claims, contact.contact_id, channel="call", kind="booked",
                               text=f"Booked a call for {event.starts_at:%Y-%m-%d %H:%M} UTC")
@@ -376,20 +350,8 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
             _log.warning("call booking confirmation not sent", extra={
                 "event": "call_booking_confirm_failed", "reason": type(exc).__name__})
     if organizer:  # whoever takes the call hears about it, like the widget's bookings
-        try:
-            subject, body = rep_booking_notification_message(
-                starts_at=event.starts_at, timezone=timezone, visitor_name=name,
-                visitor_email=email, visitor_phone=customer_number(session), meet_url=meet_url)
-            job_id = await enqueue_notification(
-                db, claims, channel="email", recipient=organizer, subject=subject, body=body,
-                dedupe_key=f"booking_rep_notify:{event.event_id}",
-                payload={"kind": "booking_rep_notify", "event_id": event.event_id})
-            if job_id is not None:
-                send_notification.delay(job_id=job_id, tenant_id=claims.tenant_id,
-                                        correlation_id="")
-        except Exception as exc:  # noqa: BLE001 -- the calendar event still shows the call
-            _log.warning("call booking rep notice not sent", extra={
-                "event": "call_booking_rep_notify_failed", "reason": type(exc).__name__})
+        await notify_organizer(db, claims, event, organizer, name=name, email=email,
+                               phone=customer_number(session), meet_url=meet_url)
     if session.contact_id:  # the call knows the contact: no email lookup needed
         await emit(db, claims, "meeting_booked", {"contact_id": session.contact_id})
     return "booked", meet_url

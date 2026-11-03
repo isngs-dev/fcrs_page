@@ -30,6 +30,7 @@ from api.call_agent.executor import place_call
 from api.call_agent.telephony import PlacedCall, Recording
 from api.config import get_api_settings
 from api.contacts.repository import add_identity, create_contact, set_contact_timezone
+from api.scheduling import booking
 from api.scheduling.calendar import CalendarRef
 from api.scheduling.repository import upsert_availability
 from api.voice_agent.plivo import compute_signature
@@ -133,7 +134,9 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, Any]]:
     await db.execute("UPDATE platform_flags SET value = 'false' WHERE key = 'outreach_paused'")
     plivo = _Plivo()
     monkeypatch.setattr(service, "telephony_factory", lambda auth_id, token: plivo)
-    monkeypatch.setattr(service, "send_notification", MagicMock())
+    notify = MagicMock()  # one sender for the caller's and the owner's emails
+    monkeypatch.setattr(service, "send_notification", notify)
+    monkeypatch.setattr(booking, "send_notification", notify)
 
     async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
                      about_caller: Any = None, can_book: bool = False) -> str | None:
@@ -719,7 +722,7 @@ async def test_a_calendar_that_refuses_the_booking_undoes_it_and_hands_off(
     async def provider(calendar: Any) -> _Down:
         return _Down()
 
-    monkeypatch.setattr(service, "_calendar_provider", provider)
+    monkeypatch.setattr(booking, "calendar_provider", provider)
     call_id = await _answered(env, a)
     for line in ("I'd like to book a time", "tomorrow at 3 pm"):
         await _say(env, call_id, line)
@@ -753,7 +756,7 @@ async def _book_on_a_call(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch,
     async def provider(calendar: Any) -> _Google:
         return _Google()
 
-    monkeypatch.setattr(service, "_calendar_provider", provider)
+    monkeypatch.setattr(booking, "calendar_provider", provider)
     call_id = await _answered(env, a)
     if not email_on_file:
         await db.execute("UPDATE contacts SET email = NULL WHERE tenant_id = $1", a)
