@@ -35,6 +35,7 @@ from api.email_agent import replies, service
 from api.email_agent.composer import Composed
 from api.email_agent.config_repository import upsert_email_agent_config
 from api.email_agent.executor import email_executor
+from api.email_agent.inbound_service import ASK_TIME
 from api.email_agent.links import sign_route
 from api.email_agent.providers import OutboundEmail, SentRef
 from api.scheduling.repository import upsert_availability
@@ -386,12 +387,14 @@ async def test_email_booking_exact_slot_with_authenticated_sender(env: dict[str,
     assert await db.fetchval("SELECT count(*) FROM reminder_jobs") == 3
     assert "You're booked for" in mailer.sent[-1].body_text  # sent despite review mode
 
-    # Unauthenticated sender (SPF+DKIM fail): no booking, the link instead.
+    # 2026-11-03: a college domain with a broken SPF record and no DKIM key kept getting
+    # "which day and time?". A reply to our own email books anyway: only someone who got
+    # that email can answer it (our Message-ID / reply+ address).
     await _post(env, _raw(body="Or 4pm?", in_reply_to=sent.message_id), spf="fail",
                 dkim="{@example.com : fail}")
     llm.start = llm.start + timedelta(hours=1)
-    assert (await _handle(env))[-1] == "book_meeting:link_sent_draft"
-    assert await db.fetchval("SELECT count(*) FROM schedule_events") == 1
+    assert (await _handle(env))[-1] == "book_meeting:booked"
+    assert await db.fetchval("SELECT count(*) FROM schedule_events") == 2
 
 
 _REP = "rep@acme.com"
@@ -544,6 +547,34 @@ async def test_rescheduling_to_a_busy_time_never_cancels_the_booking(
     assert (await _handle(env))[-1] == "reschedule_meeting:time_taken"
     assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE "
                              "status = 'booked'") == 1
+
+
+async def test_a_reply_to_the_plus_address_books_without_spf_or_dkim(
+        env: dict[str, Any]) -> None:
+    db, llm = env["db"], env["llm"]
+    await _hours(db, _claims(env["a"]))
+    _, sent = await _outreach(env)
+    llm.label, llm.start = "book_meeting", _three_pm()
+    await _post(env, _raw(body="Go with Thursday 3pm EST", to=sent.reply_to or ""),
+                spf="permerror", dkim="{@example.com : fail}")
+    assert await _handle(env) == ["book_meeting:booked"]
+
+
+async def test_a_forged_sender_who_names_a_time_goes_to_a_person_not_asked_again(
+        env: dict[str, Any]) -> None:
+    """Matched only by the From address, failing SPF and DKIM: never booked. They named a
+    time, so "which day and time?" would loop -- a person takes it."""
+    db, mailer, llm = env["db"], env["mailer"], env["llm"]
+    a = _claims(env["a"])
+    await _hours(db, a)
+    await _outreach(env)
+    await _tenant(db, a, booking_url=None)
+    llm.label, llm.start = "book_meeting", _three_pm()
+    await _post(env, _raw(body="Book me Thursday at 3pm"), spf="fail",
+                dkim="{@example.com : fail}")
+    assert await _handle(env) == ["book_meeting:human"]
+    assert await db.fetchval("SELECT count(*) FROM schedule_events") == 0
+    assert all(ASK_TIME not in e.body_text for e in mailer.sent)
 
 
 def test_new_clients_send_automatically() -> None:

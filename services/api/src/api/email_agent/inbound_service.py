@@ -78,14 +78,17 @@ SNOOZE = timedelta(days=3)
 
 
 async def _match_thread(db: Database, claims: AuthClaims, email: InboundEmail,
-                        config: EmailAgentConfig | None) -> str:
+                        config: EmailAgentConfig | None) -> tuple[str, bool]:
+    """The thread, and whether the sender answered our own email (one of the thread's
+    Message-IDs, or its reply+ address) -- something only a recipient knows. A match by the
+    From address alone is not that: it can be forged."""
     ids = [i for i in [email.in_reply_to, *email.references] if i]
     thread_id = await repo.thread_for_message_ids(db, claims, ids)
     if thread_id:
-        return thread_id
+        return thread_id, True
     plus = plus_thread_id(email.to_addrs, config.reply_domain if config else None)
     if plus and await repo.thread_exists(db, claims, plus):
-        return plus
+        return plus, True
     contact_id = None
     if email.from_addr:
         contact_id = await get_contact_id_by_identity(db, claims, identity_type="email",
@@ -93,11 +96,11 @@ async def _match_thread(db: Database, claims: AuthClaims, email: InboundEmail,
     if contact_id is not None:
         existing = await repo.newest_thread_for_contact(db, claims, contact_id)
         if existing:
-            return existing
+            return existing, False
         return await repo.create_thread(db, claims, contact_id=contact_id,
-                                        subject=email.subject, status="open")
+                                        subject=email.subject, status="open"), False
     return await repo.create_thread(db, claims, contact_id=None, subject=email.subject,
-                                    status="unmatched")
+                                    status="unmatched"), False
 
 
 async def receive(db: Database, tenant_id: str, raw: bytes, *, spf: str | None,
@@ -111,14 +114,14 @@ async def receive(db: Database, tenant_id: str, raw: bytes, *, spf: str | None,
     config = await get_email_agent_config(db, claims)
     reply_text = strip_quoted(email.text)
     rule_label = classify_by_rules(email, reply_text)
-    thread_id = await _match_thread(db, claims, email, config)
+    thread_id, in_thread = await _match_thread(db, claims, email, config)
     async with db.acquire() as conn, conn.transaction():
         message_id = await repo.insert_inbound(
             conn, claims, thread_id=thread_id, rfc_message_id=email.rfc_message_id,
             in_reply_to=email.in_reply_to, references=email.references,
             from_addr=email.from_addr, to_addr=", ".join(email.to_addrs)[:500],
             subject=email.subject, body_text=email.text[:50000], reply_text=reply_text,
-            auth=sendgrid_auth(spf, dkim, email.from_addr))
+            auth={**sendgrid_auth(spf, dkim, email.from_addr), "in_thread": in_thread})
         if message_id is not None:
             await emit(conn, claims, "email_reply_received",
                        {"message_id": message_id, "rule_label": rule_label})
@@ -298,8 +301,10 @@ async def _act(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact: A
                                 f"Hi {first},\n\n{TIME_TAKEN}", band="template",
                                 sources=[], action="time_taken")
         line = await _booking_line(db, claims, config)
-        if "http" not in line:  # no link: their reply with a day and time books it
-            return await _reply(db, claims, ctx, contact, config,
+        if "http" not in line:
+            if booked != "no_time":  # they named a time we can't book here: asking loops
+                return await _handoff(db, claims, ctx, contact, label, "CANNOT_AUTO_BOOK")
+            return await _reply(db, claims, ctx, contact, config,  # their reply books it
                                 f"Hi {first},\n\n{ASK_TIME}", band="template", sources=[],
                                 action="time_asked")
         return await _reply(db, claims, ctx, contact, config,
@@ -398,25 +403,32 @@ class _Booked:
 
 
 async def _try_book(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact: Any
-                    ) -> _Booked | Literal["taken", "sync_failed"] | None:
+                    ) -> _Booked | Literal["taken", "sync_failed", "no_time"] | None:
     """Book the exact open slot the sender asked for (F10): free in our hours and in the
     connected calendar (2026-11-03: Google tenants used to be handed to a person). ``"taken"``
-    = they named a time that isn't open; ``None`` = no time, no availability, a Calendly
-    tenant, or a sender we can't trust to book."""
+    = they named a time that isn't open; ``"no_time"`` = they didn't name one; ``None`` = no
+    availability, a Calendly tenant, or a sender we can't trust to book.
+
+    Trusted: a reply to our own email (2026-11-03: a college domain with a broken SPF record
+    and no DKIM key was asked "which day and time?" forever), or SPF/DKIM passing."""
     auth = ctx["auth"] or {}
-    if not (auth.get("spf") or auth.get("dkim")):
+    if not (auth.get("in_thread") or auth.get("spf") or auth.get("dkim")):
+        _log.info("email booking skipped", extra={"event": "email_booking_skipped",
+                                                  "reason": "UNVERIFIED_SENDER"})
         return None
     calendar = await get_calendar_config(db, claims)
     if calendar is not None and calendar.enabled and calendar.provider == "calendly":
         return None  # Calendly books its own times -> the link
     availability = await get_availability(db, claims)
     if availability is None:
+        _log.info("email booking skipped", extra={"event": "email_booking_skipped",
+                                                  "reason": "NO_AVAILABILITY"})
         return None
     now = datetime.now(UTC)
     start = await replies.extract_requested_start(db, claims, reply_text=ctx["reply_text"] or "",
                                                   timezone=availability.timezone, now=now)
     if start is None:
-        return None
+        return "no_time"
     zone = ZoneInfo(availability.timezone)
     day: date = start.astimezone(zone).date()
     window_start = datetime.combine(day, time(0), tzinfo=zone).astimezone(UTC)
