@@ -36,11 +36,12 @@ async def meeting_booked(db: Database, claims: AuthClaims, *, email: str | None)
 async def inbound_lead_created(
     db: Database, claims: AuthClaims, *, lead_id: str, channels: list[str], version: str | None,
     timezone: str | None, form: str, consents: list[dict[str, Any]] | None = None,
-    answers: dict[str, str] | None = None,
+    answers: dict[str, str] | None = None, no_calls: bool = False,
 ) -> None:
     """A4 H6: a widget lead ticked channel consent -> the agents take it from here.
-    ``consents`` (A10): explicit evidence from a form instead of a widget wording version."""
-    if not channels:
+    ``consents`` (A10): explicit evidence from a form instead of a widget wording version.
+    ``no_calls``: they asked not to be phoned (chat "just email me")."""
+    if not channels and not no_calls:
         return
     try:
         await emit(db, claims, "inbound_lead_created", {
@@ -48,6 +49,7 @@ async def inbound_lead_created(
             "timezone": timezone, "form": form,
             "captured_at": datetime.now(UTC).isoformat(),
             **({"consents": consents} if consents else {}),
+            **({"no_calls": True} if no_calls else {}),
             **({"answers": dict(list(answers.items())[:10])} if answers else {})})
     except Exception as exc:  # noqa: BLE001 -- the lead already committed
         _log.error("inbound_lead_created hook failed", extra={

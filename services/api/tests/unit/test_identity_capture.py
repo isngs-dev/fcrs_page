@@ -130,3 +130,22 @@ def test_wrap_up_asks_only_for_what_is_missing_and_keeps_the_exact_disclosure() 
     assert "email" not in phone_only.replace(ic.PHONE_ASK, "")
     email_only = ic.wrap_up_reply("Sam", need_name=False, need_email=True, need_phone=False)
     assert "email" in email_only and ic.PHONE_ASK not in email_only
+
+
+@pytest.mark.parametrize(("text", "email_only"), [
+    ("No just email me", True), ("Just follow-up through email", True),  # a real chat, 2026-11-03
+    ("email only please", True), ("Please don't call me", True), ("I'd prefer email", True),
+    ("contact me by email", True), ("no calls please", True), ("Just send me an email", True),
+    ("I don't want to share my number", True), ("email is fine", True),
+    ("Do you send email reminders?", False), ("Can you email me the price?", False),
+    ("I don't call it a roof, it's a shed", False), ("Will the leads be genuine", False),
+    ("I emailed your team last week", False),
+])
+def test_wants_email_only(text: str, email_only: bool) -> None:
+    assert ic.wants_email_only(text) is email_only
+
+
+def test_email_only_reply_confirms_the_email_or_asks_for_one() -> None:
+    confirmed = ic.email_only_reply("Sam", "sam@example.com")
+    assert "won't call" in confirmed and "sam@example.com" in confirmed
+    assert "email" in ic.email_only_reply("Sam", None) and ic.PHONE_ASK not in confirmed

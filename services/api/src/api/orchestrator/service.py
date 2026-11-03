@@ -755,8 +755,25 @@ async def _resolve_turn(
             lead = await identity_capture.save_email(db, claims, lead, email)
             captured_email = True
         first_name = identity_capture.safe_first_name(lead.name if lead else None)
+        declined_call = identity_capture.EMAIL_ONLY_INTENT in recent_bot
+        if identity_capture.wants_email_only(message):
+            if lead is not None and (lead.email or lead.phone):
+                await identity_capture.email_only(db, claims, lead)
+            await provider.aclose()
+            return _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=identity_capture.email_only_reply(first_name, lead.email if lead else None),
+                decision="answer",
+                confidence=None,
+                sources=[],
+                intent=identity_capture.EMAIL_ONLY_INTENT,
+                action=None,
+                grounded=False,
+                tokens=None,
+            )
         if captured_email and email and identity_capture.is_only_email(message, email):
-            ask_number = not (lead and lead.phone) and not asked_phone
+            ask_number = not (lead and lead.phone) and not asked_phone and not declined_call
             await provider.aclose()
             return _FixedOutcome(
                 conversation_id=conversation_id,
@@ -803,7 +820,7 @@ async def _resolve_turn(
             )
         if identity_capture.is_closing(message):
             need = {"need_name": not (lead and lead.name), "need_email": not lead_has_email,
-                    "need_phone": not lead_has_phone}
+                    "need_phone": not lead_has_phone and not declined_call}
             already = any(i in recent_bot for i in (identity_capture.WRAP_UP_INTENT,
                                                     identity_capture.WRAP_UP_PHONE_INTENT))
             if any(need.values()) and not already:

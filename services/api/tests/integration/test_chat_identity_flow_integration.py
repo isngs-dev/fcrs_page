@@ -437,3 +437,75 @@ async def test_a_returning_visitor_is_rung_on_the_number_they_just_gave(
     assert await _dialled(db, tenant) == "+918828393252"
     assert await db.fetchval("SELECT phone FROM contacts WHERE tenant_id = $1 AND "
                              "contact_id = $2", other, elsewhere) == "+917000000001"
+
+
+# -- "Just email me" (2026-11-03) -------------------------------------------------------------
+
+
+async def _active_steps(db: Database, tenant: str) -> list[tuple[str, str]]:
+    return [(r["channel"], r["status"]) for r in await db.fetch(
+        "SELECT t.channel, t.status FROM outreach_tasks t JOIN outreach_plans p "
+        "USING (tenant_id, plan_id) WHERE p.tenant_id = $1 AND p.status = 'active' "
+        "ORDER BY t.step_index", tenant)]
+
+
+async def test_just_email_me_starts_the_email_follow_up_and_stops_asking_for_a_number(
+    chat: dict[str, Any],
+) -> None:
+    """A real chat: "No just email me" after the number question got "I can't send an email
+    from this chat", and "Just follow-up through email" got the hand-off line."""
+    db, visitor, tenant, provider = chat["db"], chat["visitor"], chat["tenant"], chat["provider"]
+    await _agents_on(db, tenant)
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "Jane"):
+        await say(text)
+    assert (await say("jane@example.com")).reply.endswith(ic.PHONE_ASK)
+    spent = len(provider.prompts)
+
+    for text in ("No just email me", "Just follow-up through email"):
+        reply = await say(text)
+        assert reply.reply == ic.email_only_reply("Jane", "jane@example.com")
+        assert reply.decision == "answer"
+    assert len(provider.prompts) == spent  # no model reply, so no "I can't email you"
+    await dispatch.dispatch_events(db, limit=10)
+    assert await _active_steps(db, tenant) == [("email", "scheduled"), ("email", "scheduled")]
+    assert await db.fetchval("SELECT count(*) FROM outreach_plans WHERE tenant_id = $1",
+                             tenant) == 1
+
+    bye = await say("ok thanks, that's all")  # no "before you go" number ask
+    assert bye.reply == ic.goodbye_reply("Jane")
+
+
+async def test_dont_call_me_calls_off_a_planned_call_and_keeps_the_emails(
+    chat: dict[str, Any],
+) -> None:
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "Jane", "jane@example.com", "(786) 823-3553"):
+        await say(text)
+    await dispatch.dispatch_events(db, limit=10)
+    assert [c for c, _ in await _active_steps(db, tenant)] == ["call", "email", "email"]
+
+    await say("Please don't call me")
+    await dispatch.dispatch_events(db, limit=10)
+    assert await _active_steps(db, tenant) == [
+        ("call", "cancelled"), ("email", "scheduled"), ("email", "scheduled")]
+    assert await db.fetchval(
+        "SELECT count(*) FROM suppression_list WHERE tenant_id = $1 AND channel = 'call' "
+        "AND value_normalised = '+17868233553'", tenant) == 1
+
+
+async def test_email_only_before_an_email_asks_for_the_email_then_never_for_a_number(
+    chat: dict[str, Any],
+) -> None:
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "Jane"):
+        await say(text)
+    assert (await say("Just email me please")).reply == ic.email_only_reply("Jane", None)
+    ack = await say("jane@example.com")
+    assert ack.reply == ic.email_ack_reply("Jane", "jane@example.com", ask_phone=False)
+    await dispatch.dispatch_events(db, limit=10)
+    assert [c for c, _ in await _active_steps(db, tenant)] == ["email", "email"]

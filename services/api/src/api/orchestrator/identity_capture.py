@@ -44,6 +44,7 @@ PHONE_CAPTURED_INTENT = "phone_captured"
 WRAP_UP_INTENT = "wrap_up"  # "before you go" without the number question
 WRAP_UP_PHONE_INTENT = "wrap_up_phone"  # with PHONE_ASK: a number after it is call consent
 GOODBYE_INTENT = "chat_goodbye"  # the chat is over: a waiting chat call rings now
+EMAIL_ONLY_INTENT = "email_only"  # "just email me": no number asked for after this
 # A number typed right after a bot message with one of these intents is AI-call consent.
 PHONE_ASK_INTENTS = (ASK_PHONE_INTENT, WRAP_UP_PHONE_INTENT)
 CHAT_EMAIL_CONSENT_VERSION = "chat-2026-10-a"  # see api.agents.consent_wording
@@ -158,6 +159,34 @@ def wants_a_call(message: str) -> bool:
     return bool(_CALL_RE.search(message))
 
 
+_EMAIL_ONLY_RE = re.compile(
+    r"\b(?:(?:just|only)\s+(?:send\s+(?:me\s+)?(?:an?\s+)?)?e-?mail"
+    r"|e-?mail\s+(?:me\s+)?(?:only|instead)|e-?mail\s+is\s+(?:fine|better|best|enough|ok(?:ay)?)"
+    r"|(?:follow(?:\s*-\s*|\s+)?up|contact|reach|get back to|write to)\s+(?:with\s+)?(?:me\s+)?"
+    r"(?:by|through|via|over|on|in)\s+(?:an?\s+)?e-?mail"
+    r"|prefer\s+(?:an?\s+)?e-?mail|rather\s+(?:get\s+)?(?:an?\s+)?e-?mail"
+    r"|(?:don'?t|do\s+not|never)\s+(?:want\s+(?:a\s+|any\s+)?(?:phone\s+)?calls?|call\s+me"
+    r"|ring\s+me|phone\s+me)"
+    r"|no\s+(?:phone\s+)?calls?"
+    r"|(?:don'?t|do\s+not|rather\s+not|won'?t|prefer\s+not\s+to)\s+(?:want\s+to\s+)?"
+    r"(?:share|give)\s+(?:you\s+)?my\s+(?:phone\s+)?number)\b", re.I)
+
+
+def wants_email_only(message: str) -> bool:
+    """A short "just email me" / "don't call me" (not a question).
+    ponytail: phrase list; a longer or odd wording just gets a normal answer."""
+    text = message.strip()
+    return "?" not in text and len(text.split()) <= 12 and bool(_EMAIL_ONLY_RE.search(text))
+
+
+def email_only_reply(first_name: str | None, email: str | None) -> str:
+    who = f", {first_name}" if first_name else ""
+    if email:
+        return (f"No problem{who}, we won't call. We'll follow up by email at {email}. "
+                "What else can I help you with?")
+    return f"No problem{who}, we won't call. What's the best email for us to follow up on?"
+
+
 def is_closing(message: str) -> bool:
     """A short goodbye ("ok thanks, that's all"). A bare "thanks"/"ok" mid-chat isn't one.
     ponytail: phrase list; a closing worded some other way just gets a normal answer."""
@@ -265,6 +294,14 @@ async def save_phone(db: Database, claims: AuthClaims, lead: Lead | None, phone:
             db, claims, lead_id=updated.lead_id, channels=["call"],
             version=CHAT_EMAIL_CONSENT_VERSION, timezone=timezone, form="chat")
     return updated
+
+
+async def email_only(db: Database, claims: AuthClaims, lead: Lead) -> None:
+    """"Just email me": the email follow-up starts (one already running carries on) and any
+    planned call is called off, the way an emailed "don't call" is (A11 M5)."""
+    await agent_hooks.inbound_lead_created(
+        db, claims, lead_id=lead.lead_id, channels=["email"] if lead.email else [],
+        version=CHAT_EMAIL_CONSENT_VERSION, timezone=None, form="chat", no_calls=True)
 
 
 def deferred_question(messages: list[Any]) -> str | None:

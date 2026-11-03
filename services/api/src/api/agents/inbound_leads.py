@@ -11,8 +11,13 @@ from common.errors import ConflictError, ValidationError
 
 from api.agents import memory, planner
 from api.agents.consent_wording import consent_record
-from api.agents.outreach_repository import get_active_plan, stop_plan
-from api.agents.repository import add_consent, get_agent_settings
+from api.agents.outreach_repository import (
+    cancel_channel_tasks,
+    get_active_plan,
+    stop_plan,
+    stop_plan_if_empty,
+)
+from api.agents.repository import add_consent, do_not_contact, get_agent_settings
 from api.contacts.repository import (
     add_identity,
     create_contact,
@@ -55,13 +60,20 @@ async def handle_inbound_lead(db: Database, claims: AuthClaims, payload: dict[st
     if not settings.inbound_auto_enabled:
         return "AUTOMATION_OFF"
     channels: list[str] = payload.get("channels") or []
-    if not channels:
+    if not channels and not payload.get("no_calls"):
         return "NO_CHANNEL_CONSENT"
     lead = await get_lead(db, claims, payload["lead_id"])
     if lead is None:
         return "LEAD_GONE"
 
     contact_id = await _ensure_contact(db, claims, lead)
+    if payload.get("no_calls"):  # "just email me" in the chat: as an emailed "don't call" (A11 M5)
+        await do_not_contact(db, claims, contact_id, reason="dnc_request", source="chat",
+                             channel="call")
+        await cancel_channel_tasks(db, claims, contact_id, "call", reason="NO_CALLS")
+        await stop_plan_if_empty(db, claims, contact_id, reason="no_channel_left")
+        if not channels:
+            return "calls_stopped"
     if "call" in channels and lead.phone:
         # The number they just agreed to be called on is the one to ring: the contact may
         # predate it (made at the email, or an earlier visit with another number).
