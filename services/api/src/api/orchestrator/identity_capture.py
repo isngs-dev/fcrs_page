@@ -45,6 +45,7 @@ WRAP_UP_INTENT = "wrap_up"  # "before you go" without the number question
 WRAP_UP_PHONE_INTENT = "wrap_up_phone"  # with PHONE_ASK: a number after it is call consent
 GOODBYE_INTENT = "chat_goodbye"  # the chat is over: a waiting chat call rings now
 EMAIL_ONLY_INTENT = "email_only"  # "just email me": no number asked for after this
+ASK_EMAIL_INTENT = "ask_email"  # our own email ask, after their first answered question
 # A number typed right after a bot message with one of these intents is AI-call consent.
 PHONE_ASK_INTENTS = (ASK_PHONE_INTENT, WRAP_UP_PHONE_INTENT)
 CHAT_EMAIL_CONSENT_VERSION = "chat-2026-10-a"  # see api.agents.consent_wording
@@ -57,6 +58,10 @@ ASK_NAME_REPLY = "Happy to help with that! Before we dive in, what's your name?"
 PHONE_ASK = ("And what's the best number to reach you? If you share it, our team may call you "
              "about your enquiry, including with our AI assistant, and you can ask us to stop "
              "anytime.")
+# Added by code (once) to the answer of their first real question (2026-11-04: a whole chat
+# went by without the model asking). Same promise as the chat email consent wording.
+EMAIL_ASK = ("Our team can follow up with more details on this. What's the best email to "
+             "reach you?")
 # Shown to the model on every turn until they've shared an email: it picks the moment.
 EMAIL_GUIDANCE = (
     "Until they've shared an email: when it would genuinely help them -- they want a price, "

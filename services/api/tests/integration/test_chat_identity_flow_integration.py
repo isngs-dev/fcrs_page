@@ -35,10 +35,11 @@ class _Provider:
     def __init__(self) -> None:
         self.prompts: list[Any] = []
         self.classified: list[str] = []
+        self.label = "question"
 
     async def classify(self, text: str, labels: list[str], **_: Any) -> str:
         self.classified.append(text)
-        return "question"
+        return self.label
 
     async def generate(self, messages: list[Any], **_: Any) -> Completion:
         self.prompts.append(messages)
@@ -99,9 +100,12 @@ async def test_name_first_then_answers_by_name_then_asks_for_email(chat: dict[st
     assert await db.fetchval("SELECT name FROM leads WHERE visitor_id = $1",
                              visitor.subject) == "Jane"
 
-    # No fixed turn: until there's an email, the model may ask when it fits (2026-10-30).
-    assert ic.EMAIL_GUIDANCE in provider.prompts[-1][0].content
-    await say("Do you also do gutters?", conv)
+    # 2026-11-04: their first answered question ends with our own email ask (the model's
+    # was too easy to skip), and that turn the model isn't told to ask as well.
+    assert second.reply == "A grounded answer.\n\n" + ic.EMAIL_ASK
+    assert ic.EMAIL_GUIDANCE not in provider.prompts[-1][0].content
+    gutters = await say("Do you also do gutters?", conv)
+    assert ic.EMAIL_ASK not in gutters.reply  # asked once; the model may still ask when it fits
     assert ic.EMAIL_GUIDANCE in provider.prompts[-1][0].content
 
     ack = await say("sure, jane@example.com", conv)
@@ -509,3 +513,25 @@ async def test_email_only_before_an_email_asks_for_the_email_then_never_for_a_nu
     assert ack.reply == ic.email_ack_reply("Jane", "jane@example.com", ask_phone=False)
     await dispatch.dispatch_events(db, limit=10)
     assert [c for c, _ in await _active_steps(db, tenant)] == ["email", "email"]
+
+
+# -- The email ask after an answer (2026-11-04) ---------------------------------------------
+
+
+async def test_the_first_answered_question_asks_for_the_email_and_chitchat_does_not(
+    chat: dict[str, Any],
+) -> None:
+    """A real chat answered two questions and never asked for an email."""
+    db, visitor, provider = chat["db"], chat["visitor"], chat["provider"]
+    say = _sayer(db, visitor)
+    await say("Is it just Google and Facebook advertising?")
+    provider.label = "chitchat"
+    hello = await say("Aastha")
+    assert ic.EMAIL_ASK not in hello.reply
+    provider.label = "question"
+    answered = await say("So what's included beyond the advertising?")
+    assert answered.reply.endswith(ic.EMAIL_ASK)
+    assert await db.fetchval("SELECT count(*) FROM messages WHERE conversation_id = $1 "
+                             "AND intent = $2", answered.conversation_id, ic.ASK_EMAIL_INTENT) == 1
+    ack = await say("aastha@example.com")
+    assert ack.reply == ic.email_ack_reply("Aastha", "aastha@example.com", ask_phone=True)

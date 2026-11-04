@@ -709,6 +709,7 @@ async def _resolve_turn(
     captured_email = False
     captured_phone = False
     asked_phone = False
+    recent_bot: list[str | None] = []
     if cfg.identity_gate_enabled:
         lead = await identity_capture.visitor_lead(db, claims)
         recent_bot = await get_recent_assistant_intents(db, claims, conversation_id, limit=20)
@@ -1044,6 +1045,14 @@ async def _resolve_turn(
         known = await _covered_by_knowledge(db, claims, config, message,
                                             threshold=cfg.escalate_threshold)
         intent = "question" if known else intent
+
+    # Step 7.5 (2026-11-04): their first real question that gets a clean answer ends with our
+    # own email ask (once) -- the model's (6.5) was too easy to skip -- and that turn the
+    # model isn't told to ask as well.
+    if (ask_email and intent == "question" and suffix is None
+            and identity_capture.ASK_EMAIL_INTENT not in recent_bot):
+        suffix, suffix_intent = identity_capture.EMAIL_ASK, identity_capture.ASK_EMAIL_INTENT
+        ask_email = False
 
     # Step 8: branch on intent -> decision -> plan (decisions 2 + 6).
     if intent == "chitchat":
