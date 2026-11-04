@@ -34,8 +34,10 @@ SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
 ]
 
-# Files allowed to carry example/placeholder secrets.
-SECRET_SCAN_EXEMPT = {".env.example", "secrets.md", "skill.md"}
+# Files allowed to carry example/placeholder secrets. widget.js is the built
+# widget bundle: the vendored Plivo browser SDK has `AccessToken : "` log text
+# and a `..._ACCESS_TOKEN="https://..."` URL constant that trip the generic rule.
+SECRET_SCAN_EXEMPT = {".env.example", "secrets.md", "skill.md", "widget.js"}
 
 # Filenames that are never appropriate to commit, regardless of content --
 # exactly the shape of file this hook exists because of.
