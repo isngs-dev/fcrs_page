@@ -23,7 +23,7 @@ from api.agents.repository import get_agent_settings, start_run
 from api.config import get_api_settings
 from api.contacts.repository import get_contact, list_identities
 from api.email_agent import repository as repo
-from api.email_agent.composer import assemble_body, compose
+from api.email_agent.composer import assemble_body, compose, sender_name
 from api.email_agent.config_repository import (
     EmailAgentConfig,
     get_email_agent_config,
@@ -174,7 +174,8 @@ async def send_message(db: Database, claims: AuthClaims, message_id: str, *, run
                           from_statuses=("approved", "sending"))
     try:
         sent = await provider.send(OutboundEmail(
-            from_address=message.from_addr, from_name=config.from_name, to=message.to_addr,
+            from_address=message.from_addr, from_name=sender_name(config.from_name),
+            to=message.to_addr,
             subject=message.subject, body_text=message.body_text,
             message_id=message.rfc_message_id,
             # A3 F2: with a reply domain, replies come back to the inbound webhook.

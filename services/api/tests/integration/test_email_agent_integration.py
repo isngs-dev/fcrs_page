@@ -174,6 +174,7 @@ async def test_auto_send_sends_with_headers_and_writes_back(env: dict[str, Any])
     assert email.unsubscribe_url and "/public/email/unsubscribe/" in email.unsubscribe_url
     assert "Book a time that suits you: https://cal.com/acme" in email.body_text
     assert "— Rebecca, AI assistant for Acme" in email.body_text and _ADDRESS in email.body_text
+    assert email.from_name == "Rebecca at Acme"  # a person, not a brand: Primary over Promotions
 
     task = await _task(db)
     assert task["status"] == "completed"

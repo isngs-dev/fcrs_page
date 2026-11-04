@@ -115,6 +115,12 @@ async def compose(
     )
 
 
+def sender_name(company: str | None) -> str:
+    """The From name: a person at the business ("Rebecca at Acme"), like the signature. Gmail
+    files mail from a brand name in Promotions more often than mail from a person."""
+    return f"Rebecca at {company}" if company else "Rebecca"
+
+
 def assemble_body(*, body: str, booking: str | None, company: str, physical_address: str,
                   unsubscribe_url: str) -> str:
     """The model's body + code-owned footer (E5)."""

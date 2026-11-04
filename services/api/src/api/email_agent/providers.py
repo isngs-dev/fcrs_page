@@ -62,6 +62,15 @@ def _clean(value: str) -> str:
     return re.sub(r"[\r\n]+", " ", value).strip()
 
 
+_UNSUBSCRIBE_LINK = re.compile(r'Unsubscribe: <a href="([^"]+)">[^<]+</a>')
+
+
+def email_html(body_text: str) -> str:
+    """The HTML twin, with the footer's long signed address shown as just "Unsubscribe"
+    (the plain-text part keeps the address: there it can't be a link)."""
+    return _UNSUBSCRIBE_LINK.sub(r'<a href="\1">Unsubscribe</a>', _text_to_html(body_text))
+
+
 def thread_headers(email: OutboundEmail) -> dict[str, str]:
     headers = {"Message-ID": email.message_id}
     if email.in_reply_to:
@@ -84,7 +93,7 @@ def sendgrid_payload(email: OutboundEmail) -> dict[str, Any]:
         "subject": _clean(email.subject),
         "content": [
             {"type": "text/plain", "value": email.body_text},
-            {"type": "text/html", "value": _text_to_html(email.body_text)},
+            {"type": "text/html", "value": email_html(email.body_text)},
         ],
         "headers": thread_headers(email),
         # SendGrid's own click/open tracking rewrites links and adds pixels;
@@ -142,7 +151,7 @@ def smtp_message(email: OutboundEmail) -> EmailMessage:
     for key, value in thread_headers(email).items():
         msg[key] = value
     msg.set_content(email.body_text)
-    msg.add_alternative(_text_to_html(email.body_text), subtype="html")
+    msg.add_alternative(email_html(email.body_text), subtype="html")
     return msg
 
 

@@ -16,7 +16,10 @@
    - escalate → do **not** send an AI answer; `escalate_to_human` and (if configured) send a
      "a teammate will reply" note.
    Output: subject + plain text + HTML (via the existing text→HTML path), booking link, signature,
-   physical address footer. **Booking link — gap:** native bookings exist only inside the chat widget;
+   physical address footer. *(2026-11-04: the HTML part shows the footer's signed unsubscribe
+   address as a plain "Unsubscribe" link — the text part keeps the address; the From name is
+   "Rebecca at {business name}", a person rather than a brand, to lean Gmail toward Primary.)*
+   **Booking link — gap:** native bookings exist only inside the chat widget;
    there is no standalone booking page today (only a tenant's Calendly URL, if configured). A2 adds a
    **signed, contact-bound booking page** (`/book/{signed_token}`: slots + confirm, reusing
    `scheduling`'s slot + book logic and consent capture) — or, if you prefer, A2 links to Calendly where

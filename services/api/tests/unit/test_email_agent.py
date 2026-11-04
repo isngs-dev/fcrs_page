@@ -252,3 +252,26 @@ def test_footer_is_code_owned() -> None:
                                   unsubscribe_url="https://u/1")
     assert body.endswith("Unsubscribe: https://u/1")
     assert "— Rebecca, AI assistant for Acme" in body and "1 Main St, Miami FL" in body
+
+
+def test_the_html_footer_shows_unsubscribe_not_the_long_address() -> None:
+    """2026-11-04: the full signed address in the footer looked like spam."""
+    from dataclasses import replace
+
+    url = "https://api.example.com/public/email/unsubscribe/ZTE1.tok_-a8"
+    body = composer.assemble_body(body="Hi Jane,\n\nSee https://acme.com", booking=None,
+                                  company="Acme", physical_address="1 Main St",
+                                  unsubscribe_url=url)
+    email = replace(_EMAIL, body_text=body)
+    smtp_html = smtp_message(email).get_body(("html",))
+    assert smtp_html is not None
+    for page in (sendgrid_payload(email)["content"][1]["value"], smtp_html.get_content()):
+        assert f'<a href="{url}">Unsubscribe</a>' in page
+        assert f">{url}<" not in page
+        assert '<a href="https://acme.com">https://acme.com</a>' in page  # other links as before
+    assert url in sendgrid_payload(email)["content"][0]["value"]  # plain text keeps the address
+
+
+def test_the_sender_name_is_rebecca_at_the_business() -> None:
+    assert composer.sender_name("iSN Business Solutions") == "Rebecca at iSN Business Solutions"
+    assert composer.sender_name(None) == "Rebecca"
