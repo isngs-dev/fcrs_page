@@ -308,3 +308,16 @@ def test_the_live_call_phrases_parse() -> None:
     assert script.parse_when("can you do it on 3rd November", today) == (date(2026, 11, 3), None)
     assert script.parse_when("uh 6:30 p.m. EST", today) == (None, (18, 30))
     assert script.parse_when("yes 6:30 p.m. EST", today) == (None, (18, 30))
+
+
+@pytest.mark.parametrize(("text", "move", "keep"), [
+    ("I need to reschedule", True, False),
+    ("can we move it to Friday", True, False),
+    ("I can't make that time", True, False),
+    ("a different day would be better", True, False),
+    ("let's keep it", False, True),
+    ("that works for me", False, True),
+    ("how much does it cost", False, False),
+])
+def test_keep_or_reschedule_a_booked_call(text: str, move: bool, keep: bool) -> None:
+    assert (script.wants_reschedule(text), script.keeps_booking(text)) == (move, keep)

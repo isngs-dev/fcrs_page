@@ -178,6 +178,32 @@ def say_time(at: datetime, timezone: str) -> str:
             f"{'AM' if local.hour < 12 else 'PM'} {_ZONE_NAMES.get(timezone, timezone)} time")
 
 
+def booked_question(at: datetime, timezone: str) -> str:
+    """They already booked (e.g. on the website form): keep it or move it, never book again."""
+    return (f"I see you've booked a call with our team for {say_time(at, timezone)}. "
+            "Would you like to keep that time, or reschedule?")
+
+
+def kept_line(at: datetime, timezone: str) -> str:
+    return (f"Great, you're all set for {say_time(at, timezone)}. "
+            "Is there anything I can help with before then?")
+
+
+# ponytail: any "move"/"change" while a booking is held counts; the read-back catches a misfire.
+_RESCHEDULE = re.compile(
+    r"\bre-?schedul|\b(?:move|change|push)\b|\b(?:another|different|other) (?:day|time)\b"
+    r"|\b(?:can'?t|cannot|won'?t|not able to) make\b", re.I)
+_KEEP = re.compile(r"\bkeep\b|\bthat (?:works|is fine|'s fine)\b|\bstill (?:good|works)\b", re.I)
+
+
+def wants_reschedule(text: str) -> bool:
+    return bool(_RESCHEDULE.search(text))
+
+
+def keeps_booking(text: str) -> bool:
+    return bool(_KEEP.search(text))
+
+
 def ask_hour_line(day: date) -> str:
     return f"What time would you like on {day:%A}, {day:%B} {day.day}?"
 
@@ -343,7 +369,7 @@ def say_email(email: str) -> str:
 
 # -- Per-call memory ------------------------------------------------------------------------
 
-Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask"]
+Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask", "booked_check"]
 
 
 @dataclass
@@ -360,13 +386,16 @@ class CallState:
     recording_started: bool = False
     question: str | None = None  # asked if they say yes to the opening (written per contact)
     history: list[list[str]] = field(default_factory=list)  # [role, text]
+    booked: dict[str, str] | None = None  # their upcoming booking: event_id, at (ISO), tz
+    rescheduling: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "day": self.day, "at": self.at, "zone": self.zone,
                 "chosen": self.chosen, "email": self.email, "email_tries": self.email_tries,
                 "silences": self.silences, "misses": self.misses,
                 "recording_started": self.recording_started, "question": self.question,
-                "history": self.history[-12:]}
+                "history": self.history[-12:], "booked": self.booked,
+                "rescheduling": self.rescheduling}
 
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
@@ -378,4 +407,6 @@ class CallState:
                    misses=int(data.get("misses", 0)),
                    recording_started=bool(data.get("recording_started", False)),
                    question=data.get("question"),
-                   history=[list(h) for h in data.get("history", [])])
+                   history=[list(h) for h in data.get("history", [])],
+                   booked=data.get("booked"),
+                   rescheduling=bool(data.get("rescheduling", False)))

@@ -58,8 +58,10 @@ from api.scheduling.booking import (
 from api.scheduling.calendar_config_repository import get_calendar_config
 from api.scheduling.reminder_repository import create_reminder_jobs
 from api.scheduling.repository import (
+    cancel_event,
     create_event,
     get_availability,
+    get_upcoming_for_contact,
     list_booked,
 )
 from api.scheduling.slots import compute_slots
@@ -194,7 +196,15 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
     # Written now, not on answer: the model takes seconds, and that would be dead air.
     hook, question = await _opening_lines(db, claims, task.contact_id, task.intent,
                                           config.voice_model)
-    await repo.update_session(db, claims, call_id, session={"hook": hook, "question": question})
+    written: dict[str, Any] = {"hook": hook, "question": question}
+    contact = await get_contact(db, claims, task.contact_id)
+    upcoming = (await get_upcoming_for_contact(db, claims, lead_id=contact.lead_id,
+                                               email=contact.email) if contact else None)
+    if upcoming is not None:  # booked already (e.g. on the website form): keep or move it
+        written["question"] = script.booked_question(upcoming.starts_at, upcoming.timezone)
+        written["booked"] = {"event_id": upcoming.event_id, "tz": upcoming.timezone,
+                             "at": upcoming.starts_at.astimezone(UTC).isoformat()}
+    await repo.update_session(db, claims, call_id, session=written)
     try:
         provider = await telephony_for(db, str(claims.tenant_id), config)
         placed = await provider.place_call(
@@ -260,7 +270,8 @@ async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSession
                           hook=written.get("hook"))
     await repo.update_session(db, claims, session.call_id, status="in_progress",
                               answered_at=datetime.now(UTC), provider_call_uuid=call_uuid,
-                              session=script.CallState(question=written.get("question")).to_json())
+                              session=script.CallState(question=written.get("question"),
+                                                       booked=written.get("booked")).to_json())
     await repo.add_turn(db, claims, session.call_id, speaker="rebecca", text=line)
     return _listen(line, session.call_id, config.voice, OPENING_WAIT)
 
@@ -358,10 +369,10 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
 
 
 async def _handoff(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
-                   reason: str) -> None:
+                   reason: str, **detail: str) -> None:
     await emit_event_safe(db, claims, kind="agent_call_needs_human", category="leads",
                           target_type="call", target_id=session.call_id,
-                          payload={"reason": reason, "contact_id": session.contact_id},
+                          payload={"reason": reason, "contact_id": session.contact_id, **detail},
                           actor_id=None)
 
 
@@ -505,9 +516,24 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             return await say(script.TAKEN_LINE)
         if not email:
             await _handoff(db, claims, session, "email_needed")
+        if state.rescheduling and state.booked:  # their old invite came from elsewhere
+            await cancel_event(db, claims, state.booked["event_id"])
+            await _handoff(db, claims, session, "booking_rescheduled",
+                           old_starts_at=state.booked["at"], new_starts_at=chosen.isoformat())
         return await bye(script.booked_line(chosen, tz, emailed=bool(email), link=bool(meet_url)),
                          "booked")
 
+    # They booked already (the website form): keep it or move it -- never a second booking.
+    if (state.booked and not state.rescheduling and state.stage in ("talking", "booked_check")
+            and (script.wants_reschedule(speech)
+                 or (state.stage == "booked_check" and (kind in ("no", "book") or named_time)))):
+        state.rescheduling, state.stage = True, "asking_time"
+        return await pick_time() if named_time else await say(script.OTHER_TIME_LINE)
+    if state.stage == "booked_check":
+        state.stage = "talking"
+        if state.booked and (kind == "yes" or script.keeps_booking(speech)):
+            return await say(script.kept_line(datetime.fromisoformat(state.booked["at"]),
+                                              state.booked["tz"]))
     if state.stage == "discovery":  # they were asked what they need
         state.stage = "talking"
         if kind == "no":
@@ -520,7 +546,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                                       kind="need", text=speech)
             return await say(script.DISCOVERY_THANKS_LINE)
     if kind == "yes" and opening_question:  # "Have you got a minute?" -> yes: get them talking
-        state.stage = "discovery"
+        state.stage = "booked_check" if state.booked else "discovery"
         return await say(f"Great. {opening_question}")
 
     # Booking (L6, 2026-10-30): the caller's day and time -> their email if we don't have it ->
@@ -566,8 +592,10 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     offered = _last_said_offer(state)
     if kind == "book" or (offered and (kind == "yes" or named_time)) or None not in when:
         return await pick_time()
+    held = bool(state.booked) and not state.rescheduling  # a booking stands: no booking offers
     if kind == "yes":
-        return await say("Great! What questions can I answer, or would you like me to find a "
+        return await say("Great! What questions can I answer?" if held else
+                         "Great! What questions can I answer, or would you like me to find a "
                          "time with our team?")
     if kind == "no":
         if len(state.history) <= 2:  # "no" to "is now a good time?"
@@ -579,7 +607,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         about = (await memory.render(db, claims, session.contact_id)
                  if session.contact_id else None)
         reply = await answer_from_knowledge(db, claims, speech, history, model=config.voice_model,
-                                            about_caller=about, can_book=True)
+                                            about_caller=about, can_book=not held)
     except Exception as exc:  # noqa: BLE001 -- the team follows up instead
         _log.warning("call answer failed", extra={"event": "call_answer_failed",
                                                   "reason": type(exc).__name__})
@@ -592,7 +620,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if reply is None:
         state.misses += 1
         reply = script.MISS_LINE
-        back = back or "Would you like me to find a time with them?"
+        back = back or ("They can go over it with you on your call." if held
+                        else "Would you like me to find a time with them?")
     return await say(f"{reply} {back}" if back else reply)
 
 

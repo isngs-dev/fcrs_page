@@ -527,6 +527,27 @@ async def cancel_event(db: Database, claims: AuthClaims, event_id: str) -> bool:
     return str(result).endswith(" 1")
 
 
+async def record_form_booking(
+    db: Database, claims: AuthClaims, *, ref: str, starts_at: datetime, ends_at: datetime,
+    timezone: str, lead_id: str, email: str | None, name: str | None, consent: dict[str, Any],
+) -> str | None:
+    """A call the person booked on the client's own website form (the site sent the invite):
+    recorded ``source='form'``, ``calendar_ref=ref``, no calendar sync. ``None`` when the
+    tenant already has a booking at that time (``schedule_events_no_double_book``)."""
+    _reject_global(claims)
+    event_id = uuid4().hex
+    try:
+        await db.execute(
+            "INSERT INTO schedule_events (tenant_id, event_id, lead_id, visitor_id, email, name, "
+            "starts_at, ends_at, timezone, status, calendar_ref, consent, source) "
+            "VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, 'booked', $9, $10, 'form')",
+            claims.tenant_id, event_id, lead_id, email, name, starts_at, ends_at, timezone, ref,
+            consent)
+    except asyncpg.UniqueViolationError:
+        return None
+    return event_id
+
+
 async def get_upcoming_for_contact(db: Database, claims: AuthClaims, *, lead_id: str | None,
                                    email: str | None) -> ScheduleEvent | None:
     """The person's soonest future booked event, by their lead or e-mail (A11 M5)."""

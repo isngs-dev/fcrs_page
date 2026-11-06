@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
+from datetime import time as dtime
 from email import message_from_bytes, policy
 from email.message import EmailMessage
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import phonenumbers
 from bs4 import BeautifulSoup
@@ -36,6 +39,90 @@ class Normalised:
     submission_id: str | None = None
     form: str | None = None
     campaign: str | None = None
+    # A call they booked on the form itself (the site makes its own Meet invite).
+    booking_date: date | None = None
+    booking_time: dtime | None = None
+    booking_zone: str | None = None
+
+    @property
+    def booking(self) -> tuple[datetime, str] | None:
+        return booking_at(self)
+
+
+def booking_at(lead: Normalised, default_zone: str | None = None
+               ) -> tuple[datetime, str] | None:
+    """``(start in UTC, zone)`` of the call booked on the form -- only when the date, the
+    time and a real IANA zone are all clear (the form's, else ``default_zone``)."""
+    zone = lead.booking_zone or lead.values.get("timezone") or default_zone
+    if lead.booking_date is None or lead.booking_time is None or not _real_zone(zone):
+        return None
+    assert zone is not None  # noqa: S101 -- _real_zone checked it
+    local = datetime.combine(lead.booking_date, lead.booking_time, ZoneInfo(zone))
+    return local.astimezone(UTC), zone
+
+
+def _real_zone(zone: str | None) -> bool:
+    if not zone or "/" not in zone:
+        return False
+    try:
+        ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
+
+
+_BOOKING_WORDS = ("booking", "booked", "meeting", "call", "appointment", "preferred",
+                  "scheduled", "schedule", "requested")
+_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%d %B %Y")
+_TIME_FORMATS = ("%H:%M", "%I:%M %p", "%I:%M%p", "%I %p", "%I%p")
+_WEEKDAY = re.compile(r"^(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s*", re.I)
+_ZONE_IN_TEXT = re.compile(r"\(?\b([A-Za-z]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)\b\)?")
+_TIME_IN_TEXT = re.compile(r"\b\d{1,2}(?::\d{2})?\s*[ap]\.?\s?m\b\.?|\b\d{1,2}:\d{2}\b", re.I)
+
+
+def _parse(text: str, formats: tuple[str, ...]) -> datetime | None:
+    for fmt in formats:
+        try:
+            return datetime.strptime(text, fmt)  # noqa: DTZ007 -- naive part; zone added later
+        except ValueError:
+            continue
+    return None
+
+
+def _date(text: str) -> date | None:
+    parsed = _parse(_WEEKDAY.sub("", text.strip()).strip(" ,"), _DATE_FORMATS)
+    return parsed.date() if parsed else None
+
+
+def _time(text: str) -> dtime | None:
+    parsed = _parse(text.strip().upper().replace(".", ""), _TIME_FORMATS)
+    return parsed.time() if parsed else None
+
+
+def _read_booking(out: Normalised, fields: dict[str, str]) -> None:
+    """Fields named like a booking: separate date / time fields, or one with all of it
+    ("Friday, November 20, 2026 at 3:30 PM (America/New_York)")."""
+    for label, raw in fields.items():
+        key, value = _key(label), str(raw).strip()
+        if "zone" in key or "consent" in key or not value:
+            continue
+        if key not in ("date", "time") and not any(w in key for w in _BOOKING_WORDS):
+            continue
+        if "date" in key:
+            out.booking_date = out.booking_date or _date(value)
+        elif "time" in key:
+            out.booking_time = out.booking_time or _time(value)
+        else:
+            zone = _ZONE_IN_TEXT.search(value)
+            rest = _ZONE_IN_TEXT.sub("", value) if zone else value
+            clock = _TIME_IN_TEXT.search(rest)
+            if clock is None:
+                continue
+            day = _date(re.sub(r"\s+at\s*$", "", rest[:clock.start()].strip(), flags=re.I))
+            at = _time(clock.group(0))
+            if day and at:
+                out.booking_date, out.booking_time = day, at
+                out.booking_zone = zone.group(1) if zone else out.booking_zone
 
 
 def _key(label: str) -> str:
@@ -111,6 +198,7 @@ def normalise(fields: dict[str, str]) -> Normalised:
             out.answers[label] = value[:500]
     if "name" not in out.values and (first or last):
         out.values["name"] = " ".join(p for p in (first, last) if p)
+    _read_booking(out, fields)
     return out
 
 

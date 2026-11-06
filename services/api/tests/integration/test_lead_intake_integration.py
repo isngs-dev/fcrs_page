@@ -8,10 +8,11 @@ import hmac
 import json
 import os
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from common.auth import AuthClaims, Role
@@ -345,3 +346,73 @@ async def test_tokens_are_tenant_bound(env: dict[str, Any]) -> None:
     assert config["form_url"].startswith("https://api.example.com/public/intake/forms/")
     assert config["meta_webhook_url"] == "https://api.example.com/public/intake/meta"
     assert "meta_page_token" not in config
+
+
+# -- A call booked on the client's own form (roofengine, 2026-11-06) ------------------------
+
+
+def _site_email(*, when: str, zone: str = "America/New_York", consent: str = "Yes") -> str:
+    """The site's own "new contact form" email to its inbox, forwarded by Gmail."""
+    return _notification(
+        sender="noreply@isngs.com", subject="New contact form submission",
+        body=("New contact form submission\n\nName: Sam Lee\nCompany Name: Lee Roofing\n"
+              "Email: sam@leeroofing.com\nPhone Number: (415) 555-0100\n"
+              "Required Service: Google Ads (PPC)\nMessage: Need more inspection leads\n"
+              f"Call consent: {consent}\nBooking Date: {when[:10]}\n"
+              f"Booking Time: {when[11:]}\nTime zone: {zone}\n"))
+
+
+async def test_a_call_booked_on_the_form_is_recorded_and_the_lead_is_rung(
+        env: dict[str, Any]) -> None:
+    db, a, b = env["db"], env["a"], env["b"]
+    await upsert_agent_settings(db, _claims(a), AgentSettings(
+        enabled_channels=("call", "email"), inbound_auto_enabled=True,
+        physical_address="1 Main St", call_window_start=time(0, 0), call_window_end=time(23, 59)))
+    assert (await _config(env, a, trusted_senders=["isngs.com"],
+                          call_consent_wording=_CALL_WORDING)).status_code == 200
+    day = (datetime.now(UTC) + timedelta(days=3)).date()
+    r = await _parse(env, a, _site_email(when=f"{day:%Y-%m-%d} 15:30"), dkim="{@isngs.com : pass}")
+    assert r.json() == {"status": "accepted"}
+    await dispatch.dispatch_events(db, limit=10)
+
+    lead_id = await db.fetchval("SELECT lead_id FROM leads WHERE tenant_id = $1", a)
+    event = await db.fetchrow("SELECT lead_id, email, starts_at, ends_at, timezone, status, "
+                              "source, calendar_ref FROM schedule_events WHERE tenant_id = $1", a)
+    starts = datetime.combine(day, time(15, 30), tzinfo=ZoneInfo("America/New_York"))
+    assert event is not None and event["starts_at"] == starts
+    assert (event["lead_id"], event["email"]) == (lead_id, "sam@leeroofing.com")
+    assert (event["timezone"], event["status"], event["source"]) == (
+        "America/New_York", "booked", "form")
+    assert event["calendar_ref"].startswith("form:")
+    assert event["ends_at"] - event["starts_at"] == timedelta(minutes=30)
+    # The form's zone is the person's zone (not the 415 area code's) -> calling hours.
+    assert await db.fetchval("SELECT timezone FROM contacts WHERE lead_id = $1",
+                             lead_id) == "America/New_York"
+    channels = [t["channel"] for t in await db.fetch(
+        "SELECT channel FROM outreach_tasks WHERE tenant_id = $1 ORDER BY step_index", a)]
+    assert channels == ["call", "email", "email"]  # rung right away, as any call-consent form
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1",
+                             b) == 0
+
+
+async def test_a_past_or_clashing_form_booking_is_not_recorded_but_the_lead_still_is(
+        env: dict[str, Any]) -> None:
+    from api.scheduling.repository import create_event
+
+    db, a = env["db"], env["a"]
+    assert (await _config(env, a, trusted_senders=["isngs.com"])).status_code == 200
+    past = await _parse(env, a, _site_email(when="2020-01-06 10:00"), dkim="{@isngs.com : pass}")
+    assert past.json() == {"status": "accepted"}
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 0
+
+    day = (datetime.now(UTC) + timedelta(days=4)).date()
+    taken = datetime.combine(day, time(11, 0), tzinfo=ZoneInfo("America/New_York"))
+    await create_event(db, _claims(a), starts_at=taken, ends_at=taken + timedelta(minutes=30),
+                       timezone="America/New_York", visitor_id=None, lead_id=None,
+                       consent={"granted": True})
+    raw = _site_email(when=f"{day:%Y-%m-%d} 11:00").replace("sam@leeroofing.com", "kim@x.com")
+    clash = await _parse(env, a, raw, dkim="{@isngs.com : pass}")
+    assert clash.json() == {"status": "accepted"}
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1 "
+                             "AND source = 'form'", a) == 0
+    assert await db.fetchval("SELECT count(*) FROM leads WHERE tenant_id = $1", a) == 2

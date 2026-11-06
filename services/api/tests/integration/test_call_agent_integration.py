@@ -951,3 +951,68 @@ async def test_admin_routes_rbac_isolation_and_readiness(env: dict[str, Any]) ->
     r = await client.put("/admin/outreach/settings", cookies=_cookie(b),
                          json={"enabled_channels": ["call"]})
     assert r.status_code == 422 and r.json()["error_code"] == "CALL_NOT_READY"
+
+
+# -- They already booked a call on the website form (roofengine, 2026-11-06) ----------------
+
+
+async def _form_booking(env: dict[str, Any], tenant: str, at: datetime) -> str:
+    from api.scheduling.repository import record_form_booking
+
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=tenant)
+    event_id = await record_form_booking(
+        env["db"], claims, ref=f"form:{uuid4().hex}", starts_at=at,
+        ends_at=at + timedelta(minutes=30), timezone="America/New_York", lead_id=uuid4().hex,
+        email="jane@example.com", name="Jane Doe", consent={"granted": True})
+    assert event_id is not None
+    return event_id
+
+
+async def test_a_booked_lead_is_asked_to_keep_or_reschedule_not_to_book(
+        env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    booked_at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(15),
+                                 tzinfo=_NY)
+    await _form_booking(env, a, booked_at)
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+
+    question = service.spoken_text(await _say(env, call_id, "yes sure"))
+    assert question == f"Great. {script.booked_question(booked_at, 'America/New_York')}"
+    kept = service.spoken_text(await _say(env, call_id, "keep it"))
+    assert kept == script.kept_line(booked_at, "America/New_York")
+    assert "find a time" not in service.spoken_text(await _say(env, call_id, "yes"))
+    events = await db.fetch("SELECT status FROM schedule_events WHERE tenant_id = $1", a)
+    assert [e["status"] for e in events] == ["booked"]  # nothing new, nothing cancelled
+
+
+async def test_rescheduling_books_the_new_time_and_asks_the_team_to_cancel_the_old_invite(
+        env: dict[str, Any]) -> None:
+    db, a, b = env["db"], env["a"], env["b"]
+    day = (datetime.now(_NY) + timedelta(days=2)).date()
+    old = await _form_booking(env, a, datetime.combine(day, dtime(15), tzinfo=_NY))
+    other = await _form_booking(env, b, datetime.combine(day, dtime(16), tzinfo=_NY))
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+
+    # Straight to it, without the "have you got a minute?" yes.
+    ask = service.spoken_text(await _say(env, call_id, "actually I need to reschedule my call"))
+    assert ask == script.OTHER_TIME_LINE
+    new_day = day + timedelta(days=1)
+    new = datetime.combine(new_day, dtime(16), tzinfo=_NY)
+    final = service.spoken_text(await _say(env, call_id, f"{new_day:%B} {new_day.day} at 4 pm"))
+    assert final == script.final_check_line(new, "America/New_York", "jane@example.com")
+    booked = service.spoken_text(await _say(env, call_id, "yes"))
+    assert booked.startswith("You're booked for")
+
+    rows = {r["event_id"]: (r["status"], r["source"], r["starts_at"]) for r in await db.fetch(
+        "SELECT event_id, status, source, starts_at FROM schedule_events WHERE tenant_id = $1", a)}
+    assert rows.pop(old)[0] == "cancelled"
+    assert list(rows.values()) == [("booked", "native", new)]
+    assert await db.fetchval("SELECT status FROM schedule_events WHERE event_id = $1",
+                             other) == "booked"  # another tenant's booking is untouched
+    alert = await db.fetchrow("SELECT payload FROM notification_events WHERE tenant_id = $1 "
+                              "AND kind = 'agent_call_needs_human'", a)
+    assert alert is not None and alert["payload"]["reason"] == "booking_rescheduled"
+    assert alert["payload"]["old_starts_at"] == datetime.combine(
+        day, dtime(15), tzinfo=_NY).astimezone(UTC).isoformat()

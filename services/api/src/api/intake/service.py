@@ -6,7 +6,7 @@ is rejected into the intake queue with its reasons -- never guessed or repaired.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from common.auth import AuthClaims
@@ -17,8 +17,9 @@ from api.agents.imports import check_row
 from api.contacts.repository import get_contact, get_contact_id_by_identity
 from api.intake import meta
 from api.intake import repository as repo
-from api.intake.parsers import Normalised, infer_timezone, normalise
+from api.intake.parsers import Normalised, booking_at, infer_timezone, normalise
 from api.leads.repository import add_activity, create_lead
+from api.scheduling.repository import get_availability, record_form_booking
 
 _MAX_ANSWERS = 30
 
@@ -66,6 +67,26 @@ def _consents(lead: Normalised, *, source: str, intake_id: str, email: str | Non
     return given
 
 
+async def _record_booking(db: Database, claims: AuthClaims, lead: Normalised, *, lead_id: str,
+                          intake_id: str, email: str | None, name: str | None,
+                          timezone: str | None, now: datetime) -> None:
+    """A future call booked on the form becomes a ``form`` schedule event (the site already
+    sent the invite): the slot counts as taken and Rebecca offers to keep or reschedule it.
+    A past one, or one at an already-booked time, is left on the lead's answers only."""
+    booked = booking_at(lead, timezone)
+    if booked is None or booked[0] <= now:
+        return
+    starts_at, zone = booked
+    availability = await get_availability(db, claims)
+    minutes = int((availability.rules if availability else {}).get("slot_minutes", 30))
+    await record_form_booking(
+        db, claims, ref=f"form:{intake_id}", starts_at=starts_at,
+        ends_at=starts_at + timedelta(minutes=minutes), timezone=zone, lead_id=lead_id,
+        email=email, name=name,
+        consent={"granted": True, "purpose": "booking", "source": "form",
+                 "intake_id": intake_id, "captured_at": now.isoformat()})
+
+
 async def ingest(db: Database, claims: AuthClaims, *, source: str, intake_id: str,
                  lead: Normalised, config: repo.IntakeConfig) -> str:
     """Turn one recorded intake event into a lead. Returns the event's new status."""
@@ -77,7 +98,8 @@ async def ingest(db: Database, claims: AuthClaims, *, source: str, intake_id: st
         await repo.set_event(db, claims, intake_id, status="rejected",
                              reason=",".join(reasons), fields=preview(lead))
         return "rejected"
-    timezone = row.timezone or infer_timezone(row.phone)
+    timezone = row.timezone or (lead.booking[1] if lead.booking else None) or infer_timezone(
+        row.phone)
     consents = _consents(lead, source=source, intake_id=intake_id, email=row.email,
                          phone=row.phone, config=config, now=now)
     channels = [c["channel"] for c in consents]
@@ -88,6 +110,8 @@ async def ingest(db: Database, claims: AuthClaims, *, source: str, intake_id: st
     if existing is not None:  # a known person: same lead, same contact, no second plan
         await add_activity(db, claims, existing, type="intake_form_answers", payload=answers,
                            actor="system:intake")
+        await _record_booking(db, claims, lead, lead_id=existing, intake_id=intake_id,
+                              email=row.email, name=row.name, timezone=timezone, now=now)
         await agent_hooks.inbound_lead_created(
             db, claims, lead_id=existing, channels=channels, version=None, timezone=timezone,
             form=lead.form or source, consents=consents, answers=lead.answers)
@@ -103,6 +127,8 @@ async def ingest(db: Database, claims: AuthClaims, *, source: str, intake_id: st
                  "captured_at": now.isoformat()})
     await add_activity(db, claims, lead_id, type="intake_form_answers", payload=answers,
                        actor="system:intake")
+    await _record_booking(db, claims, lead, lead_id=lead_id, intake_id=intake_id,
+                          email=row.email, name=row.name, timezone=timezone, now=now)
     await after_capture(db, claims, lead_id, channels=channels, version=None,
                         timezone=timezone, form=lead.form or source, consents=consents,
                         answers=lead.answers)
