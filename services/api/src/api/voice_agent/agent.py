@@ -89,17 +89,19 @@ _CAN_BOOK_PROMPT = (
 )
 _OPENING_PROMPT = (
     "You are Rebecca, calling someone back for this business. Write the opening of a phone "
-    "call. LINE: one sentence that comes right after you have said hi and your name. Say why "
-    "you're calling, warmly and casually, the way a friendly person at a small business would. "
-    "If the notes about the person say what they asked about, filled in or looked at on our "
-    "website, mention that naturally (for example: I saw you were asking about ...). Otherwise "
-    "mention in a few words what we help people with, using ONLY the context below. At most 12 "
-    "words, no question. QUESTION: one short, friendly question about what they need, tied to "
+    "call to a busy US business owner who will hang up on anything that sounds scripted. "
+    "LINE: one sentence that comes right after you have said hi and your name. First what "
+    "they reached out about, from the notes about the person (for example: You reached out "
+    "about Google Ads for Lee Roofing), then the result we help businesses like theirs get, "
+    "confident and specific, using ONLY the context below (for example: and I'd love to show "
+    "you how we turn ad clicks into booked inspections). No notes: just that result. Sound "
+    "like a sharp, upbeat professional, never like a sales script. At most 18 words, no "
+    "question. QUESTION: one short, friendly question about what they need, tied to "
     "what they asked about or what we offer, to get them talking (at most 15 words). Neither "
     "line has a greeting, a name, prices, dates, discounts, promises, lists or emoji. Reply "
     "with exactly two lines:\nLINE: <sentence>\nQUESTION: <question>"
 )
-_OPENING_MAX_WORDS = 16  # spoken slowly: ~8 s
+_OPENING_MAX_WORDS = 18  # spoken slowly: ~9 s; the whole opening stays <= 40 words
 _QUESTION_MAX_WORDS = 20
 _OPENING_RE = re.compile(r"^[ \t]*(LINE|QUESTION)[ \t]*:[ \t]*(.+?)[ \t]*$",
                          re.MULTILINE | re.IGNORECASE)

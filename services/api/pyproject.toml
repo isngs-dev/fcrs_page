@@ -25,6 +25,7 @@ dependencies = [
     "pyjwt>=2.8",
     "redis>=5.0",
     "uvicorn[standard]>=0.29",
+    "websockets>=14",  # calling-agent speed test: Deepgram Flux stream (call_agent/realtime.py)
 ]
 
 [project.optional-dependencies]

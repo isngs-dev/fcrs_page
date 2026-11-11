@@ -39,8 +39,8 @@ from api.agents.outreach_repository import (
     stop_plan_if_empty,
 )
 from api.agents.repository import add_suppression, do_not_contact
+from api.call_agent import realtime, script
 from api.call_agent import repository as repo
-from api.call_agent import script
 from api.call_agent.telephony import PlivoTelephony, TelephonyProvider
 from api.config import get_api_settings
 from api.contacts.repository import get_contact, list_identities
@@ -273,6 +273,8 @@ async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSession
                               session=script.CallState(question=written.get("question"),
                                                        booked=written.get("booked")).to_json())
     await repo.add_turn(db, claims, session.call_id, speaker="rebecca", text=line)
+    if realtime.enabled_for(claims.tenant_id):  # speed test: the stream says the opening
+        return realtime.stream_xml(session.call_id, ticket(session.call_id))
     return _listen(line, session.call_id, config.voice, OPENING_WAIT)
 
 
@@ -545,7 +547,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                 await memory.remember(db, claims, session.contact_id, channel="call",
                                       kind="need", text=speech)
             return await say(script.DISCOVERY_THANKS_LINE)
-    if kind == "yes" and opening_question:  # "Have you got a minute?" -> yes: get them talking
+    if kind == "yes" and opening_question:  # "Is now a good time?" -> yes: get them talking
         state.stage = "booked_check" if state.booked else "discovery"
         return await say(f"Great. {opening_question}")
 

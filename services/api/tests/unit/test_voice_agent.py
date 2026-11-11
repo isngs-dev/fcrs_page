@@ -206,6 +206,10 @@ _Q = "What's going on with your roof at the moment?"
     ("I saw you were asking about gutter guards for your home.",
      "I saw you were asking about gutter guards for your home."),
     ('"I saw you were asking about gutters."', "I saw you were asking about gutters."),
+    # 2026-11-07: what they reached out about + what we do for businesses like theirs
+    ("You reached out about Google Ads, and I'd love to show you how roofers fill their "
+     "calendars.", "You reached out about Google Ads, and I'd love to show you how roofers "
+     "fill their calendars."),
     ("Do you still need a new roof?", None),  # the opening asks its own question
     ("", None),
     ("We help " + "really " * 35 + "a lot.", None),  # a speech, not a sentence

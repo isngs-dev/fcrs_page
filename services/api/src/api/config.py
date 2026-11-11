@@ -355,6 +355,13 @@ class ApiSettings(Settings):
     platform_plivo_from_number: str | None = None
     platform_plivo_app_id: str | None = None
     platform_plivo_endpoint_username: str | None = None
+    # Calling-agent speed test (call_agent/realtime.py): these tenant ids get two-way audio
+    # streaming (Deepgram Flux + ElevenLabs) instead of turn-by-turn XML. Unset -> nobody.
+    realtime_voice_tenants: str | None = None
+    deepgram_api_key: str | None = None
+    elevenlabs_api_key: str | None = None
+    elevenlabs_voice_id: str | None = None
+    elevenlabs_model: str = "eleven_flash_v2_5"
     # Plivo <Speak> voice: WOMAN or MAN.
     voice_agent_tts_voice: str = "WOMAN"
     # Max "Call Us" calls per visitor, and per IP, per hour -- each call costs

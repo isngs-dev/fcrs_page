@@ -10,19 +10,20 @@ import time
 from collections.abc import Callable
 from typing import Any, Literal
 
+import httpx
 from common.auth import AuthClaims, Role
 from common.errors import NotFoundError, ValidationError
 from common.logging import get_logger
 from common.phone import to_e164
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Request, Response, WebSocket
 from pydantic import BaseModel, Field
 
 from api.agents.dispatch import system_claims
 from api.agents.repository import contact_visible
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
+from api.call_agent import realtime, script, service
 from api.call_agent import repository as repo
-from api.call_agent import service
 from api.config import get_api_settings
 from api.voice_agent.plivo import (
     NONCE_HEADER,
@@ -173,6 +174,58 @@ async def _verified(request: Request, call_id: str) -> tuple[
                      signature=request.headers.get(SIGNATURE_HEADER),
                      nonce=request.headers.get(NONCE_HEADER))
     return session, params, system_claims(session.tenant_id)
+
+
+@public_router.websocket("/calls/{call_id}/stream")
+async def stream(websocket: WebSocket, call_id: str) -> None:
+    """Speed test: the call's two-way audio (realtime.py). The ticket in the URL proves the
+    stream belongs to a call we placed; only listed tenants get here."""
+    if not service.verify_ticket(call_id, websocket.query_params.get("ticket")):
+        await websocket.close(code=1008)
+        return
+    db = websocket.app.state.db
+    session = await repo.get_session_system(db, call_id)
+    if session is None or not realtime.enabled_for(session.tenant_id):
+        await websocket.close(code=1008)
+        return
+    claims = system_claims(session.tenant_id)
+    await websocket.accept()
+    settings = get_api_settings()
+    turns = await repo.list_turns(db, claims, call_id)
+    opening = next((t["text"] for t in turns if t["speaker"] == "rebecca"), "")
+    recorded = {"opening": False}
+
+    async def brain(speech: str) -> tuple[str, bool]:
+        current = await repo.get_session_system(db, call_id)
+        if current is None:
+            return "", True
+        if speech:
+            await repo.add_turn(db, claims, call_id, speaker="caller", text=speech)
+        result = await service.handle_turn(db, claims, current, speech)
+        if "<Dial" in result.xml:  # ponytail: no transfer over the stream yet -> team calls back
+            return script.TEAM_LINE, True
+        return service.spoken_text(result.xml), result.end
+
+    async def record(text: str, latency_ms: int) -> None:
+        if not recorded["opening"]:  # the answer webhook already wrote the opening
+            recorded["opening"] = True
+            return
+        await repo.add_turn(db, claims, call_id, speaker="rebecca", text=text,
+                            latency_ms=latency_ms)
+
+    try:
+        listener = await realtime.FluxListener.connect(str(settings.deepgram_api_key))
+    except Exception as exc:  # noqa: BLE001 -- nothing to say without ears: end, loudly
+        _log.error("realtime speech-to-text unreachable", extra={
+            "event": "realtime_connect_failed", "reason": type(exc).__name__})
+        await websocket.close(code=1011)
+        return
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        voice = realtime.elevenlabs_voice(client, str(settings.elevenlabs_api_key),
+                                          str(settings.elevenlabs_voice_id),
+                                          settings.elevenlabs_model)
+        await realtime.RealtimeCall(websocket, listener, voice, brain, opening=opening,
+                                    record=record).run()
 
 
 @public_router.post("/calls/{call_id}/answer")

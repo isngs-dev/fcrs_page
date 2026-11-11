@@ -1016,3 +1016,51 @@ async def test_rescheduling_books_the_new_time_and_asks_the_team_to_cancel_the_o
     assert alert is not None and alert["payload"]["reason"] == "booking_rescheduled"
     assert alert["payload"]["old_starts_at"] == datetime.combine(
         day, dtime(15), tzinfo=_NY).astimezone(UTC).isoformat()
+
+
+# -- Speed test: two-way audio streaming for listed tenants only (2026-11-07) ---------------
+
+
+async def test_listed_tenants_get_the_audio_stream_and_others_keep_the_xml_calls(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a, b = env["a"], env["b"]
+    for key, value in {"REALTIME_VOICE_TENANTS": a, "DEEPGRAM_API_KEY": uuid4().hex,
+                       "ELEVENLABS_API_KEY": uuid4().hex, "ELEVENLABS_VOICE_ID": "voice-1"}.items():
+        monkeypatch.setenv(key, value)
+    get_api_settings.cache_clear()
+
+    call_a, _ = await _dial(env, a)
+    streamed = await _webhook(env, call_a, "answer", {"CallUUID": "uuid-1"})
+    assert "<Stream" in streamed.text and 'bidirectional="true"' in streamed.text
+    assert f"/public/call-agent/calls/{call_a}/stream?ticket=" in streamed.text
+    assert "<GetInput" not in streamed.text
+    opening = await env["db"].fetchval(
+        "SELECT text FROM call_transcript_turns WHERE call_id = $1 AND speaker = 'rebecca'",
+        call_a)
+    assert opening and opening.startswith("Hi Jane, Rebecca here")  # said by the stream
+
+    call_b, _ = await _dial(env, b)
+    classic = await _webhook(env, call_b, "answer", {"CallUUID": "uuid-2"},
+                             token=_TOKENS["b"])
+    assert "<GetInput" in classic.text and "<Stream" not in classic.text
+
+    from types import SimpleNamespace
+
+    from api.call_agent import routes
+
+    class _Ws:
+        def __init__(self, ticket: str) -> None:
+            self.query_params = {"ticket": ticket}
+            self.app = SimpleNamespace(state=SimpleNamespace(db=env["db"]))
+            self.accepted, self.closed_with = False, None
+
+        async def accept(self) -> None:
+            self.accepted = True
+
+        async def close(self, code: int = 1000) -> None:
+            self.closed_with = code
+
+    for call_id, ticket in ((call_a, "forged"), (call_b, service.ticket(call_b))):
+        ws = _Ws(ticket)  # a forged ticket / a tenant that isn't listed: refused unopened
+        await routes.stream(ws, call_id)  # type: ignore[arg-type]
+        assert (ws.accepted, ws.closed_with) == (False, 1008)

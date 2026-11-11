@@ -95,18 +95,19 @@ def classify(text: str) -> Kind:
 
 # Short on purpose: a ~48-word opening ran ~25 s and the person's "yes" was lost (2026-10-29).
 RECORDED_LINE = "This call's recorded."
-GENERIC_HOOK = "You were in touch with us recently."
+GENERIC_HOOK = "Thanks for reaching out to us recently."
 
 
 def opening(*, first_name: str | None, company: str, recording: bool, hook: str | None) -> str:
     """The first thing said on an outbound call: who, the AI disclosure, why we're calling
-    (``hook``: written for this person from their chat + this business's knowledge base),
-    the recording notice, then a question that hands them the floor."""
+    (``hook``: what they reached out about + what we do for businesses like theirs, written
+    from their chat/form + this business's knowledge base), the recording notice, then a
+    question that hands them the floor. 2026-11-07: shorter, value-first wording."""
     who = f" {first_name}" if first_name else ""
-    parts = [f"Hi{who}, it's Rebecca, the AI assistant at {company}.", hook or GENERIC_HOOK]
+    parts = [f"Hi{who}, Rebecca here, the AI assistant at {company}.", hook or GENERIC_HOOK]
     if recording:
         parts.append(RECORDED_LINE)
-    return " ".join([*parts, "Have you got a minute?"])
+    return " ".join([*parts, "Is now a good time?"])
 
 
 def inbound_greeting(*, first_name: str | None, company: str, recording: bool) -> str:

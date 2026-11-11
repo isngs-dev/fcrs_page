@@ -44,12 +44,13 @@ def test_injection_is_just_another_question() -> None:
 
 
 def test_opening_sounds_like_a_person_but_still_says_ai_and_recording() -> None:
-    hook = "I saw you were asking about storm-damage repairs."
+    hook = ("You reached out about storm damage, and I'd love to show you how we get "
+            "roofs fixed fast.")
     line = script.opening(first_name="Jane", company="Acme Roofing", recording=True, hook=hook)
-    assert line == (f"Hi Jane, it's Rebecca, the AI assistant at Acme Roofing. {hook} "
-                    "This call's recorded. Have you got a minute?")
+    assert line == (f"Hi Jane, Rebecca here, the AI assistant at Acme Roofing. {hook} "
+                    "This call's recorded. Is now a good time?")
     plain = script.opening(first_name=None, company="Acme", recording=False, hook=None)
-    assert plain.startswith("Hi, it's Rebecca, the AI assistant at Acme.")
+    assert plain.startswith("Hi, Rebecca here, the AI assistant at Acme.")
     assert script.GENERIC_HOOK in plain and "recorded" not in plain
     assert "calling on behalf of" not in line + plain
 
@@ -57,10 +58,10 @@ def test_opening_sounds_like_a_person_but_still_says_ai_and_recording() -> None:
 def test_opening_is_short_enough_to_answer() -> None:
     """A live call (2026-10-29): a ~48-word opening took ~25 s at the clear speaking rate;
     the person's "yes" landed on its tail and the call dropped before Plivo heard it."""
-    longest_hook = " ".join(["word"] * 16)  # opening_lines' cap
+    longest_hook = " ".join(["word"] * 18)  # opening_lines' cap
     line = script.opening(first_name="Christopher", company="Acme Roofing and Gutters",
                           recording=True, hook=longest_hook)
-    assert len(line.split()) <= 36
+    assert len(line.split()) <= 40
 
 
 def test_spoken_times() -> None:
