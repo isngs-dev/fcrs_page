@@ -25,6 +25,7 @@ from api.auth.dependencies import get_platform_admin_actor, require_roles, resol
 from api.call_agent import realtime, script, service
 from api.call_agent import repository as repo
 from api.config import get_api_settings
+from api.voice_agent.agent import SPEAK_AS_WRITTEN
 from api.voice_agent.plivo import (
     NONCE_HEADER,
     SIGNATURE_HEADER,
@@ -195,13 +196,17 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
     opening = next((t["text"] for t in turns if t["speaker"] == "rebecca"), "")
     recorded = {"opening": False}
 
-    async def brain(speech: str) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
         current = await repo.get_session_system(db, call_id)
         if current is None:
             return "", True
         if speech:
             await repo.add_turn(db, claims, call_id, speaker="caller", text=speech)
-        result = await service.handle_turn(db, claims, current, speech)
+        token = SPEAK_AS_WRITTEN.set(speak)  # knowledge answers stream, sentence by sentence
+        try:
+            result = await service.handle_turn(db, claims, current, speech)
+        finally:
+            SPEAK_AS_WRITTEN.reset(token)
         if "<Dial" in result.xml:  # ponytail: no transfer over the stream yet -> team calls back
             return script.TEAM_LINE, True
         return service.spoken_text(result.xml), result.end
@@ -214,7 +219,9 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
                             latency_ms=latency_ms)
 
     try:
-        listener = await realtime.FluxListener.connect(str(settings.deepgram_api_key))
+        config = await repo.get_call_config(db, claims)
+        listener = await realtime.FluxListener.connect(
+            str(settings.deepgram_api_key), [config.company_name] if config else [])
     except Exception as exc:  # noqa: BLE001 -- nothing to say without ears: end, loudly
         _log.error("realtime speech-to-text unreachable", extra={
             "event": "realtime_connect_failed", "reason": type(exc).__name__})

@@ -1149,3 +1149,16 @@ async def test_aclose_calls_underlying_client_close() -> None:
     await provider.aclose()
 
     client.close.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize(("model", "sent"), [("gpt-6-luna", True), ("gpt-4o", False)])
+async def test_stream_sends_reasoning_effort_only_to_reasoning_models(
+        model: str, sent: bool) -> None:
+    """A streamed call's answer (2026-11-12) keeps the low-reasoning speed setting."""
+    stub = _StubCompletions(stream_events=[
+        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="Hi."))])])
+    provider = OpenAICompatibleProvider(client=_make_stub_client(completions=stub))
+    async for _ in provider.stream([ChatMessage("user", "Hello")], model=model, max_tokens=512,
+                                   reasoning_effort="low"):
+        pass
+    assert stub.last_kwargs.get("reasoning_effort") == ("low" if sent else None)

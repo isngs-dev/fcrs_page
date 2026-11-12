@@ -3,7 +3,7 @@ voicemail validation, call tickets and transcript extraction."""
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from common.errors import ValidationError
@@ -322,3 +322,22 @@ def test_the_live_call_phrases_parse() -> None:
 ])
 def test_keep_or_reschedule_a_booked_call(text: str, move: bool, keep: bool) -> None:
     assert (script.wants_reschedule(text), script.keeps_booking(text)) == (move, keep)
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    # Live 2026-11-12 (Deepgram Flux writes numbers as words): both were asked again, twice.
+    ("So go with fifteenth November, three thirty PM EST.", (date(2026, 11, 15), (15, 30))),
+    ("go with fifteen November.", (date(2026, 11, 15), None)),
+    ("three thirty PM EST.", (None, (15, 30))),
+    ("the twenty first at four fifteen pm", (date(2026, 11, 21), (16, 15))),
+    ("November thirtieth at ten o'clock in the morning", (date(2026, 11, 30), (10, 0))),
+    ("15th November 3 30 PM", (date(2026, 11, 15), (15, 30))),
+    ("15th November 330 PM", (date(2026, 11, 15), (15, 30))),
+    ("at five forty five", (None, (17, 45))),
+    ("november fifteenth three thirty pm", (date(2026, 11, 15), (15, 30))),
+    ("I'll take the first one", (None, None)),  # not a day
+    ("the second option sounds good", (None, None)),
+])
+def test_spoken_numbers_from_the_streaming_recogniser(
+        text: str, expected: tuple[date | None, tuple[int, int] | None]) -> None:
+    assert script.parse_when(text, date(2026, 11, 12)) == expected

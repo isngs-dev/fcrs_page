@@ -288,13 +288,20 @@ class OpenAICompatibleProvider:
         *,
         model: str,
         max_tokens: int,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[Chunk]:
+        hint = (  # as generate(): only reasoning models take it
+            {"reasoning_effort": reasoning_effort}
+            if reasoning_effort and model.startswith(_REASONING_MODEL_PREFIXES)
+            else {}
+        )
         try:
             stream = await self._client.chat.completions.create(
                 model=model,
                 messages=[{"role": m.role, "content": m.content} for m in messages],
                 stream=True,
                 **_token_limit(model, max_tokens),
+                **hint,
             )
         except APIError as exc:
             _log.warning(

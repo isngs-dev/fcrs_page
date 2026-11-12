@@ -175,3 +175,14 @@ synthesises our reply). That loop also caused the mishearing ("Port November", c
 path), the four env settings. **Tests:** `tests/unit/test_realtime_voice.py` (opening on start, reply +
 timing, barge-in, last line heard before hang-up, silence turn, only listed tenants); call-agent integration
 (listed tenant gets `<Stream>`, the other tenant keeps XML, forged ticket / unlisted tenant refused).
+
+**First live streamed call (2026-11-12, CallHippo number):** scripted replies 0.17–0.50 s from the end of
+the caller's turn to Rebecca's first audio (was 2–6 s); knowledge answers 1.9–3.3 s (model 1.0–1.7 s +
+lookup ~0.3 s + voice ~0.17 s). Deepgram heard dates/times correctly; booking still failed. Fixes:
+
+| # | Change | Why |
+|---|---|---|
+| R7 | Flux `numerals=true` + the business name as `keyterm`; the date reader also takes spoken forms ("fifteenth November", "fifteen November", "three thirty PM", "five forty five", "3 30 PM", "330 PM"); an ordinal after "the" counts as a day only before a time/"of"/end ("the first one" doesn't) | Flux wrote "fifteenth November, three thirty PM": not understood, asked twice, handed off |
+| R8 | Caller turns run through the turn logic one at a time, in order, never cancelled half-way; a reply is dropped (not spoken) when the caller has already said more; talking over her stops only her audio | A pause mid-sentence cancelled her half-done turn (state could be half-saved) |
+| R9 | The turn logic or the voice failing ends the call with an error log (`realtime_turn_failed` / `realtime_voice_failed`) instead of dead air | ElevenLabs refused a Library voice on the free plan (402) |
+| R10 | **Streamed answers** (2026-11-12): on a streamed call `answer_from_knowledge` streams the model (`stream(..., reasoning_effort="low")`, now on the provider Protocol) and hands each finished sentence that passes the whole-reply checks (no model signal, output guardrails, no price/promise the knowledge base doesn't state) to `SPEAK_AS_WRITTEN` (a context variable set only by the stream route). The first sentence that fails stops all early speech; the final reply is still checked whole, so the turn logic is unchanged. The stream then says only the rest of the final reply (`remainder`); a reply that turned into a miss is said whole after what was already said. Talking over her drops the rest of that answer. XML calls and the browser Call Us are unchanged | The model's full answer (1.0–1.7 s) was the only slow part; target ~0.8–1 s to her first word |

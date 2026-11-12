@@ -74,8 +74,28 @@ class Listener(Protocol):
 
 
 Voice = Callable[[str], AsyncIterator[bytes]]
-Brain = Callable[[str], Awaitable[tuple[str, bool]]]  # speech -> (what she says, end call)
+SpeakEarly = Callable[[str], Awaitable[None]]  # a finished, checked sentence: say it now
+# (speech, speak early) -> (her whole reply, end the call). Sentences already given to
+# ``speak early`` are never said twice: only the rest of the reply follows them.
+Brain = Callable[[str, SpeakEarly], Awaitable[tuple[str, bool]]]
 Record = Callable[[str, int], Awaitable[None]]  # (what she said, ms until her first audio)
+
+
+def remainder(reply: str, said: list[str]) -> str:
+    """What's left of ``reply`` after the sentences already spoken. A reply that no longer
+    starts with them (the answer turned into a miss) is said whole."""
+    whole, before = " ".join(reply.split()), " ".join(" ".join(said).split())
+    return whole[len(before):].strip() if before and whole.startswith(before) else whole
+
+
+def flux_query(keyterms: list[str]) -> str:
+    """Phone audio (mu-law 8 kHz); numbers as digits ("fifteenth" -> "15th", which the date
+    reader understands); the business's own name as a keyterm so it's heard right."""
+    params: list[tuple[str, str]] = [
+        ("model", "flux-general-en"), ("encoding", "mulaw"), ("sample_rate", "8000"),
+        ("eot_timeout_ms", "3000"), ("numerals", "true")]
+    params += [("keyterm", term) for term in keyterms if term.strip()]
+    return urlencode(params)
 
 
 class FluxListener:
@@ -85,10 +105,8 @@ class FluxListener:
         self._ws = ws
 
     @classmethod
-    async def connect(cls, api_key: str) -> FluxListener:
-        query = urlencode({"model": "flux-general-en", "encoding": "mulaw",
-                           "sample_rate": 8000, "eot_timeout_ms": 3000})
-        ws = await websockets.connect(f"{FLUX_URL}?{query}",
+    async def connect(cls, api_key: str, keyterms: list[str]) -> FluxListener:
+        ws = await websockets.connect(f"{FLUX_URL}?{flux_query(keyterms)}",
                                       additional_headers={"Authorization": f"Token {api_key}"})
         return cls(ws)
 
@@ -129,6 +147,12 @@ def elevenlabs_voice(client: httpx.AsyncClient, api_key: str, voice_id: str,
 
 
 class RealtimeCall:
+    """One streamed call. Caller turns run through the turn logic one at a time and in order
+    -- never cancelled half-way, so its saved state always matches what was said. Her reply
+    starts at its first finished sentence; the rest follows, nothing twice. A reply is
+    dropped when the caller has already said more; talking over her stops her audio and
+    the rest of that answer."""
+
     def __init__(self, plivo: Socket, listener: Listener, voice: Voice, brain: Brain, *,
                  opening: str, record: Record, silence_seconds: float = SILENCE_SECONDS,
                  clock: Callable[[], float] = time.monotonic) -> None:
@@ -136,17 +160,20 @@ class RealtimeCall:
         self._opening, self._record = opening, record
         self._silence_seconds, self._clock = silence_seconds, clock
         self._stream_id = ""
-        self._reply: asyncio.Task[None] | None = None
+        self._turns: asyncio.Queue[tuple[str, float]] = asyncio.Queue()
+        self._speech: asyncio.Task[None] | None = None  # her audio being sent now
         self._silence: asyncio.Task[None] | None = None
         self._playing: str | None = None  # the checkpoint of what she's saying now
+        self._cut_off = False  # talked over: the rest of this answer is dropped
         self._ending = False
         self._replies = 0
         self._done = asyncio.Event()
 
     async def run(self) -> None:
-        tasks = [asyncio.create_task(self._from_plivo()), asyncio.create_task(self._from_flux())]
+        tasks = [asyncio.create_task(self._from_plivo()), asyncio.create_task(self._from_flux()),
+                 asyncio.create_task(self._think())]
         await self._done.wait()
-        for task in [*tasks, self._reply, self._silence]:
+        for task in [*tasks, self._speech, self._silence]:
             if task is not None:
                 task.cancel()
         with contextlib.suppress(Exception):
@@ -163,8 +190,12 @@ class RealtimeCall:
                 event = message.get("event")
                 if event == "start":
                     self._stream_id = str(message["start"].get("streamId", ""))
+                    lines: asyncio.Queue[str | None] = asyncio.Queue()
+                    for line in (self._opening, None):
+                        lines.put_nowait(line)
                     started = self._clock()
-                    self._reply = asyncio.create_task(self._speak(self._opening, started, started))
+                    self._speech = asyncio.create_task(
+                        self._speak(lines, [self._opening], started, started))
                 elif event == "media":
                     await self._listener.send(base64.b64decode(message["media"]["payload"]))
                 elif event == "playedStream" and message.get("name") == self._playing:
@@ -185,46 +216,90 @@ class RealtimeCall:
             if heard.event == "StartOfTurn":
                 if self._silence is not None:
                     self._silence.cancel()
-                if self._playing is not None or (self._reply and not self._reply.done()):
+                if self._playing is not None or (self._speech and not self._speech.done()):
                     await self._barge_in()
             elif heard.event == "EndOfTurn" and heard.transcript.strip():
-                self._turn(heard.transcript.strip())
+                self._turns.put_nowait((heard.transcript.strip(), self._clock()))
 
     async def _barge_in(self) -> None:
-        if self._reply is not None:
-            self._reply.cancel()
+        self._cut_off = True
+        if self._speech is not None:
+            self._speech.cancel()
         self._playing = None
         await self._send({"event": "clearAudio", "streamId": self._stream_id})
 
     async def _wait_silence(self) -> None:
         await asyncio.sleep(self._silence_seconds)
-        self._turn("")
+        self._turns.put_nowait(("", self._clock()))
 
-    def _turn(self, speech: str) -> None:
-        if self._reply is not None and not self._reply.done():
-            self._reply.cancel()  # newer words win
-        self._reply = asyncio.create_task(self._answer(speech, self._clock()))
+    async def _think(self) -> None:
+        while True:
+            speech, heard_at = await self._turns.get()
+            if not await self._answer(speech, heard_at):
+                return
 
-    async def _answer(self, speech: str, heard_at: float) -> None:
-        text, end = await self._brain(speech)
-        thought = self._clock()
-        if end:
-            self._ending = True
-        if not text:
+    async def _answer(self, speech: str, heard_at: float) -> bool:
+        """One caller turn: the turn logic, her reply as it's written. ``False`` = call over."""
+        self._cut_off = False
+        lines: asyncio.Queue[str | None] = asyncio.Queue()
+        said: list[str] = []
+        first_line_at: list[float] = []
+
+        def say(line: str) -> None:
+            said.append(line)
+            lines.put_nowait(line)
+            if not first_line_at:
+                first_line_at.append(self._clock())
+                self._speech = asyncio.create_task(
+                    self._speak(lines, said, heard_at, first_line_at[0]))
+
+        async def early(sentence: str) -> None:
+            if not self._cut_off and self._turns.empty():  # still their latest words
+                say(sentence)
+
+        try:
+            text, end = await self._brain(speech, early)
+        except Exception as exc:  # noqa: BLE001 -- never dead air: end the call, loudly
+            _log.error("realtime turn failed", extra={
+                "event": "realtime_turn_failed", "reason": type(exc).__name__})
+            await self._plivo.close()
+            self._done.set()
+            return False
+        stale = not self._turns.empty() and not end  # they kept talking
+        self._ending = self._ending or end
+        rest = "" if stale or self._cut_off else remainder(text, said)
+        if rest:
+            say(rest)
+        if not first_line_at:
             if end:
                 await self._plivo.close()
                 self._done.set()
-            return
-        await self._speak(text, heard_at, thought)
+                return False
+            return True
+        lines.put_nowait(None)
+        if self._speech is not None:
+            await asyncio.wait({self._speech})  # talked over -> cancelled; we carry on
+        return True
 
-    async def _speak(self, text: str, heard_at: float, thought_at: float) -> None:
+    async def _speak(self, lines: asyncio.Queue[str | None], said: list[str], heard_at: float,
+                     thought_at: float) -> None:
+        """Say each queued line as it arrives (``None`` ends the reply), then mark the end
+        of the reply so Plivo tells us when it has finished playing."""
         first: float | None = None
-        async for chunk in self._voice(text):
-            if first is None:
-                first = self._clock()
-            await self._send({"event": "playAudio", "media": {
-                "contentType": "audio/x-mulaw", "sampleRate": 8000,
-                "payload": base64.b64encode(chunk).decode()}})
+        try:
+            while (line := await lines.get()) is not None:
+                async for chunk in self._voice(line):
+                    if first is None:
+                        first = self._clock()
+                    await self._send({"event": "playAudio", "media": {
+                        "contentType": "audio/x-mulaw", "sampleRate": 8000,
+                        "payload": base64.b64encode(chunk).decode()}})
+        except httpx.HTTPError as exc:  # the voice failed: say so in the logs, end the call
+            _log.error("realtime voice failed", extra={
+                "event": "realtime_voice_failed", "reason": type(exc).__name__})
+            await self._plivo.close()
+            self._done.set()
+            return
         if first is None:
             return
         self._replies += 1
@@ -236,4 +311,4 @@ class RealtimeCall:
             "event": "realtime_turn",
             "reason": f"logic {int((thought_at - heard_at) * 1000)} ms, "
                       f"voice {int((first - thought_at) * 1000)} ms, total {total} ms"})
-        await self._record(text, total)
+        await self._record(" ".join(said), total)

@@ -153,6 +153,7 @@ class AnthropicProvider:
         *,
         model: str,
         max_tokens: int,
+        reasoning_effort: str | None = None,  # noqa: ARG002 -- no such knob here
     ) -> AsyncIterator[Chunk]:
         try:
             stream = await self._client.messages.create(

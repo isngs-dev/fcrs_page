@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
 import httpx
@@ -654,3 +654,65 @@ async def test_the_model_hands_a_booking_request_to_the_booking_flow() -> None:
 async def test_a_garbled_utterance_is_asked_again_not_guessed_at() -> None:
     _, generate = await _answer_with("Sorry, could you say that again?")
     assert "speech recognition" in generate.call_args.args[0][0].content
+
+
+# -- Streamed answers on a streamed call (2026-11-12) -------------------------------------
+
+
+async def _streamed(pieces: list[str], *, can_book: bool = False
+                    ) -> tuple[str | None, list[str], MagicMock]:
+    """answer_from_knowledge with a sentence sink set (a realtime call): the model's reply
+    arrives in ``pieces``; returns (final reply, sentences spoken early, the stream mock)."""
+    from api.llm.provider import Chunk
+    from api.voice_agent.agent import SPEAK_AS_WRITTEN
+
+    spoken: list[str] = []
+
+    async def speak(sentence: str) -> None:
+        spoken.append(sentence)
+
+    async def chunks(*args: object, **kwargs: object) -> Any:
+        for piece in pieces:
+            yield Chunk(text=piece)
+
+    stream = MagicMock(side_effect=chunks)
+    provider = SimpleNamespace(stream=stream, generate=AsyncMock(), aclose=AsyncMock())
+    chunk = SimpleNamespace(chunk_id="c1", content="We repair roofs for $200 within a week.")
+    token = SPEAK_AS_WRITTEN.set(speak)
+    try:
+        with (
+            patch("api.voice_agent.agent.get_llm_config", AsyncMock(return_value=SimpleNamespace(
+                embedding_model="emb", model="gpt-6-luna"))),
+            patch("api.voice_agent.agent.retrieve_hybrid", AsyncMock(
+                return_value=SimpleNamespace(chunks=[chunk]))),
+            patch("api.voice_agent.agent.provider_for", return_value=provider),
+        ):
+            reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [],  # type: ignore[arg-type]
+                                                can_book=can_book)
+    finally:
+        SPEAK_AS_WRITTEN.reset(token)
+    provider.generate.assert_not_awaited()  # streamed, not waited for in one piece
+    return reply, spoken, stream
+
+
+async def test_each_sentence_is_spoken_as_soon_as_it_is_written(env: None) -> None:
+    reply, spoken, stream = await _streamed(
+        ["Yes, we repair ", "roofs. A repair is ", "$200. We can usually ", "start within a week."])
+    assert spoken == ["Yes, we repair roofs.", "A repair is $200."]  # the last one ends the reply
+    assert reply == "Yes, we repair roofs. A repair is $200. We can usually start within a week."
+    assert stream.call_args.kwargs["reasoning_effort"] == "low"  # same speed setting as before
+
+
+async def test_a_sentence_that_fails_the_checks_stops_her_and_the_answer_is_a_miss(
+        env: None) -> None:
+    reply, spoken, _ = await _streamed(
+        ["Yes, we repair roofs. ", "We guarantee a 50% discount. ", "Call us anytime."])
+    assert spoken == ["Yes, we repair roofs."]  # the made-up discount is never said
+    assert reply is None  # the turn logic answers with "a good question for our team"
+
+
+@pytest.mark.parametrize("pieces", [["NO_ANSWER_", "FOUND. Sorry."], ["BOOK_A_TIME. "]])
+async def test_the_models_signals_are_never_spoken(env: None, pieces: list[str]) -> None:
+    reply, spoken, _ = await _streamed(pieces, can_book=True)
+    assert spoken == []
+    assert reply in (None, "BOOK_A_TIME")

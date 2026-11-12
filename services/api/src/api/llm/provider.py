@@ -70,6 +70,7 @@ class LLMProvider(Protocol):
         *,
         model: str,
         max_tokens: int,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[Chunk]: ...
 
     async def aclose(self) -> None:

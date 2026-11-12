@@ -289,10 +289,65 @@ def _on_or_after(today: date, year: int, month: int, day: int) -> date | None:
     return found if found >= today else None
 
 
+_UNITS = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+_UNIT_ORDINALS = ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
+                  "ninth")
+_ORDINAL_WORDS = {w: i for i, w in enumerate(_UNIT_ORDINALS, start=1)} | {
+    w: i for i, w in enumerate(("tenth", "eleventh", "twelfth", "thirteenth", "fourteenth",
+                                "fifteenth", "sixteenth", "seventeenth", "eighteenth",
+                                "nineteenth", "twentieth"), start=10)} | {"thirtieth": 30} | {
+    f"{tens} {w}": base + i for tens, base in (("twenty", 20), ("thirty", 30))
+    for i, w in enumerate(_UNIT_ORDINALS, start=1) if base + i <= 31}
+_DAY_WORDS = {w: i for i, w in enumerate(("thirteen", "fourteen", "fifteen", "sixteen",
+                                          "seventeen", "eighteen", "nineteen", "twenty"),
+                                         start=13)} | {"thirty": 30} | {
+    f"{tens} {w}": base + i for tens, base in (("twenty", 20), ("thirty", 30))
+    for i, w in enumerate(_UNITS, start=1) if base + i <= 31}
+
+
+def _alternation(words: Any) -> str:
+    return "|".join(sorted((w.replace(" ", r"[\s-]+") for w in words), key=len, reverse=True))
+
+
+_ORD = _alternation(_ORDINAL_WORDS)
+_ORDINAL_NEAR_DAY = re.compile(
+    rf"(?P<pre>\b(?:{_MONTH})\s+)(?P<a>{_ORD})\b"
+    rf"|(?P<the>\bthe\s+)(?P<b>{_ORD})\b"
+    r"(?=\s*(?:$|[,.?!]|at\b|of\b|on\b|for\b|works\b|please\b|would\b|is\b))"
+    rf"|\b(?P<c>{_ORD})(?P<post>\s+(?:of\s+)?(?:{_MONTH})\b)")
+_HOUR_MINUTES = re.compile(
+    rf"\b({'|'.join(_NUMBERS)}|\d{{1,2}})[\s-]+(o'?clock|fifteen|thirty|forty[\s-]+five)\b")
+_DAY_WORD = re.compile(rf"\b({_alternation(_DAY_WORDS)})\b")
+_SPACED_CLOCK = re.compile(r"\b(\d{1,2})\s?(\d{2})(\s*[ap]\.?\s?m\b)")
+_MINUTE_WORDS = {"fifteen": "15", "thirty": "30"}
+
+
+def _spoken_numbers(t: str) -> str:
+    """A streaming recogniser writes numbers as words ("fifteenth November, three thirty PM")
+    and sometimes drops the colon ("3 30 PM", "330 PM"): turn them into the digits below.
+    Ordinal words only count as a day next to a month or after "the" ("the first one" isn't)."""
+    def ordinal(m: re.Match[str]) -> str:
+        word = m.group("a") or m.group("b") or m.group("c")
+        day = f"{_ORDINAL_WORDS[' '.join(word.replace('-', ' ').split())]}th"
+        return f"{m.group('pre') or m.group('the') or ''}{day}{m.group('post') or ''}"
+
+    def hour_minutes(m: re.Match[str]) -> str:
+        hour = _NUMBERS.get(m.group(1), m.group(1))
+        word = " ".join(m.group(2).replace("-", " ").split())
+        minutes = "00" if "clock" in word else _MINUTE_WORDS.get(word, "45")
+        return f"{hour}:{minutes}"
+
+    t = _ORDINAL_NEAR_DAY.sub(ordinal, t)
+    t = _HOUR_MINUTES.sub(hour_minutes, t)
+    t = _DAY_WORD.sub(lambda m: str(_DAY_WORDS[" ".join(m.group(1).replace("-", " ").split())]),
+                      t)
+    return _SPACED_CLOCK.sub(lambda m: f"{m.group(1)}:{m.group(2)}{m.group(3)}", t)
+
+
 def parse_when(text: str, today: date) -> tuple[date | None, tuple[int, int] | None]:
     """The day and (hour, minute) a caller asked for, each ``None`` when not said.
     Hours 1-7 without am/pm mean the afternoon (nobody books a 3 AM call)."""
-    t = _NUMBER_WORD.sub(lambda m: _NUMBERS[m.group(1)], text.lower())
+    t = _NUMBER_WORD.sub(lambda m: _NUMBERS[m.group(1)], _spoken_numbers(text.lower()))
     day: date | None = None
     if (m := _DAY_MONTH.search(t)) or (m := _MONTH_DAY.search(t)):
         month_name, number = ((m.group(1), m.group(2)) if m.re is _MONTH_DAY

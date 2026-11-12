@@ -21,6 +21,8 @@ import hashlib
 import hmac
 import re
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -34,7 +36,7 @@ from api.agents.memory import frame as frame_memory
 from api.config import get_api_settings
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
-from api.llm.provider import ChatMessage, LLMError
+from api.llm.provider import ChatMessage, Chunk, LLMError
 from api.orchestrator.guardrails import scan_output, unstated_commitments
 from api.rag.service import retrieve_hybrid
 from api.voice_agent.repository import VoiceAgentConfig
@@ -209,6 +211,41 @@ class CallSession:
         return reply, None
 
 
+SpeakSentence = Callable[[str], Awaitable[None]]
+# Set by a streamed call (call_agent/realtime.py): answer_from_knowledge then streams the model
+# and hands each finished sentence that passes the output checks to this, while it keeps
+# writing. Unset (XML calls, the browser "Call Us"): one reply, checked whole, as before.
+SPEAK_AS_WRITTEN: ContextVar[SpeakSentence | None] = ContextVar("speak_as_written", default=None)
+_SENTENCE_END = re.compile(r"[.!?](?=\s)")  # a full stop followed by more text, not "2.5"
+
+
+def _sayable(sentence: str, context: str) -> bool:
+    """The whole reply's checks, on one sentence: no model signal, nothing the output
+    guardrails block, no price or promise the knowledge base doesn't state."""
+    return (_NO_ANSWER not in sentence and BOOK_A_TIME not in sentence
+            and scan_output(sentence).ok and not unstated_commitments(sentence, context))
+
+
+async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: SpeakSentence, context: str,
+                            can_book: bool) -> str:
+    """Collect the whole reply (checked whole afterwards, as ever) and speak each finished
+    sentence on the way. The first one that isn't sayable stops all early speech; the last
+    sentence is left for the caller of answer_from_knowledge, which knows the final reply."""
+    text, pending, stopped = "", "", False
+    async for chunk in chunks:
+        text += chunk.text
+        pending += chunk.text
+        while not stopped and (end := _SENTENCE_END.search(pending)):
+            sentence, pending = pending[:end.end()].strip(), pending[end.end():]
+            if not sentence:
+                continue
+            if not _sayable(sentence, context) or (can_book and BOOK_A_TIME in text):
+                stopped = True
+                break
+            await speak(sentence)
+    return text
+
+
 async def answer_from_knowledge(
     db: Database, claims: AuthClaims, question: str, history: list[ChatMessage],
     *, model: str | None = None, about_caller: str | None = None, can_book: bool = False,
@@ -238,22 +275,31 @@ async def answer_from_knowledge(
         ChatMessage(role="user", content=question),
     ]
     provider = provider_for(config)
+    speak = SPEAK_AS_WRITTEN.get()
+    stop_reason: str | None = None
     try:
         # The chat's budget, not a smaller voice cap: reasoning models (gpt-oss)
         # spend part of it thinking, and a tight cap left an empty reply -- every
         # question "missed". The prompt itself keeps the spoken answer short.
         # Low reasoning: the caller is waiting on the line (gpt-oss ~7s -> ~4s).
-        completion = await provider.generate(
-            prompt, model=model or config.model, max_tokens=settings.llm_max_tokens,
-            reasoning_effort="low",
-        )
+        if speak is not None:  # a streamed call: say each sentence as soon as it's safe
+            text = await _speak_as_written(
+                provider.stream(prompt, model=model or config.model,
+                                max_tokens=settings.llm_max_tokens, reasoning_effort="low"),
+                speak, context, can_book)
+        else:
+            completion = await provider.generate(
+                prompt, model=model or config.model, max_tokens=settings.llm_max_tokens,
+                reasoning_effort="low",
+            )
+            text, stop_reason = completion.text, completion.stop_reason
     finally:
         await provider.aclose()
-    reply = completion.text.strip()
+    reply = text.strip()
     if can_book and BOOK_A_TIME in reply:
         return BOOK_A_TIME
     if not reply:
-        miss = f"empty reply (stop_reason={completion.stop_reason})"
+        miss = f"empty reply (stop_reason={stop_reason})"
     elif _NO_ANSWER in reply:
         miss = "not in the knowledge base"
     elif not scan_output(reply).ok:

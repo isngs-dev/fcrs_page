@@ -96,12 +96,15 @@ class MeteredProvider:
         *,
         model: str,
         max_tokens: int,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[Chunk]:
+        hint = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+
         async def _gen() -> AsyncIterator[Chunk]:
             start = time.perf_counter()
             try:
                 async for chunk in self._delegate.stream(
-                    messages, model=model, max_tokens=max_tokens,
+                    messages, model=model, max_tokens=max_tokens, **hint,
                 ):
                     yield chunk
             except Exception:
