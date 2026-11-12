@@ -541,7 +541,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         if kind == "no":
             return await say(script.DISCOVERY_NO_LINE)
         # A word or two is a cut-off sentence more often than an answer: the model can ask again.
-        if (kind == "other" and not script.is_question(speech) and len(speech.split()) > 3
+        # "I want to know about ..." is a question to answer below, not their need.
+        if (kind == "other" and not script.is_question(speech)
+                and not script.wants_info(speech) and len(speech.split()) > 3
                 and None in when):
             if session.contact_id:  # the team (and later emails) see what they told us
                 await memory.remember(db, claims, session.contact_id, channel="call",

@@ -186,3 +186,13 @@ lookup ~0.3 s + voice ~0.17 s). Deepgram heard dates/times correctly; booking st
 | R8 | Caller turns run through the turn logic one at a time, in order, never cancelled half-way; a reply is dropped (not spoken) when the caller has already said more; talking over her stops only her audio | A pause mid-sentence cancelled her half-done turn (state could be half-saved) |
 | R9 | The turn logic or the voice failing ends the call with an error log (`realtime_turn_failed` / `realtime_voice_failed`) instead of dead air | ElevenLabs refused a Library voice on the free plan (402) |
 | R10 | **Streamed answers** (2026-11-12): on a streamed call `answer_from_knowledge` streams the model (`stream(..., reasoning_effort="low")`, now on the provider Protocol) and hands each finished sentence that passes the whole-reply checks (no model signal, output guardrails, no price/promise the knowledge base doesn't state) to `SPEAK_AS_WRITTEN` (a context variable set only by the stream route). The first sentence that fails stops all early speech; the final reply is still checked whole, so the turn logic is unchanged. The stream then says only the rest of the final reply (`remainder`); a reply that turned into a miss is said whole after what was already said. Talking over her drops the rest of that answer. XML calls and the browser Call Us are unchanged | The model's full answer (1.0–1.7 s) was the only slow part; target ~0.8–1 s to her first word |
+
+**Second streamed call (2026-11-12, after R7–R10):** booking with digits worked end to end (Mon Nov 16,
+9 AM ET, Meet link emailed; Sunday correctly refused); scripted replies 0.18–0.52 s; knowledge answers still
+1.8–2.5 s — the first sentence itself took 1.6–2.3 s. Measured streamed on gpt-6-luna: `low` reasoning
+first sentence 1.1–1.4 s, `none` 0.6–0.7 s, same answers. **R11:** streamed answers use reasoning `none` on
+models that accept it (`gpt-6*`; OpenAI's own error lists it), `low` elsewhere.
+**R12 (2026-11-12):** after the opening's question, a reply that asks to be told something without a
+question word ("So I want to know about roofing thing", "tell me about…", "explain…", "more about…") is
+answered from the knowledge base (`script.wants_info`), not thanked for as their need. A stated need
+("the roof leaks over the kitchen") still gets the thank-you and the offer of a time.

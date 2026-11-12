@@ -341,3 +341,16 @@ def test_keep_or_reschedule_a_booked_call(text: str, move: bool, keep: bool) -> 
 def test_spoken_numbers_from_the_streaming_recogniser(
         text: str, expected: tuple[date | None, tuple[int, int] | None]) -> None:
     assert script.parse_when(text, date(2026, 11, 12)) == expected
+
+
+@pytest.mark.parametrize(("text", "asks"), [
+    ("So I want to know about roofing thing.", True),  # live 2026-11-12: got "thanks"
+    ("tell me about Roof Engine", True),
+    ("I'd like to learn more about your ads", True),
+    ("can you explain how it works", True),
+    ("I need more information on the pricing", True),
+    ("the roof leaks over the kitchen", False),  # a need: thanks + offer a time
+    ("we get about ten leads a week but book none", False),
+])
+def test_asking_to_be_told_something_is_a_question(text: str, asks: bool) -> None:
+    assert script.wants_info(text) is asks

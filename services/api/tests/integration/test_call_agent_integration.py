@@ -1064,3 +1064,15 @@ async def test_listed_tenants_get_the_audio_stream_and_others_keep_the_xml_calls
         ws = _Ws(ticket)  # a forged ticket / a tenant that isn't listed: refused unopened
         await routes.stream(ws, call_id)  # type: ignore[arg-type]
         assert (ws.accepted, ws.closed_with) == (False, 1008)
+
+
+async def test_asking_about_the_service_after_the_opening_gets_an_answer_not_a_thank_you(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-12: "So I want to know about roofing thing." -> "Thanks, that's really
+    helpful. Would you like me to find a time..." -- it was a question, not their need."""
+    call_id, _ = await _dial(env, env["a"])
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    assert service.spoken_text(await _say(env, call_id, "yes")) == f"Great. {_QUESTION}"
+    answer = service.spoken_text(await _say(env, call_id, "So I want to know about roofing thing."))
+    assert answer == "We charge two hundred dollars for that."  # the knowledge-base answer
+    assert answer != script.DISCOVERY_THANKS_LINE

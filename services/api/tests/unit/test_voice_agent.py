@@ -659,7 +659,7 @@ async def test_a_garbled_utterance_is_asked_again_not_guessed_at() -> None:
 # -- Streamed answers on a streamed call (2026-11-12) -------------------------------------
 
 
-async def _streamed(pieces: list[str], *, can_book: bool = False
+async def _streamed(pieces: list[str], *, can_book: bool = False, model: str = "gpt-6-luna"
                     ) -> tuple[str | None, list[str], MagicMock]:
     """answer_from_knowledge with a sentence sink set (a realtime call): the model's reply
     arrives in ``pieces``; returns (final reply, sentences spoken early, the stream mock)."""
@@ -682,7 +682,7 @@ async def _streamed(pieces: list[str], *, can_book: bool = False
     try:
         with (
             patch("api.voice_agent.agent.get_llm_config", AsyncMock(return_value=SimpleNamespace(
-                embedding_model="emb", model="gpt-6-luna"))),
+                embedding_model="emb", model=model))),
             patch("api.voice_agent.agent.retrieve_hybrid", AsyncMock(
                 return_value=SimpleNamespace(chunks=[chunk]))),
             patch("api.voice_agent.agent.provider_for", return_value=provider),
@@ -700,7 +700,16 @@ async def test_each_sentence_is_spoken_as_soon_as_it_is_written(env: None) -> No
         ["Yes, we repair ", "roofs. A repair is ", "$200. We can usually ", "start within a week."])
     assert spoken == ["Yes, we repair roofs.", "A repair is $200."]  # the last one ends the reply
     assert reply == "Yes, we repair roofs. A repair is $200. We can usually start within a week."
-    assert stream.call_args.kwargs["reasoning_effort"] == "low"  # same speed setting as before
+    # 2026-11-12, live: "none" put the first sentence at ~0.6-0.7 s vs ~1.1-1.4 s on "low".
+    assert stream.call_args.kwargs["reasoning_effort"] == "none"
+
+
+@pytest.mark.parametrize(("model", "effort"), [("gpt-6-luna", "none"), ("gpt-6.1-sol", "none"),
+                                               ("gpt-oss:20b", "low"), ("o3-mini", "low")])
+async def test_streamed_answers_skip_reasoning_only_where_the_model_allows_it(
+        env: None, model: str, effort: str) -> None:
+    _, _, stream = await _streamed(["Yes, we repair roofs. ", "Anything else?"], model=model)
+    assert stream.call_args.kwargs["reasoning_effort"] == effort
 
 
 async def test_a_sentence_that_fails_the_checks_stops_her_and_the_answer_is_a_miss(

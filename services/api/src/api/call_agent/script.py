@@ -52,6 +52,18 @@ def is_question(text: str) -> bool:
     return bool(_ASKS.search(text))
 
 
+_WANTS_INFO = re.compile(
+    r"\b(?:want|wanna|like|need|love|have) to (?:know|learn|understand|hear)\b"
+    r"|\btell me\b|\bexplain\b|\bwalk me through\b|\bmore (?:about|info|information|details)\b"
+    r"|\binfo(?:rmation)? (?:about|on)\b|\bcurious (?:about|how|what)\b", re.I)
+
+
+def wants_info(text: str) -> bool:
+    """ "I want to know about ...", "tell me about ..." -- a question without a question word,
+    to be answered, not thanked for (live 2026-11-12)."""
+    return bool(_WANTS_INFO.search(text))
+
+
 _CHANGE_MIND = re.compile(r"\b(?:but|change|instead|actually|wait|not sure)\b", re.I)
 
 

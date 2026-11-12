@@ -217,6 +217,14 @@ SpeakSentence = Callable[[str], Awaitable[None]]
 # writing. Unset (XML calls, the browser "Call Us"): one reply, checked whole, as before.
 SPEAK_AS_WRITTEN: ContextVar[SpeakSentence | None] = ContextVar("speak_as_written", default=None)
 _SENTENCE_END = re.compile(r"[.!?](?=\s)")  # a full stop followed by more text, not "2.5"
+# Models that accept reasoning_effort "none" (OpenAI's own 400 for gpt-6-luna lists it).
+# Live 2026-11-12: first sentence ~0.6-0.7 s on "none" vs ~1.1-1.4 s on "low", same answers.
+# ponytail: name-prefix match, like the provider's; add a family here once it's verified.
+_NO_REASONING_MODELS = ("gpt-6",)
+
+
+def _streamed_effort(model: str) -> str:
+    return "none" if model.startswith(_NO_REASONING_MODELS) else "low"
 
 
 def _sayable(sentence: str, context: str) -> bool:
@@ -283,9 +291,10 @@ async def answer_from_knowledge(
         # question "missed". The prompt itself keeps the spoken answer short.
         # Low reasoning: the caller is waiting on the line (gpt-oss ~7s -> ~4s).
         if speak is not None:  # a streamed call: say each sentence as soon as it's safe
+            chosen = model or config.model
             text = await _speak_as_written(
-                provider.stream(prompt, model=model or config.model,
-                                max_tokens=settings.llm_max_tokens, reasoning_effort="low"),
+                provider.stream(prompt, model=chosen, max_tokens=settings.llm_max_tokens,
+                                reasoning_effort=_streamed_effort(chosen)),
                 speak, context, can_book)
         else:
             completion = await provider.generate(
