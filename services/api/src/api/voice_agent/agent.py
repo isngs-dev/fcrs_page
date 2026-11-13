@@ -227,8 +227,10 @@ SPEAK_AS_WRITTEN: ContextVar[LiveVoice | None] = ContextVar("speak_as_written", 
 _SENTENCE_END = re.compile(r"[.!?](?=\s)")  # a full stop followed by more text, not "2.5"
 # Models that accept reasoning_effort "none" (OpenAI's own 400 for gpt-6-luna lists it).
 # Live 2026-11-12: first sentence ~0.6-0.7 s on "none" vs ~1.1-1.4 s on "low", same answers.
+# Claude: AnthropicProvider maps "none" to each model's fastest setting (thinking off where
+# the model allows it, low effort) -- 2026-11-13.
 # ponytail: name-prefix match, like the provider's; add a family here once it's verified.
-_NO_REASONING_MODELS = ("gpt-6",)
+_NO_REASONING_MODELS = ("gpt-6", "claude-")
 
 
 def _streamed_effort(model: str) -> str:

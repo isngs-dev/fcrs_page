@@ -9,7 +9,7 @@ description = "FastAPI application shell for the chatbot platform."
 requires-python = ">=3.11"
 dependencies = [
     "alembic>=1.13",
-    "anthropic>=0.39",
+    "anthropic>=2.8",  # thinking/output_config/system + server-side refusal fallbacks
     "beautifulsoup4>=4.12",
     "boto3>=1.34",
     "celery[redis]>=5.3",

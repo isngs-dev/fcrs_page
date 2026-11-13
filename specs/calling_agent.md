@@ -233,3 +233,14 @@ instead of asking for a time again and handing off after two misses.
 Monday, November 16 at 9 AM Eastern time, 30 minutes."; minutes from the event) alongside the caller's story.
 **R20:** with a call booked, unanswered questions don't hand off: each is saved for the team ("They asked",
 lead memory) and she carries on; without a booking, two misses still go to a person.
+
+**R21 — Claude (2026-11-13):** the Anthropic provider is ready for a tenant to switch to it: leading `system`
+messages go to the `system` field (Anthropic rejects a system role as the first message — every answer and
+chat prompt starts with one); `reasoning_effort` maps to each model's own controls (`"none"`, used by
+streamed call answers: Haiku 5.5 `thinking: disabled`, Sonnet 5.5 `thinking: between_tools`, Opus 5.5 /
+Fable thinking stays on — all at `output_config.effort: low`; `low`/`medium`/`high` → `effort`; no hint →
+the model's defaults); a `refusal` stop is never passed on as text (callers treat it as a miss); Sonnet 5.5 /
+Opus 5.5 / Fable 5.x send Anthropic's server-side refusal fallback (`fallbacks: "default"`, beta
+`server-side-fallback-2026-07-01`); embeddings go to the tenant's OpenAI-compatible embeddings endpoint
+(the knowledge base was embedded there), else an explicit error. SDK floor `anthropic>=2.8`. Calls can use a
+different Claude model from the chatbot (`tenant_call_agent_configs.voice_model`).

@@ -27,10 +27,21 @@ def provider_for(config: LLMConfig) -> LLMProvider:
     settings = get_api_settings()
 
     if config.provider == "anthropic":
+        # Anthropic has no embeddings API: queries use the tenant's OpenAI-compatible
+        # embeddings endpoint (where its knowledge base was embedded), when one is set.
+        embedder = (OpenAICompatibleProvider(
+            api_key=config.embedding_api_key, base_url=config.embedding_base_url,
+            max_retries=settings.llm_max_retries, timeout=settings.llm_timeout_seconds,
+            embedding_batch_size=settings.embedding_batch_size,
+            embedding_base_url=config.embedding_base_url,
+            embedding_api_key=config.embedding_api_key,
+            embedding_dimensions=config.embedding_dimensions,
+        ) if config.embedding_base_url and config.embedding_api_key else None)
         concrete: LLMProvider = AnthropicProvider(
             api_key=config.api_key,
             max_retries=settings.llm_max_retries,
             timeout=settings.llm_timeout_seconds,
+            embedder=embedder,
         )
     elif config.provider == "openai":
         concrete = OpenAICompatibleProvider(

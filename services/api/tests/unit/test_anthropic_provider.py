@@ -12,12 +12,16 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from anthropic import APIError
 
 from api.llm.anthropic_provider import AnthropicProvider
 from api.llm.provider import ChatMessage, Chunk, LLMError
+
+# A fake key made at run time -- never a key-like literal (pre-commit secret scan).
+_SENTINEL_KEY = uuid4().hex
 
 
 class _StubMessages:
@@ -109,7 +113,7 @@ async def test_embed_raises_llm_error_on_anthropic() -> None:
 
 async def test_generate_error_logs_warning_without_api_key(caplog: pytest.LogCaptureFixture) -> None:
     """generate APIError → WARNING logged with status/detail; api_key never appears."""
-    sentinel_key = "sk-ant-SECRET-KEY-NEVER-LOG"
+    sentinel_key = _SENTINEL_KEY
     mock_request = MagicMock()
     api_err = APIError("upstream error", request=mock_request, body={"error": "fail"})
     stub = _StubMessages(raise_error=api_err)
@@ -285,7 +289,7 @@ async def test_classify_wraps_api_error_in_llm_error() -> None:
 
 async def test_classify_error_logs_warning_without_api_key(caplog: pytest.LogCaptureFixture) -> None:
     """classify APIError → WARNING logged; api_key never appears."""
-    sentinel_key = "sk-ant-SECRET-KEY-NEVER-LOG"
+    sentinel_key = _SENTINEL_KEY
     mock_request = MagicMock()
     api_err = APIError("rate limited", request=mock_request, body={"error": "rate_limit"})
     stub = _StubMessages(raise_error=api_err)
@@ -508,7 +512,7 @@ async def test_stream_wraps_api_error_in_llm_error() -> None:
 
 async def test_stream_error_logs_warning_without_api_key(caplog: pytest.LogCaptureFixture) -> None:
     """stream APIError → WARNING logged; api_key never appears."""
-    sentinel_key = "sk-ant-SECRET-KEY-NEVER-LOG"
+    sentinel_key = _SENTINEL_KEY
     mock_request = MagicMock()
     api_err = APIError("bad model", request=mock_request, body={"error": "invalid_model"})
     stub = _StubMessages(raise_error=api_err)
@@ -536,12 +540,12 @@ async def test_anthropic_forwards_max_retries_and_timeout() -> None:
     with patch("anthropic.AsyncAnthropic") as MockAnthropic:
         MockAnthropic.return_value = MagicMock()
         AnthropicProvider(
-            api_key="sk-ant-key",
+            api_key=_SENTINEL_KEY,
             max_retries=3,
             timeout=20.0,
         )
         MockAnthropic.assert_called_once_with(
-            api_key="sk-ant-key",
+            api_key=_SENTINEL_KEY,
             max_retries=3,
             timeout=20.0,
         )
@@ -565,3 +569,90 @@ async def test_aclose_calls_underlying_client_close() -> None:
     await provider.aclose()
 
     client.close.assert_awaited_once_with()
+
+
+# -- Claude on calls and the chatbot (2026-11-13) --------------------------------------------
+
+
+def _beta_client(stub: _StubMessages) -> MagicMock:
+    client = _make_stub_client(stub)
+    client.beta.messages = stub
+    return client
+
+
+async def test_system_messages_go_to_the_system_field_not_the_conversation() -> None:
+    """Anthropic rejects a "system" role as the first message: the platform's prompts start
+    with one (answer_from_knowledge, the chatbot)."""
+    stub = _StubMessages()
+    provider = AnthropicProvider(client=_make_stub_client(stub))
+    await provider.generate([ChatMessage("system", "Be brief."), ChatMessage("system", "Context: x"),
+                             ChatMessage("user", "Hi")], model="claude-haiku-5-5", max_tokens=100)
+    assert stub.last_kwargs["system"] == "Be brief.\n\nContext: x"
+    assert stub.last_kwargs["messages"] == [{"role": "user", "content": "Hi"}]
+
+
+@pytest.mark.parametrize(("model", "effort", "thinking", "output_config"), [
+    # Live calls ask for "none": the fastest first word each model allows.
+    ("claude-haiku-5-5", "none", {"type": "disabled"}, {"effort": "low"}),
+    ("claude-sonnet-5-5", "none", {"type": "between_tools"}, {"effort": "low"}),
+    ("claude-opus-5-5", "none", None, {"effort": "low"}),  # thinking can't be turned off
+    ("claude-sonnet-5-5", "low", None, {"effort": "low"}),
+    ("claude-opus-4-8", None, None, None),  # unchanged for older callers
+    ("claude-haiku-5-5", None, None, None),  # no hint -> the model's own defaults
+])
+async def test_the_speed_hint_maps_to_each_models_own_controls(
+        model: str, effort: str | None, thinking: object, output_config: object) -> None:
+    stub = _StubMessages()
+    provider = AnthropicProvider(client=_beta_client(stub))
+    await provider.generate([ChatMessage("user", "Hi")], model=model, max_tokens=100,
+                            reasoning_effort=effort)
+    assert stub.last_kwargs.get("thinking") == thinking
+    assert stub.last_kwargs.get("output_config") == output_config
+
+
+async def test_streamed_answers_use_the_same_system_field_and_speed_hint() -> None:
+    stub = _StubMessages(stream_events=[SimpleNamespace(
+        type="content_block_delta", delta=SimpleNamespace(type="text_delta", text="Hi."))])
+    provider = AnthropicProvider(client=_make_stub_client(stub))
+    out = [c async for c in provider.stream(
+        [ChatMessage("system", "Be brief."), ChatMessage("user", "Hi")],
+        model="claude-haiku-5-5", max_tokens=100, reasoning_effort="none")]
+    assert out == [Chunk("Hi.")]
+    assert stub.last_kwargs["system"] == "Be brief."
+    assert stub.last_kwargs["thinking"] == {"type": "disabled"}
+
+
+async def test_a_refused_answer_is_never_returned_as_text() -> None:
+    stub = _StubMessages(text="partial", stop_reason="refusal")
+    provider = AnthropicProvider(client=_make_stub_client(stub))
+    out = await provider.generate([ChatMessage("user", "Hi")], model="claude-haiku-5-5",
+                                  max_tokens=100)
+    assert (out.text, out.stop_reason) == ("", "refusal")  # callers treat it as a miss
+
+
+@pytest.mark.parametrize(("model", "fallback"), [("claude-sonnet-5-5", True),
+                                                 ("claude-opus-5-5", True),
+                                                 ("claude-haiku-5-5", False)])
+async def test_sonnet_and_opus_fall_back_on_a_refusal_server_side(model: str,
+                                                                  fallback: bool) -> None:
+    beta, plain = _StubMessages(), _StubMessages()
+    client = _make_stub_client(plain)
+    client.beta.messages = beta
+    await AnthropicProvider(client=client).generate([ChatMessage("user", "Hi")], model=model,
+                                                     max_tokens=100)
+    used = beta if fallback else plain
+    assert used.last_kwargs["model"] == model
+    if fallback:
+        assert used.last_kwargs["fallbacks"] == "default"
+        assert used.last_kwargs["betas"] == ["server-side-fallback-2026-07-01"]
+    else:
+        assert "fallbacks" not in used.last_kwargs
+
+
+async def test_embeddings_use_the_tenants_embeddings_endpoint() -> None:
+    """Anthropic has no embeddings API; the knowledge base was embedded with the tenant's
+    OpenAI-compatible endpoint, so queries must be too."""
+    embedder = SimpleNamespace(embed=AsyncMock(return_value=[[0.1, 0.2]]), aclose=AsyncMock())
+    provider = AnthropicProvider(client=MagicMock(), embedder=embedder)
+    assert await provider.embed(["roof"], model="text-embedding-3-small") == [[0.1, 0.2]]
+    embedder.embed.assert_awaited_once_with(["roof"], model="text-embedding-3-small")

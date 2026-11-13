@@ -712,7 +712,11 @@ async def test_each_sentence_is_spoken_as_soon_as_it_is_written(env: None) -> No
 
 
 @pytest.mark.parametrize(("model", "effort"), [("gpt-6-luna", "none"), ("gpt-6.1-sol", "none"),
-                                               ("gpt-oss:20b", "low"), ("o3-mini", "low")])
+                                               ("gpt-oss:20b", "low"), ("o3-mini", "low"),
+                                               # Claude: the provider maps "none" to each
+                                               # model's own fastest setting (2026-11-13)
+                                               ("claude-haiku-5-5", "none"),
+                                               ("claude-sonnet-5-5", "none")])
 async def test_streamed_answers_skip_reasoning_only_where_the_model_allows_it(
         env: None, model: str, effort: str) -> None:
     _, _, stream = await _streamed(["Yes, we repair roofs. ", "Anything else?"], model=model)

@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
@@ -23,6 +24,9 @@ from api.llm.factory import provider_for
 from api.llm.metered_provider import MeteredProvider
 from api.llm.openai_provider import OpenAICompatibleProvider
 from api.llm.provider import LLMError
+
+# A fake key made at run time -- never a key-like literal (pre-commit secret scan).
+_FAKE_KEY = uuid4().hex
 
 
 def _mock_settings() -> object:
@@ -67,7 +71,7 @@ def test_anthropic_config_yields_metered_anthropic_provider() -> None:
     config = LLMConfig(
         provider="anthropic",
         model="claude-opus-4-8",
-        api_key="sk-ant-test-key",
+        api_key=_FAKE_KEY,
     )
     with patch("api.llm.factory.get_api_settings") as mock_settings:
         mock_settings.return_value.llm_max_retries = 2
@@ -82,7 +86,7 @@ def test_azure_config_yields_metered_azure_provider() -> None:
     config = LLMConfig(
         provider="azure",
         model="my-deployment",
-        api_key="sk-azure-key",
+        api_key=_FAKE_KEY,
         base_url="https://my-resource.openai.azure.com",
         api_version="2024-02-01",
     )
@@ -99,7 +103,7 @@ def test_azure_missing_api_version_raises() -> None:
     config = LLMConfig(
         provider="azure",
         model="my-deployment",
-        api_key="sk-azure-key",
+        api_key=_FAKE_KEY,
         base_url="https://my-resource.openai.azure.com",
     )
     with pytest.raises(LLMError):
@@ -111,7 +115,7 @@ def test_azure_missing_base_url_raises() -> None:
     config = LLMConfig(
         provider="azure",
         model="my-deployment",
-        api_key="sk-azure-key",
+        api_key=_FAKE_KEY,
         api_version="2024-02-01",
     )
     with pytest.raises(LLMError):
@@ -206,7 +210,7 @@ def test_factory_threads_retries_and_timeout_to_anthropic() -> None:
     config = LLMConfig(
         provider="anthropic",
         model="claude-opus-4-8",
-        api_key="sk-ant-key",
+        api_key=_FAKE_KEY,
     )
     with patch("api.llm.factory.get_api_settings") as mock_settings:
         mock_settings.return_value.llm_max_retries = 3
@@ -217,9 +221,10 @@ def test_factory_threads_retries_and_timeout_to_anthropic() -> None:
         ) as MockProvider:
             provider_for(config)
             MockProvider.assert_called_once_with(
-                api_key="sk-ant-key",
+                api_key=_FAKE_KEY,
                 max_retries=3,
                 timeout=20.0,
+                embedder=None,  # no embeddings endpoint configured
             )
 
 
@@ -228,7 +233,7 @@ def test_factory_threads_retries_and_timeout_to_azure() -> None:
     config = LLMConfig(
         provider="azure",
         model="my-deployment",
-        api_key="sk-azure-key",
+        api_key=_FAKE_KEY,
         base_url="https://my-resource.openai.azure.com",
         api_version="2024-02-01",
     )
@@ -241,9 +246,32 @@ def test_factory_threads_retries_and_timeout_to_azure() -> None:
         ) as MockProvider:
             provider_for(config)
             MockProvider.assert_called_once_with(
-                api_key="sk-azure-key",
+                api_key=_FAKE_KEY,
                 azure_endpoint="https://my-resource.openai.azure.com",
                 api_version="2024-02-01",
                 max_retries=4,
                 timeout=50.0,
             )
+
+
+def test_anthropic_embeds_through_the_tenants_embeddings_endpoint() -> None:
+    """2026-11-13: Anthropic has no embeddings -- the knowledge base was embedded on the
+    tenant's OpenAI-compatible endpoint, so a Claude tenant's queries go there too."""
+    from uuid import uuid4
+
+    config = LLMConfig(provider="anthropic", model="claude-haiku-5-5", api_key=uuid4().hex,
+                       embedding_model="text-embedding-3-small",
+                       embedding_base_url="https://api.openai.com/v1",
+                       embedding_api_key=uuid4().hex, embedding_dimensions=1536)
+    with patch("api.llm.factory.get_api_settings") as mock_settings:
+        mock_settings.return_value.llm_max_retries = 2
+        mock_settings.return_value.llm_timeout_seconds = 30.0
+        mock_settings.return_value.embedding_batch_size = 5
+        provider = provider_for(config)
+        without = provider_for(LLMConfig(provider="anthropic", model="claude-haiku-5-5",
+                                         api_key=uuid4().hex))
+    embedder = provider._delegate._embedder
+    assert isinstance(embedder, OpenAICompatibleProvider)
+    assert str(embedder._embed_client.base_url).startswith("https://api.openai.com/v1")
+    assert embedder._embedding_dimensions == 1536
+    assert without._delegate._embedder is None  # explicit LLMError, as before
