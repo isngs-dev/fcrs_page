@@ -354,3 +354,15 @@ def test_spoken_numbers_from_the_streaming_recogniser(
 ])
 def test_asking_to_be_told_something_is_a_question(text: str, asks: bool) -> None:
     assert script.wants_info(text) is asks
+
+
+@pytest.mark.parametrize(("text", "closes"), [
+    ("No. Thank you. I will talk with your team on Monday.", True),
+    ("see you then", True),
+    ("no thanks, talk to you on the call", True),
+    ("can I talk to someone now?", False),  # a real transfer request
+    ("put me through to a person", False),
+    ("I want to speak with your manager", False),
+])
+def test_a_goodbye_with_a_call_booked(text: str, closes: bool) -> None:
+    assert script.closes_with_booking(text) is closes

@@ -58,6 +58,18 @@ _WANTS_INFO = re.compile(
     r"|\binfo(?:rmation)? (?:about|on)\b|\bcurious (?:about|how|what)\b", re.I)
 
 
+_SEE_YOU_THEN = re.compile(
+    r"\b(?:i'?ll|i will|we'?ll|we will)\b.{0,30}\b(?:talk|speak|see|meet|chat)\b"
+    r"|\bsee you\b|\btalk (?:to you |with you )?(?:then|soon|later)\b"
+    r"|\bon (?:the|our|my|that) (?:call|meeting)\b|\bno,? thank(?:s| you)\b", re.I)
+
+
+def closes_with_booking(text: str) -> bool:
+    """With a call booked: "I will talk with your team on Monday", "see you then", "no, thank
+    you" -- a goodbye, not a transfer request or a "not interested" (live 2026-11-12)."""
+    return bool(_SEE_YOU_THEN.search(text)) and "?" not in text
+
+
 def wants_info(text: str) -> bool:
     """ "I want to know about ...", "tell me about ..." -- a question without a question word,
     to be answered, not thanked for (live 2026-11-12)."""

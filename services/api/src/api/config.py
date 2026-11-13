@@ -359,6 +359,8 @@ class ApiSettings(Settings):
     # streaming (Deepgram Flux + ElevenLabs) instead of turn-by-turn XML. Unset -> nobody.
     realtime_voice_tenants: str | None = None
     deepgram_api_key: str | None = None
+    # Comma-separated words the speech-to-text should listen out for (the trade's terms).
+    deepgram_keyterms: str | None = None
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
     elevenlabs_model: str = "eleven_flash_v2_5"

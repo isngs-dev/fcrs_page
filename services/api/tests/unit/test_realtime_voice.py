@@ -349,3 +349,16 @@ async def test_once_they_talk_over_her_nothing_more_of_that_answer_is_said() -> 
     assert voice.said == ["Hi, Rebecca here.", "First sentence."]
     plivo.push(event="stop")
     await asyncio.wait_for(task, 1)
+
+
+def test_the_words_flux_listens_for_are_the_business_name_plus_the_configured_ones(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-12: "roofs" was heard as "rupees" -- the trade's own words help."""
+    from types import SimpleNamespace
+
+    settings = SimpleNamespace(deepgram_keyterms=" roofing, roofers ,Roof Engine,, ")
+    monkeypatch.setattr(realtime, "get_api_settings", lambda: settings)
+    assert realtime.keyterms("iSN Global Solutions") == [
+        "iSN Global Solutions", "roofing", "roofers", "Roof Engine"]
+    settings.deepgram_keyterms = None
+    assert realtime.keyterms(None) == []

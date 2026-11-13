@@ -423,6 +423,13 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             and script.agrees(speech)):
         kind = "yes"
 
+    # A call is booked (earlier, or on this call): "I'll talk with your team on Monday" /
+    # "no, thank you" is a goodbye -- not a transfer request, not "not interested".
+    has_booking = (bool(state.booked) and not state.rescheduling) or session.outcome == "booked"
+    if (has_booking and kind in ("person", "not_interested", "other", "no")
+            and script.closes_with_booking(speech)):
+        kind = "goodbye"
+
     provider = None
     if kind == "recording_objection":
         if state.recording_started and session.recording_id:

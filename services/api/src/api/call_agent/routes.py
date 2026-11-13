@@ -221,7 +221,8 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
     try:
         config = await repo.get_call_config(db, claims)
         listener = await realtime.FluxListener.connect(
-            str(settings.deepgram_api_key), [config.company_name] if config else [])
+            str(settings.deepgram_api_key),
+            realtime.keyterms(config.company_name if config else None))
     except Exception as exc:  # noqa: BLE001 -- nothing to say without ears: end, loudly
         _log.error("realtime speech-to-text unreachable", extra={
             "event": "realtime_connect_failed", "reason": type(exc).__name__})

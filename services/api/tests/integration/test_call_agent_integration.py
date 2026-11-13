@@ -1076,3 +1076,26 @@ async def test_asking_about_the_service_after_the_opening_gets_an_answer_not_a_t
     answer = service.spoken_text(await _say(env, call_id, "So I want to know about roofing thing."))
     assert answer == "We charge two hundred dollars for that."  # the knowledge-base answer
     assert answer != script.DISCOVERY_THANKS_LINE
+
+
+@pytest.mark.parametrize("goodbye", ["No. Thank you. I will talk with your team on Monday.",
+                                     "no thank you, see you on the call"])
+async def test_a_booked_lead_saying_goodbye_is_not_a_transfer_or_a_no(
+        env: dict[str, Any], goodbye: str) -> None:
+    """Live 2026-11-12: with a call booked, "No. Thank you. I will talk with your team on
+    Monday." was taken as "put me through to a person": team line + escalated."""
+    db, a = env["db"], env["a"]
+    booked_at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(15),
+                                 tzinfo=_NY)
+    await _form_booking(env, a, booked_at)
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    await _say(env, call_id, "keep it")
+    end = await _say(env, call_id, goodbye)
+    assert service.spoken_text(end) == script.GOODBYE_LINE
+    assert end.endswith("<Hangup/></Response>")
+    assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
+                             call_id) == "completed"
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
+                             "AND kind = 'agent_call_needs_human'", a) == 0

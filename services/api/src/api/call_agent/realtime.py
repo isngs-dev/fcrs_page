@@ -88,6 +88,14 @@ def remainder(reply: str, said: list[str]) -> str:
     return whole[len(before):].strip() if before and whole.startswith(before) else whole
 
 
+def keyterms(company: str | None) -> list[str]:
+    """Words Flux should listen out for: the business's name + ``DEEPGRAM_KEYTERMS`` (the
+    trade's own words -- "roofs" was heard as "rupees"). ponytail: one platform list for the
+    speed test; per-client terms come with per-client speech settings."""
+    configured = (get_api_settings().deepgram_keyterms or "").split(",")
+    return [t.strip() for t in [company or "", *configured] if t.strip()]
+
+
 def flux_query(keyterms: list[str]) -> str:
     """Phone audio (mu-law 8 kHz); numbers as digits ("fifteenth" -> "15th", which the date
     reader understands); the business's own name as a keyterm so it's heard right."""

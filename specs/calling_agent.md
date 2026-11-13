@@ -196,3 +196,12 @@ models that accept it (`gpt-6*`; OpenAI's own error lists it), `low` elsewhere.
 question word ("So I want to know about roofing thing", "tell me about…", "explain…", "more about…") is
 answered from the knowledge base (`script.wants_info`), not thanked for as their need. A stated need
 ("the roof leaks over the kitchen") still gets the thank-you and the offer of a time.
+
+**Third streamed call (2026-11-12, after R11–R12):** keep-or-reschedule worked; scripted replies 0.18–0.27 s;
+knowledge answers 1.2–2.9 s. Measured on the server: the answer path's first sentence 1.1–1.4 s (lookup
+~0.3–0.4 s, then OpenAI's own time to the first word, 0.5–0.8 s and variable); the caller's story ~20 ms;
+reusing the model connection would save ~150–200 ms per request. **R13:** with a call booked (earlier or on
+this call), "I'll talk with your team on Monday" / "see you then" / "no, thank you" is a goodbye — not a
+transfer request (it was: team line + escalated) and not "not interested" (`script.closes_with_booking`;
+a question is never a goodbye). **R14:** `DEEPGRAM_KEYTERMS` (comma list) is added to the business name as
+Flux keyterms — "roofs" was heard as "rupees".
