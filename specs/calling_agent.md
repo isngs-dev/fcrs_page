@@ -226,3 +226,10 @@ answered, not a booking request; with a call already booked, only a reschedule s
 **R18:** mid-booking, "I have already booked / I don't want to repeat it / not now" (`script.declines_booking`)
 leaves the booking flow — the standing booking is confirmed (`kept_line`), or "No problem. Anything else?" —
 instead of asking for a time again and handing off after two misses.
+
+**Fifth streamed call (2026-11-13, after R17–R18):** every reply 0.17–0.27 s. Questions about the booked call
+("who will I speak to?", "how long is it?") missed, and after two misses an "Okay." ended the call escalated.
+**R19:** with a call booked, the answer gets the booking's own facts ("Their booked call with our team:
+Monday, November 16 at 9 AM Eastern time, 30 minutes."; minutes from the event) alongside the caller's story.
+**R20:** with a call booked, unanswered questions don't hand off: each is saved for the team ("They asked",
+lead memory) and she carries on; without a booking, two misses still go to a person.

@@ -1128,3 +1128,55 @@ async def test_no_thanks_mid_booking_leaves_the_booking_flow(env: dict[str, Any]
     assert out == f"No problem. {script.ANYTHING_ELSE}"
     assert await env["db"].fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
                                     call_id) != "escalated"
+
+
+async def test_questions_about_the_booked_call_are_answered_from_the_booking(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-13: "How long would the call be?" -> "a good question for our team".
+    The booking's own facts now reach the answer."""
+    seen: list[str | None] = []
+
+    async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
+                     about_caller: Any = None, can_book: bool = False) -> str | None:
+        seen.append(about_caller)
+        return "It's a 30-minute call with our team."
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    booked_at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(9),
+                                 tzinfo=_NY)
+    await _form_booking(env, env["a"], booked_at)
+    call_id, _ = await _dial(env, env["a"])
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    await _say(env, call_id, "keep it")
+    assert service.spoken_text(await _say(env, call_id, "How long would the call be?")) == (
+        "It's a 30-minute call with our team.")
+    facts = seen[-1] or ""
+    assert "30 minutes" in facts and script.say_time(booked_at, "America/New_York") in facts
+
+
+async def test_with_a_call_booked_unanswered_questions_go_to_the_team_not_a_hand_off(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-13: two questions the knowledge base can't answer, then "Okay." -> she
+    ended the call, "someone from our team will get back to you", escalated."""
+    db, a = env["db"], env["a"]
+    booked_at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(9),
+                                 tzinfo=_NY)
+    await _form_booking(env, a, booked_at)
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    await _say(env, call_id, "keep it")
+    for question in ("Is there a warranty on the ads?", "And a warranty on the landing page?"):
+        assert script.MISS_LINE in service.spoken_text(await _say(env, call_id, question))
+    after = await _say(env, call_id, "Okay.")
+    assert service.spoken_text(after) == "Great! What questions can I answer?"
+    assert not after.endswith("<Hangup/></Response>")
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
+                             "AND kind = 'agent_call_needs_human'", a) == 0
+    contact_id = await db.fetchval("SELECT contact_id FROM call_sessions WHERE call_id = $1",
+                                   call_id)
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    asked = [i["text"] for i in await memory.items(db, claims, str(contact_id))
+             if i["kind"] == "asked"]
+    assert asked == ["Is there a warranty on the ads?", "And a warranty on the landing page?"]

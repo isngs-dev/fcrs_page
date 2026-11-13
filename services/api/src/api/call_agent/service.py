@@ -202,8 +202,10 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
                                                email=contact.email) if contact else None)
     if upcoming is not None:  # booked already (e.g. on the website form): keep or move it
         written["question"] = script.booked_question(upcoming.starts_at, upcoming.timezone)
-        written["booked"] = {"event_id": upcoming.event_id, "tz": upcoming.timezone,
-                             "at": upcoming.starts_at.astimezone(UTC).isoformat()}
+        written["booked"] = {
+            "event_id": upcoming.event_id, "tz": upcoming.timezone,
+            "at": upcoming.starts_at.astimezone(UTC).isoformat(),
+            "minutes": str(int((upcoming.ends_at - upcoming.starts_at).total_seconds() // 60))}
     await repo.update_session(db, claims, call_id, session=written)
     try:
         provider = await telephony_for(db, str(claims.tenant_id), config)
@@ -482,7 +484,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             await _handoff(db, claims, session, "callback_requested")
             return await bye(script.TEAM_LINE, "callback")
         return await bye(script.CALLBACK_LINE, "callback")
-    if kind == "person" or state.misses >= 2:
+    # Two questions she couldn't answer -> a person -- unless a call with the team is booked
+    # anyway: then the questions go to that call (live 2026-11-13: "Okay." ended the call).
+    if kind == "person" or (state.misses >= 2 and not has_booking):
         await _handoff(db, claims, session, "asked_for_person" if kind == "person" else "misses")
         if config.transfer_number:
             await repo.update_session(db, claims, call_id, status="transferring",
@@ -625,6 +629,13 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     try:
         about = (await memory.render(db, claims, session.contact_id)
                  if session.contact_id else None)
+        if state.booked:  # "how long is the call?" -- the booking's own facts
+            booked_at = script.say_time(datetime.fromisoformat(state.booked["at"]),
+                                        state.booked["tz"])
+            minutes = state.booked.get("minutes")
+            length = f", {minutes} minutes" if minutes else ""
+            about = "\n".join(filter(None, [about, f"Their booked call with our team: "
+                                                   f"{booked_at}{length}."]))
         reply = await answer_from_knowledge(db, claims, speech, history, model=config.voice_model,
                                             about_caller=about, can_book=not held)
     except Exception as exc:  # noqa: BLE001 -- the team follows up instead
@@ -639,6 +650,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if reply is None:
         state.misses += 1
         reply = script.MISS_LINE
+        if has_booking and session.contact_id:  # the team sees it before their call
+            await memory.remember(db, claims, session.contact_id, channel="call", kind="asked",
+                                  text=speech)
         back = back or ("They can go over it with you on your call." if held
                         else "Would you like me to find a time with them?")
     return await say(f"{reply} {back}" if back else reply)
