@@ -64,3 +64,19 @@ right after it) are unchanged.
 `tests/integration/test_chat_identity_flow_integration.py` (natural asks, wrap-up once, call waits for
 quiet/goodbye, another tenant's chat never holds the call, number after an email still gets the call),
 `tests/integration/test_agents_integration.py` (first_response skips the gap).
+
+## Hand-offs that fit the conversation (2026-11-13)
+
+Product owner: the chatbot asked for ZIP codes for a market-spend estimate, then answered the list with the
+fixed "I'd like to respond more precisely…" line. *"If it asked the ZIP code it should have responded to it,
+or it shouldn't have asked … and the response should change according to the context."*
+
+| # | Behaviour | Why |
+|---|---|---|
+| H1 | The grounding prompt: never ask the visitor for details (ZIP codes, budgets, figures, documents) to work something out unless the context shows how to use them — custom estimates, quotes and market assessments are the team's, so say so and offer to connect them. Never ask for a phone number (only the code asks, with the exact `PHONE_ASK` disclosure, P1) | It promised an estimate it couldn't make |
+| H2 | No answer in the context → the model replies `NO_ANSWER_FOUND | <one or two sentences>`: acknowledges what they asked or shared, says the team can help with exactly that, offers to connect them. That text is the reply (still `decision="escalate"` with its CTA) when it passes: ≤ 45 words, no digit, no price/percentage/commitment word (any form: "guarantees", "promised"), the output guardrails. Otherwise, or with no text after the signal, the fixed `_ESCALATE_REPLY` | Natural, varied wording without letting an answer or a promise slip in. Same single model call: no added latency or cost |
+
+Replayed on Roof-Engine (gpt-6-luna, 8 runs): never asked for ZIP codes or a phone number; each hand-off
+acknowledged what was asked/shared, worded differently each time, 23–35 words.
+**Tests:** `test_orchestrator_service.py` (written hand-off used; promise, price, number, speech or empty →
+fixed line; the prompt's rules).

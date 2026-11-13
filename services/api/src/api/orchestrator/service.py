@@ -64,7 +64,7 @@ from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, LLMError, LLMProvider
 from api.orchestrator import identity_capture
 from api.orchestrator.config_repository import get_orchestrator_config
-from api.orchestrator.guardrails import scan_output
+from api.orchestrator.guardrails import scan_output, unstated_commitments
 from api.rag.service import HybridMatch, HybridResult, retrieve_hybrid
 from api.scheduling.repository import ScheduleEvent, get_availability, get_upcoming_booking
 
@@ -255,9 +255,16 @@ _FORMATTING_RULES = (
 
 _GROUNDING_SYSTEM_PROMPT = (
     "You are a helpful assistant for this business. Answer the user's "
-    "question using ONLY the context provided below. If the context does "
-    "not contain the answer, reply with exactly `NO_ANSWER_FOUND` and nothing "
-    "else -- do not apologize, do not invent facts, prices, or commitments."
+    "question using ONLY the context provided below. Do not ask the visitor for details "
+    "(ZIP codes, budgets, figures, documents) to work something out yourself unless the "
+    "context shows exactly how to use them: custom estimates, quotes and assessments of "
+    "their market are done by our team, so say the team can do that and offer to connect "
+    "them. If the context does not contain the answer, reply with `NO_ANSWER_FOUND | ` "
+    "followed by one or two short sentences to the visitor in your own words: acknowledge "
+    "what they asked or shared, say our team can help with exactly that, and offer to "
+    "connect them -- no prices, numbers, promises or facts beyond the context. Never "
+    "ask for their phone number yourself. Never apologize, never invent facts, prices, or "
+    "commitments."
     + _FORMATTING_RULES
 )
 
@@ -1251,6 +1258,27 @@ def _with_suffix(final: _FinalizedGeneration, plan: _GeneratePlan) -> tuple[str,
     return final.reply, plan.intent
 
 
+_HANDOFF_MAX_WORDS = 45  # live replies ran 23-35 words; a speech runs longer
+# Any form of a promise word ("guarantees", "promised"): a hand-off never commits to anything.
+_HANDOFF_PROMISE = re.compile(
+    r"\b(?:guarant\w*|promis\w*|discount\w*|refund\w*|warrant\w*|free|risk-free)\b", re.I)
+
+
+def _written_handoff(text: str) -> str | None:
+    """The hand-off the model wrote after ``NO_ANSWER_FOUND |`` (2026-11-13: one fixed line
+    for every question sounded canned), or ``None`` -> the fixed line. Accepted only when
+    it's short, has no number, price, percentage or commitment word (it must not slip an
+    answer in), and passes the output guardrails."""
+    handoff = text.split(_NO_ANSWER_SENTINEL, 1)[1].lstrip(" |:-—\n").strip()
+    if (not handoff or len(handoff.split()) > _HANDOFF_MAX_WORDS
+            or re.search(r"\d", handoff) or _NO_ANSWER_SENTINEL in handoff):
+        return None
+    if (not scan_output(handoff).ok or unstated_commitments(handoff, "")
+            or _HANDOFF_PROMISE.search(handoff)):
+        return None
+    return handoff
+
+
 def _finalize_generation(text: str, plan: _GeneratePlan) -> _FinalizedGeneration:
     """The single home of the post-generate scan/degrade logic (decision 4).
 
@@ -1280,7 +1308,7 @@ def _finalize_generation(text: str, plan: _GeneratePlan) -> _FinalizedGeneration
         )
     if plan.grounded and _NO_ANSWER_SENTINEL in text:
         return _FinalizedGeneration(
-            reply=_ESCALATE_REPLY,
+            reply=_written_handoff(text) or _ESCALATE_REPLY,
             decision="escalate",
             sources=[],
             grounded=False,

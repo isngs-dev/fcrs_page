@@ -2843,3 +2843,38 @@ async def test_a_plain_yes_after_the_ask_is_not_taken_as_a_name() -> None:
 
     assert result.prefill is None
     p.provider.classify.assert_awaited_once()
+
+
+# -- A hand-off written for the moment (2026-11-13) --------------------------------------------
+# Live: asked for ZIP codes it couldn't use, then answered the list with the fixed "I'd like
+# to respond more precisely..." line.
+
+
+def test_the_no_answer_hand_off_is_written_for_what_they_asked() -> None:
+    handoff = ("Thanks for the ZIP codes. Our team can put together a market estimate for "
+               "those areas, so I'll connect you with them.")
+    finalized = _finalize_generation(f"{_NO_ANSWER_SENTINEL} | {handoff}", _generate_plan())
+    assert finalized.reply == handoff
+    assert finalized.decision == "escalate"  # still a hand-off: the CTA still shows
+    assert finalized.resolve_escalate_action is True
+    assert finalized.grounded is False and finalized.sources == []
+
+
+@pytest.mark.parametrize("handoff", [
+    "",  # no hand-off written: the fixed line
+    "Our team guarantees results in your areas, let me connect you.",  # a promise
+    "Plans start at $500 a month; the team will be in touch.",  # a price not in the context
+    "Great question. " * 30,  # a speech, not a hand-off
+    "Sure! Here's an estimate: you'll spend around 2000 in Katy.",  # it's still answering
+])
+def test_a_hand_off_that_breaks_the_rules_falls_back_to_the_fixed_line(handoff: str) -> None:
+    finalized = _finalize_generation(f"{_NO_ANSWER_SENTINEL} | {handoff}", _generate_plan())
+    assert finalized.reply == _ESCALATE_REPLY
+
+
+def test_the_grounding_prompt_never_asks_for_details_it_cant_use() -> None:
+    assert "Do not ask the visitor for details" in _GROUNDING_SYSTEM_PROMPT
+    assert f"{_NO_ANSWER_SENTINEL} |" in _GROUNDING_SYSTEM_PROMPT  # the hand-off protocol
+    # Only the code asks for a number, with the exact consent wording (CHAT-NAME-FIRST P1);
+    # a live replay asked for one in a hand-off.
+    assert "Never ask for their phone number yourself" in _GROUNDING_SYSTEM_PROMPT
