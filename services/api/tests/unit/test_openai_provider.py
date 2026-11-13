@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from openai import APIError
@@ -498,10 +498,10 @@ async def test_embedding_base_url_builds_a_separate_client() -> None:
 
         assert MockOpenAI.call_count == 2
         MockOpenAI.assert_any_call(
-            api_key="ollama", base_url="https://ollama.com/v1", max_retries=2, timeout=30.0,
+            api_key="ollama", base_url="https://ollama.com/v1", max_retries=2, timeout=30.0, http_client=ANY,
         )
         MockOpenAI.assert_any_call(
-            api_key="ollama", base_url="http://embeddings:8080/v1", max_retries=2, timeout=30.0,
+            api_key="ollama", base_url="http://embeddings:8080/v1", max_retries=2, timeout=30.0, http_client=ANY,
         )
         assert provider._client is chat_mock
         assert provider._embed_client is embed_mock
@@ -586,10 +586,10 @@ async def test_embedding_base_url_with_embedding_api_key_uses_the_distinct_key()
         )
 
         MockOpenAI.assert_any_call(
-            api_key=chat_key, base_url="https://ollama.com/v1", max_retries=2, timeout=30.0,
+            api_key=chat_key, base_url="https://ollama.com/v1", max_retries=2, timeout=30.0, http_client=ANY,
         )
         MockOpenAI.assert_any_call(
-            api_key=embedding_key, base_url="https://api.openai.com/v1", max_retries=2, timeout=30.0,
+            api_key=embedding_key, base_url="https://api.openai.com/v1", max_retries=2, timeout=30.0, http_client=ANY,
         )
 
 
@@ -613,7 +613,7 @@ async def test_embedding_base_url_without_embedding_api_key_falls_back_to_chat_k
         )
 
         MockOpenAI.assert_any_call(
-            api_key=chat_key, base_url="http://embeddings:8080/v1", max_retries=2, timeout=30.0,
+            api_key=chat_key, base_url="http://embeddings:8080/v1", max_retries=2, timeout=30.0, http_client=ANY,
         )
 
 
@@ -1130,6 +1130,7 @@ async def test_openai_forwards_max_retries_and_timeout() -> None:
             base_url="https://example.com/v1",
             max_retries=5,
             timeout=45.0,
+            http_client=ANY,
         )
 
 
@@ -1162,3 +1163,39 @@ async def test_stream_sends_reasoning_effort_only_to_reasoning_models(
                                    reasoning_effort="low"):
         pass
     assert stub.last_kwargs.get("reasoning_effort") == ("low" if sent else None)
+
+
+# -- One connection pool per running loop (2026-11-13: a fresh TLS setup per request cost
+# ~150-200 ms on every call-turn answer) ----------------------------------------------------
+
+
+async def test_providers_in_one_loop_reuse_one_connection_pool_and_never_close_it() -> None:
+    first = OpenAICompatibleProvider(api_key="k", base_url="https://api.example.com/v1")
+    second = OpenAICompatibleProvider(api_key="k", base_url="https://api.example.com/v1",
+                                      embedding_base_url="https://embed.example.com/v1")
+    pool = first._client._client
+    assert second._client._client is pool and second._embed_client._client is pool
+    await first.aclose()
+    await second.aclose()
+    assert not pool.is_closed  # the next turn's provider keeps the warm connections
+
+
+def test_each_event_loop_gets_its_own_pool() -> None:
+    """Celery runs every task on a new loop: a pool tied to a finished loop must never be
+    handed out again."""
+    import asyncio
+
+    async def pool_of_new_provider() -> object:
+        provider = OpenAICompatibleProvider(api_key="k")
+        await provider.aclose()
+        return provider._client._client
+
+    first, second = asyncio.run(pool_of_new_provider()), asyncio.run(pool_of_new_provider())
+    assert first is not second
+
+
+async def test_an_injected_client_is_still_the_providers_own() -> None:
+    stub = _StubCompletions()
+    client = _make_stub_client(stub)
+    provider = OpenAICompatibleProvider(client=client)
+    assert provider._client is client

@@ -93,7 +93,7 @@ def _call(brain: Any, said: list[tuple[str, int]] | None = None, **kwargs: Any) 
 async def test_the_opening_is_spoken_as_soon_as_the_stream_starts() -> None:
     said: list[tuple[str, int]] = []
 
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
         raise AssertionError("nobody spoke yet")
 
     call, plivo, flux, voice = _call(brain, said)
@@ -115,7 +115,7 @@ async def test_the_end_of_their_turn_gets_her_reply_and_its_timing() -> None:
     said: list[tuple[str, int]] = []
     heard: list[str] = []
 
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
         heard.append(speech)
         return "We charge two hundred dollars.", False
 
@@ -136,7 +136,7 @@ async def test_the_end_of_their_turn_gets_her_reply_and_its_timing() -> None:
 
 
 async def test_talking_over_her_stops_her_at_once() -> None:
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
         return "A long answer that goes on and on.", False
 
     call, plivo, flux, voice = _call(brain)
@@ -163,7 +163,7 @@ async def test_a_pause_mid_sentence_never_cuts_her_thinking_short() -> None:
     finished: list[str] = []  # turns whose logic ran to the end (state saved)
     first_done = asyncio.Event()
 
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
         heard.append(speech)
         if speech == "go with fifteen November.":
             await first_done.wait()  # still thinking when the rest arrives
@@ -192,7 +192,7 @@ async def test_a_pause_mid_sentence_never_cuts_her_thinking_short() -> None:
 
 
 async def test_the_last_line_is_heard_before_the_call_ends() -> None:
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
         return "Thanks for your time, goodbye.", True
 
     call, plivo, flux, voice = _call(brain)
@@ -211,7 +211,7 @@ async def test_the_last_line_is_heard_before_the_call_ends() -> None:
 async def test_silence_after_she_speaks_is_a_turn_too() -> None:
     heard: list[str] = []
 
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
         heard.append(speech)
         return "Sorry, I didn't catch that. Are you still there?", False
 
@@ -249,7 +249,7 @@ async def test_a_voice_that_fails_ends_the_call_instead_of_dead_air() -> None:
     """Live 2026-11-12: ElevenLabs refused the voice (402, free plan + library voice)."""
     import httpx
 
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
         raise AssertionError("never reached")
 
     async def refused(text: str) -> AsyncIterator[bytes]:
@@ -284,8 +284,8 @@ async def test_she_starts_speaking_at_the_first_sentence_and_never_repeats_it() 
     said: list[tuple[str, int]] = []
     rest = asyncio.Event()
 
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
-        await speak("We build Google and Meta ads for roofers.")
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        await speak.sentence("We build Google and Meta ads for roofers.")
         await rest.wait()  # the model is still writing
         return ("We build Google and Meta ads for roofers. And landing pages that book "
                 "inspections. Would you like me to find a time?"), False
@@ -309,8 +309,8 @@ async def test_she_starts_speaking_at_the_first_sentence_and_never_repeats_it() 
 
 
 async def test_when_the_answer_turns_into_a_miss_she_says_the_miss_line_after() -> None:
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
-        await speak("Yes, we work with roofers.")
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        await speak.sentence("Yes, we work with roofers.")
         return "That's a good question for our team. They can go over it with you.", False
 
     call, plivo, flux, voice = _call(brain)
@@ -329,10 +329,10 @@ async def test_when_the_answer_turns_into_a_miss_she_says_the_miss_line_after() 
 async def test_once_they_talk_over_her_nothing_more_of_that_answer_is_said() -> None:
     more = asyncio.Event()
 
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
-        await speak("First sentence.")
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        await speak.sentence("First sentence.")
         await more.wait()
-        await speak("Second sentence.")
+        await speak.sentence("Second sentence.")
         return "First sentence. Second sentence. Third sentence.", False
 
     call, plivo, flux, voice = _call(brain)
@@ -362,3 +362,52 @@ def test_the_words_flux_listens_for_are_the_business_name_plus_the_configured_on
         "iSN Global Solutions", "roofing", "roofers", "Roof Engine"]
     settings.deepgram_keyterms = None
     assert realtime.keyterms(None) == []
+
+
+async def test_a_short_bridge_fills_the_wait_and_is_never_part_of_the_answer() -> None:
+    """Option A (2026-11-13): "Right." the moment an AI answer starts, instead of silence;
+    rotated, never twice in a row, not in the transcript, not repeated by the answer."""
+    said: list[tuple[str, int]] = []
+    answer_ready = asyncio.Event()
+
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        await speak.bridge()
+        await answer_ready.wait()
+        await speak.sentence("We run Google and Meta ads.")
+        return "We run Google and Meta ads. And landing pages.", False
+
+    call, plivo, flux, voice = _call(brain, said)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    for n, question in enumerate(("what do you do", "and what else"), start=2):
+        plivo.push(event="playedStream", name=plivo.events("checkpoint")[-1]["name"])
+        answer_ready.clear()
+        flux.hear("EndOfTurn", question)
+        await _until(lambda: voice.said[-1] in realtime.BRIDGES)  # said while it thinks
+        answer_ready.set()
+        await _until(lambda n=n: len(plivo.events("checkpoint")) == n)
+        assert voice.said[-2:] == ["We run Google and Meta ads.", "And landing pages."]
+        assert said[-1][0] == "We run Google and Meta ads. And landing pages."  # no bridge
+    bridges = [line for line in voice.said if line in realtime.BRIDGES]
+    assert len(bridges) == 2 and bridges[0] != bridges[1]
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+async def test_no_bridge_once_she_is_already_answering_or_was_talked_over() -> None:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        await speak.sentence("Yes.")
+        await speak.bridge()  # too late: she's already answering
+        return "Yes.", False
+
+    call, plivo, flux, voice = _call(brain)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
+    flux.hear("EndOfTurn", "do you work with roofers")
+    await _until(lambda: len(plivo.events("checkpoint")) == 2)
+    assert voice.said == ["Hi, Rebecca here.", "Yes."]
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)

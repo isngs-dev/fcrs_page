@@ -205,3 +205,16 @@ this call), "I'll talk with your team on Monday" / "see you then" / "no, thank y
 transfer request (it was: team line + escalated) and not "not interested" (`script.closes_with_booking`;
 a question is never a goodbye). **R14:** `DEEPGRAM_KEYTERMS` (comma list) is added to the business name as
 Flux keyterms — "roofs" was heard as "rupees".
+
+**R15 — spoken bridge (option A, 2026-11-13):** on a streamed call, the moment a turn reaches the AI answer
+(`answer_from_knowledge`), Rebecca says a short word — "Right." / "Okay." / "Mm-hm." (`realtime.BRIDGES`,
+rotated, never twice in a row) — so the caller hears her within ~0.2–0.4 s instead of silence. Only before
+she has said anything that turn, never after she was talked over or the caller kept talking; never part of
+the answer (not transcribed, not used when working out what's left to say). Not "Sure." (the booking line
+starts with it) and not "Good question" (the miss line says it). The early-speech hook is now a
+`LiveVoice`/`Speaking` object with `sentence()` and `bridge()`.
+**R16 — connection reuse (option B):** `OpenAICompatibleProvider` uses one HTTP connection pool per running
+event loop (the SDK's `DefaultAsyncHttpxClient`), shared by every provider built on that loop and never
+closed by `aclose()`; a new loop (each Celery task) gets a new pool, and only the latest is kept. An
+injected client, or a provider built outside a loop, keeps its own client as before. Saves the fresh TLS
+setup (~150–200 ms measured) on every model and embedding request, platform-wide.

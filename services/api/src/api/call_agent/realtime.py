@@ -74,10 +74,36 @@ class Listener(Protocol):
 
 
 Voice = Callable[[str], AsyncIterator[bytes]]
-SpeakEarly = Callable[[str], Awaitable[None]]  # a finished, checked sentence: say it now
-# (speech, speak early) -> (her whole reply, end the call). Sentences already given to
-# ``speak early`` are never said twice: only the rest of the reply follows them.
-Brain = Callable[[str, SpeakEarly], Awaitable[tuple[str, bool]]]
+# Said the moment an AI answer starts, instead of silence (option A, 2026-11-13). Rotated,
+# never twice in a row. Not "Sure." (the booking line starts with it) and not "Good question"
+# (the miss line says it).
+BRIDGES = ("Right.", "Okay.", "Mm-hm.")
+
+
+class Speaking(Protocol):
+    """This turn's early voice: ``sentence`` = a finished, checked sentence, say it now;
+    ``bridge`` = a short word while the answer is worked out (never part of the answer)."""
+
+    async def sentence(self, text: str) -> None: ...
+
+    async def bridge(self) -> None: ...
+
+
+class _TurnVoice:
+    def __init__(self, sentence: Callable[[str], Awaitable[None]],
+                 bridge: Callable[[], Awaitable[None]]) -> None:
+        self._sentence, self._bridge = sentence, bridge
+
+    async def sentence(self, text: str) -> None:
+        await self._sentence(text)
+
+    async def bridge(self) -> None:
+        await self._bridge()
+
+
+# (speech, this turn's voice) -> (her whole reply, end the call). Sentences already said
+# early are never said twice: only the rest of the reply follows them.
+Brain = Callable[[str, Speaking], Awaitable[tuple[str, bool]]]
 Record = Callable[[str, int], Awaitable[None]]  # (what she said, ms until her first audio)
 
 
@@ -175,6 +201,7 @@ class RealtimeCall:
         self._cut_off = False  # talked over: the rest of this answer is dropped
         self._ending = False
         self._replies = 0
+        self._bridges = 0
         self._done = asyncio.Event()
 
     async def run(self) -> None:
@@ -253,20 +280,29 @@ class RealtimeCall:
         said: list[str] = []
         first_line_at: list[float] = []
 
-        def say(line: str) -> None:
-            said.append(line)
+        def say(line: str, *, part_of_answer: bool = True) -> None:
+            if part_of_answer:  # a bridge is neither repeated-against nor transcribed
+                said.append(line)
             lines.put_nowait(line)
             if not first_line_at:
                 first_line_at.append(self._clock())
                 self._speech = asyncio.create_task(
                     self._speak(lines, said, heard_at, first_line_at[0]))
 
-        async def early(sentence: str) -> None:
-            if not self._cut_off and self._turns.empty():  # still their latest words
-                say(sentence)
+        def still_theirs() -> bool:
+            return not self._cut_off and self._turns.empty()  # their latest words, not cut off
+
+        async def sentence(text: str) -> None:
+            if still_theirs():
+                say(text)
+
+        async def bridge() -> None:
+            if still_theirs() and not first_line_at:  # only before she has said anything
+                say(BRIDGES[self._bridges % len(BRIDGES)], part_of_answer=False)
+                self._bridges += 1
 
         try:
-            text, end = await self._brain(speech, early)
+            text, end = await self._brain(speech, _TurnVoice(sentence, bridge))
         except Exception as exc:  # noqa: BLE001 -- never dead air: end the call, loudly
             _log.error("realtime turn failed", extra={
                 "event": "realtime_turn_failed", "reason": type(exc).__name__})

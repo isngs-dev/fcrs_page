@@ -668,8 +668,14 @@ async def _streamed(pieces: list[str], *, can_book: bool = False, model: str = "
 
     spoken: list[str] = []
 
-    async def speak(sentence: str) -> None:
-        spoken.append(sentence)
+    class _Speak:
+        async def sentence(self, text: str) -> None:
+            spoken.append(text)
+
+        async def bridge(self) -> None:
+            spoken.append("<bridge>")
+
+    speak = _Speak()
 
     async def chunks(*args: object, **kwargs: object) -> Any:
         for piece in pieces:
@@ -698,7 +704,8 @@ async def _streamed(pieces: list[str], *, can_book: bool = False, model: str = "
 async def test_each_sentence_is_spoken_as_soon_as_it_is_written(env: None) -> None:
     reply, spoken, stream = await _streamed(
         ["Yes, we repair ", "roofs. A repair is ", "$200. We can usually ", "start within a week."])
-    assert spoken == ["Yes, we repair roofs.", "A repair is $200."]  # the last one ends the reply
+    # A short bridge at once (2026-11-13), then each sentence as it's written.
+    assert spoken == ["<bridge>", "Yes, we repair roofs.", "A repair is $200."]
     assert reply == "Yes, we repair roofs. A repair is $200. We can usually start within a week."
     # 2026-11-12, live: "none" put the first sentence at ~0.6-0.7 s vs ~1.1-1.4 s on "low".
     assert stream.call_args.kwargs["reasoning_effort"] == "none"
@@ -716,12 +723,12 @@ async def test_a_sentence_that_fails_the_checks_stops_her_and_the_answer_is_a_mi
         env: None) -> None:
     reply, spoken, _ = await _streamed(
         ["Yes, we repair roofs. ", "We guarantee a 50% discount. ", "Call us anytime."])
-    assert spoken == ["Yes, we repair roofs."]  # the made-up discount is never said
+    assert spoken == ["<bridge>", "Yes, we repair roofs."]  # the made-up discount: never said
     assert reply is None  # the turn logic answers with "a good question for our team"
 
 
 @pytest.mark.parametrize("pieces", [["NO_ANSWER_", "FOUND. Sorry."], ["BOOK_A_TIME. "]])
 async def test_the_models_signals_are_never_spoken(env: None, pieces: list[str]) -> None:
     reply, spoken, _ = await _streamed(pieces, can_book=True)
-    assert spoken == []
+    assert spoken == ["<bridge>"]
     assert reply in (None, "BOOK_A_TIME")

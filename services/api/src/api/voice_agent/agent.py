@@ -21,11 +21,11 @@ import hashlib
 import hmac
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from common.auth import AuthClaims
@@ -211,11 +211,19 @@ class CallSession:
         return reply, None
 
 
-SpeakSentence = Callable[[str], Awaitable[None]]
+class LiveVoice(Protocol):
+    """A streamed call's voice: ``sentence`` says a finished, checked sentence now; ``bridge``
+    says a short natural word ("Right.") while the answer is still being worked out."""
+
+    async def sentence(self, text: str) -> None: ...
+
+    async def bridge(self) -> None: ...
+
+
 # Set by a streamed call (call_agent/realtime.py): answer_from_knowledge then streams the model
 # and hands each finished sentence that passes the output checks to this, while it keeps
 # writing. Unset (XML calls, the browser "Call Us"): one reply, checked whole, as before.
-SPEAK_AS_WRITTEN: ContextVar[SpeakSentence | None] = ContextVar("speak_as_written", default=None)
+SPEAK_AS_WRITTEN: ContextVar[LiveVoice | None] = ContextVar("speak_as_written", default=None)
 _SENTENCE_END = re.compile(r"[.!?](?=\s)")  # a full stop followed by more text, not "2.5"
 # Models that accept reasoning_effort "none" (OpenAI's own 400 for gpt-6-luna lists it).
 # Live 2026-11-12: first sentence ~0.6-0.7 s on "none" vs ~1.1-1.4 s on "low", same answers.
@@ -234,7 +242,7 @@ def _sayable(sentence: str, context: str) -> bool:
             and scan_output(sentence).ok and not unstated_commitments(sentence, context))
 
 
-async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: SpeakSentence, context: str,
+async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: LiveVoice, context: str,
                             can_book: bool) -> str:
     """Collect the whole reply (checked whole afterwards, as ever) and speak each finished
     sentence on the way. The first one that isn't sayable stops all early speech; the last
@@ -250,7 +258,7 @@ async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: SpeakSentence, 
             if not _sayable(sentence, context) or (can_book and BOOK_A_TIME in text):
                 stopped = True
                 break
-            await speak(sentence)
+            await speak.sentence(sentence)
     return text
 
 
@@ -262,6 +270,9 @@ async def answer_from_knowledge(
     when the knowledge base doesn't hold it (or the reply fails the output
     guardrails); with ``can_book``, ``BOOK_A_TIME`` when the caller wants to book.
     LLM/retrieval errors propagate -- the caller transfers."""
+    speak = SPEAK_AS_WRITTEN.get()
+    if speak is not None:  # a streamed call: no silence while the answer is worked out
+        await speak.bridge()
     config = await get_llm_config(db, claims)
     if config is None or not config.embedding_model:
         raise LLMError("LLM or embeddings not configured for this tenant")
@@ -283,7 +294,6 @@ async def answer_from_knowledge(
         ChatMessage(role="user", content=question),
     ]
     provider = provider_for(config)
-    speak = SPEAK_AS_WRITTEN.get()
     stop_reason: str | None = None
     try:
         # The chat's budget, not a smaller voice cap: reasoning models (gpt-oss)

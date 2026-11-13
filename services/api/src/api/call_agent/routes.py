@@ -196,7 +196,7 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
     opening = next((t["text"] for t in turns if t["speaker"] == "rebecca"), "")
     recorded = {"opening": False}
 
-    async def brain(speech: str, speak: realtime.SpeakEarly) -> tuple[str, bool]:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
         current = await repo.get_session_system(db, call_id)
         if current is None:
             return "", True

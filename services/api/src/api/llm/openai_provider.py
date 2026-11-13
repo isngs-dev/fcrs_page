@@ -6,6 +6,7 @@ an optional ``base_url``.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -47,6 +48,28 @@ def _token_limit(model: str, limit: int) -> dict[str, int]:
     return {"max_tokens": limit}
 
 
+# One HTTP connection pool per running event loop, shared by every provider built on it:
+# each call-turn answer built a fresh provider, and the fresh TLS setup cost ~150-200 ms per
+# request (measured live, 2026-11-13). Keyed to the loop because Celery runs each task on a
+# new loop, and a pool must never outlive the loop it was used on. ponytail: only the latest
+# loop's pool is kept -- bounded memory for Celery; the API's one loop always hits it.
+# The SDK's own HTTP client type (openai ships its own httpx build), hence Any.
+_shared_pool: tuple[asyncio.AbstractEventLoop, Any] | None = None
+
+
+def _loop_pool() -> Any:
+    """This loop's shared pool (``None`` outside a running loop: a private client then)."""
+    global _shared_pool
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    if _shared_pool is None or _shared_pool[0] is not loop or _shared_pool[1].is_closed:
+        from openai import DefaultAsyncHttpxClient
+        _shared_pool = (loop, DefaultAsyncHttpxClient())
+    return _shared_pool[1]
+
+
 class OpenAICompatibleProvider:
     """OpenAI-wire backend for ``LLMProvider.generate``, ``embed``, ``classify``, and ``stream``."""
 
@@ -77,6 +100,8 @@ class OpenAICompatibleProvider:
     ) -> None:
         self._embedding_batch_size = embedding_batch_size
         self._embedding_dimensions = embedding_dimensions
+        pool = _loop_pool() if client is None else None
+        self._shared_pool = pool is not None  # aclose() must leave a shared pool open
         if client is not None:
             self._client = client
         else:
@@ -86,6 +111,7 @@ class OpenAICompatibleProvider:
                 base_url=base_url,
                 max_retries=max_retries,
                 timeout=timeout,
+                http_client=pool,
             )
 
         # SR-24: embeddings can target a different OpenAI-wire endpoint than
@@ -111,6 +137,7 @@ class OpenAICompatibleProvider:
                 base_url=embedding_base_url,
                 max_retries=max_retries,
                 timeout=timeout,
+                http_client=_loop_pool(),
             )
         else:
             self._embed_client = self._client
@@ -342,6 +369,8 @@ class OpenAICompatibleProvider:
         too; when it wasn't, ``_embed_client is self._client`` (the common
         case for every existing tenant) so this closes it exactly once.
         """
+        if getattr(self, "_shared_pool", False):
+            return  # the loop's shared pool stays open for the next provider
         await self._client.close()
         if self._embed_client is not self._client:
             await self._embed_client.close()
