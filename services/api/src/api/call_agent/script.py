@@ -70,6 +70,25 @@ def closes_with_booking(text: str) -> bool:
     return bool(_SEE_YOU_THEN.search(text)) and "?" not in text
 
 
+_DECLINES_BOOKING = re.compile(
+    r"\balready (?:booked|have|got|scheduled|set|moved|made)\b"
+    r"|\bdon'?t (?:want|need) (?:to|a|another)\b|\bnot now\b|\bno need\b|\bnever ?mind\b", re.I)
+_ABOUT_RESULTS = re.compile(r"\bguarantee|\bpromise|\bhow many\b|\bhow much\b|\bresults?\b",
+                            re.I)
+
+
+def declines_booking(text: str) -> bool:
+    """Mid-booking: "I have already booked, I don't want to repeat it" -- stop asking for a
+    time (live 2026-11-13: asked three times, then handed off)."""
+    return bool(_DECLINES_BOOKING.search(text))
+
+
+def asks_about_results(text: str) -> bool:
+    """ "Do you guarantee booked inspections?" mentions booking but asks about results: answer
+    it, don't start a booking (live 2026-11-13)."""
+    return is_question(text) and bool(_ABOUT_RESULTS.search(text))
+
+
 def wants_info(text: str) -> bool:
     """ "I want to know about ...", "tell me about ..." -- a question without a question word,
     to be answered, not thanked for (live 2026-11-12)."""

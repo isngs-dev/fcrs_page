@@ -366,3 +366,25 @@ def test_asking_to_be_told_something_is_a_question(text: str, asks: bool) -> Non
 ])
 def test_a_goodbye_with_a_call_booked(text: str, closes: bool) -> None:
     assert script.closes_with_booking(text) is closes
+
+
+@pytest.mark.parametrize(("text", "declines"), [
+    ("No. I have already booked up also. I don't want to repeat it.", True),  # live 2026-11-13
+    ("I have already moved the call, so I don't want to repeat it.", True),
+    ("I already have a call scheduled", True),
+    ("not now, maybe later", True),
+    ("tomorrow at 3 pm", False),
+    ("what times do you have on Friday", False),
+])
+def test_saying_no_to_booking_mid_booking(text: str, declines: bool) -> None:
+    assert script.declines_booking(text) is declines
+
+
+@pytest.mark.parametrize(("text", "about_results"), [
+    ("So do you guarantee book inspection?", True),  # live 2026-11-13: started a booking
+    ("how many booked inspections will I get?", True),
+    ("can you schedule a call with the team?", False),  # a real booking request
+    ("I'd like to book a time", False),
+])
+def test_a_question_about_bookings_is_not_a_booking(text: str, about_results: bool) -> None:
+    assert script.asks_about_results(text) is about_results

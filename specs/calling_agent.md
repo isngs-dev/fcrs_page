@@ -218,3 +218,11 @@ event loop (the SDK's `DefaultAsyncHttpxClient`), shared by every provider built
 closed by `aclose()`; a new loop (each Celery task) gets a new pool, and only the latest is kept. An
 injected client, or a provider built outside a loop, keeps its own client as before. Saves the fresh TLS
 setup (~150–200 ms measured) on every model and embedding request, platform-wide.
+
+**Fourth streamed call (2026-11-13, after R15–R16):** every reply's first audio 0.17–0.54 s (the bridge
+covers the AI answers: ~0.23 s); personalised opening; "roofs" heard right. Two booking-flow bugs:
+**R17:** "Do you guarantee booked inspections?" (a question about results — `script.asks_about_results`) is
+answered, not a booking request; with a call already booked, only a reschedule starts the booking flow.
+**R18:** mid-booking, "I have already booked / I don't want to repeat it / not now" (`script.declines_booking`)
+leaves the booking flow — the standing booking is confirmed (`kept_line`), or "No problem. Anything else?" —
+instead of asking for a time again and handing off after two misses.

@@ -1099,3 +1099,32 @@ async def test_a_booked_lead_saying_goodbye_is_not_a_transfer_or_a_no(
                              call_id) == "completed"
     assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
                              "AND kind = 'agent_call_needs_human'", a) == 0
+
+
+async def test_a_question_about_booked_inspections_is_answered_not_a_new_booking(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-13, replayed: with Monday booked, "do you guarantee book inspection?"
+    started a booking; "I have already booked, I don't want to repeat it" was ignored twice
+    and the call ended escalated."""
+    a = env["a"]
+    booked_at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(9),
+                                 tzinfo=_NY)
+    await _form_booking(env, a, booked_at)
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    await _say(env, call_id, "keep that")
+    answer = service.spoken_text(await _say(env, call_id, "So do you guarantee book inspection?"))
+    assert answer == "We charge two hundred dollars for that."  # the knowledge-base answer
+    assert script.WHICH_TIME not in answer
+
+
+async def test_no_thanks_mid_booking_leaves_the_booking_flow(env: dict[str, Any]) -> None:
+    call_id = await _answered(env, env["a"])
+    assert service.spoken_text(await _say(env, call_id, "I'd like to book a time")) == (
+        script.ASK_TIME_LINE)
+    out = service.spoken_text(await _say(
+        env, call_id, "No. I have already booked up also. I don't want to repeat it."))
+    assert out == f"No problem. {script.ANYTHING_ELSE}"
+    assert await env["db"].fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
+                                    call_id) != "escalated"

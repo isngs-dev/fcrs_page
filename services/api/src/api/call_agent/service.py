@@ -429,6 +429,11 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if (has_booking and kind in ("person", "not_interested", "other", "no")
             and script.closes_with_booking(speech)):
         kind = "goodbye"
+    # "Do you guarantee booked inspections?" mentions booking but is a question to answer --
+    # and with a call already booked, only a reschedule starts the booking flow again.
+    if kind == "book" and (script.asks_about_results(speech)
+                           or (has_booking and not script.wants_reschedule(speech))):
+        kind = "other"
 
     provider = None
     if kind == "recording_objection":
@@ -593,8 +598,11 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     elif state.stage == "asking_time":
         if named_time or script.asks_what_is_open(speech):
             return await pick_time()
-        if kind == "no":
-            state.stage = "talking"
+        if kind == "no" or script.declines_booking(speech):
+            state.stage, state.rescheduling = "talking", False
+            if state.booked:  # their booking stands
+                return await say(script.kept_line(datetime.fromisoformat(state.booked["at"]),
+                                                  state.booked["tz"]))
             await repo.update_session(db, claims, call_id, outcome="interested")
             return await say(f"No problem. {script.ANYTHING_ELSE}")
         if not script.is_question(speech):
