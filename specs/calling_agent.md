@@ -293,3 +293,9 @@ handled the booking. This overturns L6's "book and close the call":
   offer to book (`script.CLOSE_OFFER_LINE`, once per call — `state.close_offered`; not after her own farewell,
   not on "no" to the opening), then the plain goodbye.
 All of these are code-owned lines; the model still never offers or confirms a booking itself.
+
+**R28 — "yes" answers her own question (2026-11-14):** "Would you like to know what it can handle, like
+qualifying leads or booking inspections?" → "Yes." → "Great! What questions can I answer?". Now, when her
+last line ended on a question written for this conversation (`script.her_question`: not "anything else?",
+not a booking offer or a fixed check), a bare "yes" goes to the answer path as
+"Yes, please. You asked me: <her question>", so retrieval and the model answer what she offered.

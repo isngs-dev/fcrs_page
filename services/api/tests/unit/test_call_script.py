@@ -435,3 +435,21 @@ def test_a_question_about_bookings_is_not_a_booking(text: str, about_results: bo
 ])
 def test_a_voicemail_greeting_is_recognised(text: str, voicemail: bool) -> None:
     assert script.is_voicemail_greeting(text) is voicemail
+
+
+@pytest.mark.parametrize(("line", "asked"), [
+    # Live 2026-11-14: "Yes." to her own offer got "Great! What questions can I answer?".
+    ("I only know what it does. Would you like to know what it can handle, like answering "
+     "questions, qualifying leads, or booking inspections?",
+     "Would you like to know what it can handle, like answering questions, qualifying leads, "
+     "or booking inspections?"),
+    ("Could you say that again? Are you asking whether your father could be involved?",
+     "Are you asking whether your father could be involved?"),
+    ("Meta ads reach homeowners. Is there anything else you'd like to know?", None),
+    ("Results vary. Would you like to know anything more about it?", None),
+    ("That's a good question for our team. Would you like me to find a time with them?", None),
+    ("Great, you're all set. " + script.INVITE, None),
+    ("We charge two hundred dollars for that.", None),
+])
+def test_a_question_of_her_own_that_a_yes_should_answer(line: str, asked: str | None) -> None:
+    assert script.her_question(line) == asked

@@ -1175,6 +1175,27 @@ async def test_a_short_reply_to_her_own_farewell_ends_the_call(
     assert end.endswith("<Hangup/></Response>")
 
 
+async def test_yes_to_her_own_question_is_answered_not_asked_again(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-14: "Would you like to know what it can handle...?" -> "Yes." ->
+    "Great! What questions can I answer?". The yes now goes to the answer, with her question."""
+    asked: list[str] = []
+
+    async def answer(db: Any, claims: Any, question: str, *args: Any, **kwargs: Any) -> str | None:
+        asked.append(question)
+        return ("It answers questions and books inspections." if "strong" not in question else
+                "I only know what it does. Would you like to know what it can handle, like "
+                "qualifying leads?")
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    call_id = await _answered(env, env["a"])
+    first = service.spoken_text(await _say(env, call_id, "So how strong is the AI assistant?"))
+    assert first.endswith("like qualifying leads?"), first
+    out = service.spoken_text(await _say(env, call_id, "Yes."))
+    assert out.startswith("It answers questions and books inspections.")
+    assert "Would you like to know what it can handle, like qualifying leads?" in asked[-1]
+
+
 async def test_a_crm_question_and_a_booking_decline_keep_the_booking(
         env: dict[str, Any]) -> None:
     """Live 2026-11-14, replayed: "do I need to change my CRM?" started a reschedule, and

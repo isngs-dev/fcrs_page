@@ -97,6 +97,22 @@ _FAREWELL = re.compile(r"\bthanks for your time\b|\btake care\b|\bgoodbye\b"
                        r"|\bhave a (?:good|great|nice|lovely) (?:day|one|evening)\b", re.I)
 
 
+# Her questions a bare "yes" can't answer by itself: "anything else?", a booking offer, the
+# fixed checks. Any other question of hers was written for this conversation.
+_OPEN_ENDED = re.compile(
+    r"\banything (?:else|more)\b|\bwhat (?:else|questions)\b|\bclear up\b|\bfind a time\b"
+    r"|\bbook a time\b|\bkeep that time\b|\bgood time\b|\bshall i book\b|\bstill there\b"
+    r"|\banything you'?d like to know\b|\bday and time\b|\bwhat (?:day|time)\b", re.I)
+
+
+def her_question(line: str) -> str | None:
+    """Her last line ended on a question of her own ("Would you like to know what it can
+    handle?"): a "yes" answers *that* -- it isn't "what questions can I answer?" again
+    (live 2026-11-14). ``None`` for the open-ended and code-owned questions."""
+    last = re.split(r"(?<=[.!?])\s+", line.strip())[-1]
+    return last if last.endswith("?") and not _OPEN_ENDED.search(last) else None
+
+
 def is_done(text: str) -> bool:
     """ "Nothing. I've got the answers" -- they're finished: a goodbye (live 2026-11-14)."""
     return "?" not in text and bool(_DONE.search(text))

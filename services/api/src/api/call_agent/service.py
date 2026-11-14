@@ -649,7 +649,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if kind == "book" or (offered and (kind == "yes" or named_time)) or None not in when:
         return await pick_time()
     held = bool(state.booked) and not state.rescheduling  # a booking stands: no booking offers
-    if kind == "yes":
+    # "Yes." to a question she wrote for this conversation is answered, with that question.
+    her_own = script.her_question(said) if kind == "yes" else None
+    if kind == "yes" and not her_own:
         return await say("Great! What questions can I answer?" if held else
                          "Great! What questions can I answer, or would you like me to find a "
                          "time with our team?")
@@ -670,7 +672,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             about = "\n".join(filter(None, [about, f"Their booked call with our team: "
                                                    f"{booked_at}{length}."]))
         calls = await realtime.calls_llm(db, claims)  # Claude for streamed calls, if set
-        reply = await answer_from_knowledge(db, claims, speech, history,
+        query = f"Yes, please. You asked me: {her_own}" if her_own else speech
+        reply = await answer_from_knowledge(db, claims, query, history,
                                             model=None if calls else config.voice_model,
                                             about_caller=about, can_book=not held,
                                             **({"llm_config": calls} if calls else {}))
