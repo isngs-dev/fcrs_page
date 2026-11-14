@@ -19,6 +19,10 @@ from api.config import get_api_settings
     ("Don't call me again", "opt_out"),
     ("Take me off your list", "opt_out"),
     ("Remove my number please", "opt_out"),
+    ("I don't want to book a call, stop calling me", "opt_out"),
+    # Live 2026-11-14: declining a booking hung up and put the number on do-not-call.
+    ("No. I don't want to book a call.", "other"),
+    ("Please don't schedule a meeting yet", "other"),
     ("You have the wrong number", "wrong_number"),
     ("Are you a robot?", "robot"),
     ("Am I talking to a real person?", "robot"),
@@ -319,6 +323,13 @@ def test_the_live_call_phrases_parse() -> None:
     ("let's keep it", False, True),
     ("that works for me", False, True),
     ("how much does it cost", False, False),
+    ("I need to change the time", True, False),
+    ("can we push it back a day", True, False),
+    ("could you move my appointment", True, False),
+    # Live 2026-11-14: a question about their CRM started the reschedule flow, twice.
+    ("Okay. So what does ... like, wait a minute. Do I need to change my CRM?", False, False),
+    ("I'm asking, do I need to change my CRM?", False, False),
+    ("will this move the needle on leads", False, False),
 ])
 def test_keep_or_reschedule_a_booked_call(text: str, move: bool, keep: bool) -> None:
     assert (script.wants_reschedule(text), script.keeps_booking(text)) == (move, keep)

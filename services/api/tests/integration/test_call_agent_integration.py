@@ -1130,6 +1130,27 @@ async def test_no_thanks_mid_booking_leaves_the_booking_flow(env: dict[str, Any]
                                     call_id) != "escalated"
 
 
+async def test_a_crm_question_and_a_booking_decline_keep_the_booking(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-14, replayed: "do I need to change my CRM?" started a reschedule, and
+    "No. I don't want to book a call." hung up and put the number on do-not-call."""
+    a, db = env["a"], env["db"]
+    booked_at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(9),
+                                 tzinfo=_NY)
+    await _form_booking(env, a, booked_at)
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    await _say(env, call_id, "keep that")
+    answer = service.spoken_text(await _say(env, call_id, "Do I need to change my CRM?"))
+    assert script.OTHER_TIME_LINE not in answer and script.WHICH_TIME not in answer
+    out = service.spoken_text(await _say(env, call_id, "No. I don't want to book a call."))
+    assert script.OPT_OUT_LINE not in out
+    assert await db.fetchval("SELECT count(*) FROM suppression_list WHERE tenant_id = $1", a) == 0
+    assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
+                             call_id) != "opted_out"
+
+
 async def test_questions_about_the_booked_call_are_answered_from_the_booking(
         env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     """Live 2026-11-13: "How long would the call be?" -> "a good question for our team".

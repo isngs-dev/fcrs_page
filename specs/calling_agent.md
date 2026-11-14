@@ -259,3 +259,11 @@ voicemail greeting (`script.is_voicemail_greeting`: "leave a/your message|name",
 "voicemail", "mailbox", "record your message") leaves the approved voicemail message and hangs up
 (`outcome=voicemail`, `amd_result=machine`, retried per policy) — whatever Plivo's detector said. Only the
 first utterance: a person who later says "I'll leave a message" is never hung up on.
+
+**R24 — "change" and "book a call" are not commands (2026-11-14):** with Monday booked, "do I need to change
+my CRM?" started a reschedule three times (a bare change/move/push matched), and "No. I don't want to book a
+call." matched the opt-out rule (`don't … call`): the call ended `opted_out` and the number went on the
+do-not-call list. Now change/move/push reschedule only with the booking as their object ("move it", "change
+the time", "push my appointment"), and "book/schedule/set up/arrange a call|meeting" is ignored by the
+opt-out rule — "don't call me", "stop calling", "remove my number" still opt out, in the same sentence too.
+A booking decline is never a booking request (`_BOOK` skips `declines_booking`).

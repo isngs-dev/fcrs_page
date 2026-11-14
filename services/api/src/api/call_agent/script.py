@@ -115,11 +115,17 @@ def agrees(text: str) -> bool:
             and not _CHANGE_MIND.search(text))
 
 
+# "I don't want to book a call" declines a booking; it isn't "don't call me" (live 2026-11-14).
+_BOOKING_A_CALL = re.compile(
+    r"\b(?:book|schedule|set up|arrange)\s+(?:a|the|another|that|this)?\s*(?:call|meeting)\b",
+    re.I)
+
+
 def classify(text: str) -> Kind:
     """What the caller said, by fixed rules, in priority order."""
     if _RECORDING.search(text):
         return "recording_objection"
-    if _OPT_OUT.search(text):
+    if _OPT_OUT.search(_BOOKING_A_CALL.sub(" ", text)):
         return "opt_out"
     if _WRONG.search(text):
         return "wrong_number"
@@ -133,7 +139,7 @@ def classify(text: str) -> Kind:
         return "goodbye"
     if _NOT_INTERESTED.search(text):
         return "not_interested"
-    if _BOOK.search(text):
+    if _BOOK.search(text) and not declines_booking(text):
         return "book"
     # A bare yes/no only: "Sure, how much is a repair?" is a question, not a "yes".
     short = len(text.split()) <= 4 and "?" not in text
@@ -246,7 +252,10 @@ def kept_line(at: datetime, timezone: str) -> str:
 
 # ponytail: any "move"/"change" while a booking is held counts; the read-back catches a misfire.
 _RESCHEDULE = re.compile(
-    r"\bre-?schedul|\b(?:move|change|push)\b|\b(?:another|different|other) (?:day|time)\b"
+    # "change/move/push" only with the booking as its object: "change my CRM" is a question.
+    r"\bre-?schedul|\b(?:move|change|push) (?:it|that|this)\b"
+    r"|\b(?:move|change|push) (?:the|my|our) (?:call|meeting|appointment|booking|time|date|day)\b"
+    r"|\b(?:another|different|other) (?:day|time)\b"
     r"|\b(?:can'?t|cannot|won'?t|not able to) make\b", re.I)
 _KEEP = re.compile(r"\bkeep\b|\bthat (?:works|is fine|'s fine)\b|\bstill (?:good|works)\b", re.I)
 
