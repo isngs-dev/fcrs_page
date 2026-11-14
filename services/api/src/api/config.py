@@ -364,6 +364,10 @@ class ApiSettings(Settings):
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
     elevenlabs_model: str = "eleven_flash_v2_5"
+    # Claude for those tenants' streamed calls only (the chatbot keeps the tenant's own AI
+    # setting). Both set -> call answers and openings use this model; either unset -> off.
+    anthropic_api_key: str | None = None
+    calls_llm_model: str | None = None
     # Plivo <Speak> voice: WOMAN or MAN.
     voice_agent_tts_voice: str = "WOMAN"
     # Max "Call Us" calls per visitor, and per IP, per hour -- each call costs

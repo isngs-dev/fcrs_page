@@ -230,8 +230,10 @@ async def _opening_lines(db: Database, claims: AuthClaims, contact_id: str, inte
     general line / no question. A model or knowledge-base failure never stops the call --
     it just sounds less personal."""
     try:
+        calls = await realtime.calls_llm(db, claims)  # Claude for streamed calls, if set
         return await opening_lines(db, claims, await memory.render(db, claims, contact_id),
-                                   intent=intent, model=model)
+                                   intent=intent, model=None if calls else model,
+                                   **({"llm_config": calls} if calls else {}))
     except Exception as exc:  # noqa: BLE001 -- logged; the general line is honest, not fake
         _log.warning("call opening fell back to the general line", extra={
             "event": "call_opening_generic", "reason": type(exc).__name__})
@@ -636,8 +638,11 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             length = f", {minutes} minutes" if minutes else ""
             about = "\n".join(filter(None, [about, f"Their booked call with our team: "
                                                    f"{booked_at}{length}."]))
-        reply = await answer_from_knowledge(db, claims, speech, history, model=config.voice_model,
-                                            about_caller=about, can_book=not held)
+        calls = await realtime.calls_llm(db, claims)  # Claude for streamed calls, if set
+        reply = await answer_from_knowledge(db, claims, speech, history,
+                                            model=None if calls else config.voice_model,
+                                            about_caller=about, can_book=not held,
+                                            **({"llm_config": calls} if calls else {}))
     except Exception as exc:  # noqa: BLE001 -- the team follows up instead
         _log.warning("call answer failed", extra={"event": "call_answer_failed",
                                                   "reason": type(exc).__name__})

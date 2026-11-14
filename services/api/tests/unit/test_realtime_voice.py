@@ -411,3 +411,46 @@ async def test_no_bridge_once_she_is_already_answering_or_was_talked_over() -> N
     assert voice.said == ["Hi, Rebecca here.", "Yes."]
     plivo.push(event="stop")
     await asyncio.wait_for(task, 1)
+
+
+# -- Claude for calls, chatbot unchanged (2026-11-13) -----------------------------------------
+
+
+async def test_calls_use_claude_from_the_server_setting_and_keep_the_tenants_embeddings(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from common.auth import AuthClaims, Role
+
+    from api.llm.config_repository import LLMConfig
+
+    tenant_config = LLMConfig(provider="openai", model="gpt-6-luna", api_key=uuid4().hex,
+                              embedding_model="text-embedding-3-small",
+                              embedding_base_url="https://api.openai.com/v1",
+                              embedding_api_key=uuid4().hex, embedding_dimensions=1536)
+
+    async def tenant_llm(db: object, claims: object) -> LLMConfig:
+        return tenant_config
+
+    monkeypatch.setattr(realtime, "get_llm_config", tenant_llm)
+    claude_key = uuid4().hex
+    settings = SimpleNamespace(realtime_voice_tenants="t-a", deepgram_api_key="k",
+                               elevenlabs_api_key="k", elevenlabs_voice_id="v",
+                               anthropic_api_key=claude_key, calls_llm_model="claude-haiku-5-5")
+    monkeypatch.setattr(realtime, "get_api_settings", lambda: settings)
+    claims_a = AuthClaims(subject="s", role=Role.CLIENT_ADMIN, tenant_id="t-a")
+
+    calls = await realtime.calls_llm(object(), claims_a)  # type: ignore[arg-type]
+    assert calls is not None
+    assert (calls.provider, calls.model, calls.api_key) == ("anthropic", "claude-haiku-5-5",
+                                                            claude_key)
+    assert calls.base_url is None
+    assert (calls.embedding_model, calls.embedding_base_url, calls.embedding_api_key) == (
+        tenant_config.embedding_model, tenant_config.embedding_base_url,
+        tenant_config.embedding_api_key)  # the knowledge base was embedded there
+
+    claims_b = AuthClaims(subject="s", role=Role.CLIENT_ADMIN, tenant_id="t-b")
+    assert await realtime.calls_llm(object(), claims_b) is None  # not on the streamed calls
+    settings.calls_llm_model = None
+    assert await realtime.calls_llm(object(), claims_a) is None  # no model chosen: unchanged

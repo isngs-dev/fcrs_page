@@ -736,3 +736,35 @@ async def test_the_models_signals_are_never_spoken(env: None, pieces: list[str])
     reply, spoken, _ = await _streamed(pieces, can_book=True)
     assert spoken == ["<bridge>"]
     assert reply in (None, "BOOK_A_TIME")
+
+
+async def test_a_calls_ai_setting_replaces_the_tenants_for_the_answer(env: None) -> None:
+    """The calls' own AI (Claude, server setting) answers; the tenant's chatbot setting is
+    never loaded for it."""
+    from api.llm.config_repository import LLMConfig
+    from api.llm.provider import Completion
+
+    generate = AsyncMock(return_value=Completion(text="Yes, we do.", model="claude-haiku-5-5",
+                                                 input_tokens=1, output_tokens=1))
+    provider = SimpleNamespace(generate=generate, aclose=AsyncMock())
+    chosen: list[LLMConfig] = []
+
+    def factory(config: LLMConfig) -> SimpleNamespace:
+        chosen.append(config)
+        return provider
+
+    calls = LLMConfig(provider="anthropic", model="claude-haiku-5-5", api_key="x",
+                      embedding_model="emb")
+    chunk = SimpleNamespace(chunk_id="c1", content="We repair roofs.")
+    tenant = AsyncMock()
+    with (
+        patch("api.voice_agent.agent.get_llm_config", tenant),
+        patch("api.voice_agent.agent.retrieve_hybrid", AsyncMock(
+            return_value=SimpleNamespace(chunks=[chunk]))),
+        patch("api.voice_agent.agent.provider_for", side_effect=factory),
+    ):
+        reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [],  # type: ignore[arg-type]
+                                            llm_config=calls)
+    assert reply == "Yes, we do."
+    tenant.assert_not_awaited()
+    assert chosen == [calls] and generate.await_args.kwargs["model"] == "claude-haiku-5-5"

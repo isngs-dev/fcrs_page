@@ -18,16 +18,19 @@ import contextlib
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 from urllib.parse import urlencode
 from xml.sax.saxutils import escape
 
 import httpx
 import websockets
+from common.auth import AuthClaims
+from common.db import Database
 from common.logging import get_logger
 
 from api.config import get_api_settings
+from api.llm.config_repository import LLMConfig, get_llm_config
 
 _log = get_logger(__name__)
 
@@ -41,6 +44,21 @@ def enabled_for(tenant_id: str | None) -> bool:
     tenants = {t.strip() for t in (s.realtime_voice_tenants or "").split(",") if t.strip()}
     return bool(tenant_id and tenant_id in tenants and s.deepgram_api_key
                 and s.elevenlabs_api_key and s.elevenlabs_voice_id)
+
+
+async def calls_llm(db: Database, claims: AuthClaims) -> LLMConfig | None:
+    """The AI for this tenant's streamed calls when the server sets one (Claude via
+    ``ANTHROPIC_API_KEY`` + ``CALLS_LLM_MODEL``), else ``None`` -> the tenant's own setting.
+    The tenant's embeddings settings are kept: its knowledge base was embedded there.
+    ponytail: one platform key for the speed test; per-client keys with the full build."""
+    s = get_api_settings()
+    if not (s.anthropic_api_key and s.calls_llm_model and enabled_for(claims.tenant_id)):
+        return None
+    tenant = await get_llm_config(db, claims)
+    if tenant is None:
+        return None
+    return replace(tenant, provider="anthropic", model=s.calls_llm_model,
+                   api_key=s.anthropic_api_key, base_url=None, api_version=None)
 
 
 def stream_xml(call_id: str, ticket: str) -> str:

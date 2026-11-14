@@ -244,3 +244,10 @@ Opus 5.5 / Fable 5.x send Anthropic's server-side refusal fallback (`fallbacks: 
 `server-side-fallback-2026-07-01`); embeddings go to the tenant's OpenAI-compatible embeddings endpoint
 (the knowledge base was embedded there), else an explicit error. SDK floor `anthropic>=2.8`. Calls can use a
 different Claude model from the chatbot (`tenant_call_agent_configs.voice_model`).
+
+**R22 — Claude for calls, chatbot unchanged (2026-11-13):** the chatbot comparison favoured gpt-6-luna, so
+calls get their own AI: with `ANTHROPIC_API_KEY` + `CALLS_LLM_MODEL` set (server, like the speech keys),
+`realtime.calls_llm` gives the tenants in `REALTIME_VOICE_TENANTS` an `LLMConfig` = their own with provider
+`anthropic`, that model and key (embeddings settings kept — the knowledge base was embedded there). Call
+answers (`answer_from_knowledge`) and openings (`opening_lines`) take it as `llm_config`; everyone else, and
+those tenants' chatbot, keep the tenant's setting. Either setting unset → off.

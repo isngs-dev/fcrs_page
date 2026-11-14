@@ -34,7 +34,7 @@ from common.logging import get_logger
 
 from api.agents.memory import frame as frame_memory
 from api.config import get_api_settings
-from api.llm.config_repository import get_llm_config
+from api.llm.config_repository import LLMConfig, get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, Chunk, LLMError
 from api.orchestrator.guardrails import scan_output, unstated_commitments
@@ -267,6 +267,7 @@ async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: LiveVoice, cont
 async def answer_from_knowledge(
     db: Database, claims: AuthClaims, question: str, history: list[ChatMessage],
     *, model: str | None = None, about_caller: str | None = None, can_book: bool = False,
+    llm_config: LLMConfig | None = None,
 ) -> str | None:
     """A short spoken answer grounded in the tenant's knowledge base, or ``None``
     when the knowledge base doesn't hold it (or the reply fails the output
@@ -275,7 +276,8 @@ async def answer_from_knowledge(
     speak = SPEAK_AS_WRITTEN.get()
     if speak is not None:  # a streamed call: no silence while the answer is worked out
         await speak.bridge()
-    config = await get_llm_config(db, claims)
+    # ``llm_config``: the calls' own AI (server setting) instead of the tenant's chatbot one.
+    config = llm_config or await get_llm_config(db, claims)
     if config is None or not config.embedding_model:
         raise LLMError("LLM or embeddings not configured for this tenant")
     settings = get_api_settings()
@@ -335,12 +337,13 @@ async def answer_from_knowledge(
 
 async def opening_lines(db: Database, claims: AuthClaims, about_caller: str | None, *,
                         intent: str | None = None, model: str | None = None,
+                        llm_config: LLMConfig | None = None,
                         ) -> tuple[str | None, str | None]:
     """``(why we're calling, a question about their need)`` written for this person: what
     they asked this tenant's chatbot or form (``about_caller``), this tenant's knowledge base
     and why the call happens (``intent``). Each is ``None`` when unusable; LLM/retrieval
     errors propagate -- the caller falls back to the general opening."""
-    config = await get_llm_config(db, claims)
+    config = llm_config or await get_llm_config(db, claims)
     if config is None or not config.embedding_model:
         raise LLMError("LLM or embeddings not configured for this tenant")
     result = await retrieve_hybrid(db, claims, about_caller or "what we help people with", k=3)

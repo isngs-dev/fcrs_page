@@ -1180,3 +1180,45 @@ async def test_with_a_call_booked_unanswered_questions_go_to_the_team_not_a_hand
     asked = [i["text"] for i in await memory.items(db, claims, str(contact_id))
              if i["kind"] == "asked"]
     assert asked == ["Is there a warranty on the ads?", "And a warranty on the landing page?"]
+
+
+async def test_listed_tenants_calls_answer_with_the_server_claude_setting(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """2026-11-13: calls on Claude (server setting) while the tenant's chatbot keeps its own
+    AI; another tenant's calls are untouched."""
+    from api.llm.config_repository import upsert_llm_config
+
+    a, b = env["a"], env["b"]
+    for tenant in (a, b):
+        await upsert_llm_config(env["db"], AuthClaims(subject="admin", role=Role.CLIENT_ADMIN,
+                                                      tenant_id=tenant),
+                                provider="openai", model="gpt-6-luna", api_key=uuid4().hex,
+                                base_url=None, api_version=None,
+                                embedding_model="text-embedding-3-small",
+                                embedding_base_url="https://api.openai.com/v1",
+                                embedding_api_key=uuid4().hex, embedding_dimensions=1536)
+    for key, value in {"REALTIME_VOICE_TENANTS": a, "DEEPGRAM_API_KEY": uuid4().hex,
+                       "ELEVENLABS_API_KEY": uuid4().hex, "ELEVENLABS_VOICE_ID": "voice-1",
+                       "ANTHROPIC_API_KEY": uuid4().hex,
+                       "CALLS_LLM_MODEL": "claude-haiku-5-5"}.items():
+        monkeypatch.setenv(key, value)
+    get_api_settings.cache_clear()
+    used: list[Any] = []
+
+    async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
+                     about_caller: Any = None, can_book: bool = False,
+                     llm_config: Any = None) -> str | None:
+        used.append((claims.tenant_id, llm_config))
+        return "We charge two hundred dollars for that."
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    for tenant, token in ((a, _TOKENS["a"]), (b, _TOKENS["b"])):
+        call_id, _ = await _dial(env, tenant)
+        await _webhook(env, call_id, "answer", {"CallUUID": f"uuid-{tenant}"}, token=token)
+        await _webhook(env, call_id, "turn", {"Speech": "How much is a repair?",
+                                              "CallUUID": f"uuid-{tenant}"}, token=token)
+    by_tenant = dict(used)
+    assert by_tenant[a] is not None
+    assert (by_tenant[a].provider, by_tenant[a].model) == ("anthropic", "claude-haiku-5-5")
+    assert by_tenant[a].embedding_base_url == "https://api.openai.com/v1"
+    assert by_tenant[b] is None  # not listed: its own AI setting, exactly as before
