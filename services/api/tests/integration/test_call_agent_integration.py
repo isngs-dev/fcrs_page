@@ -1222,3 +1222,19 @@ async def test_listed_tenants_calls_answer_with_the_server_claude_setting(
     assert (by_tenant[a].provider, by_tenant[a].model) == ("anthropic", "claude-haiku-5-5")
     assert by_tenant[a].embedding_base_url == "https://api.openai.com/v1"
     assert by_tenant[b] is None  # not listed: its own AI setting, exactly as before
+
+
+async def test_a_voicemail_greeting_gets_the_approved_message_not_a_reply(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-14: CallHippo's "We are not available, please leave a message" got "I'm
+    sorry, I'm the AI assistant and I can't take messages...". It's a machine: leave the
+    approved voicemail and retry later -- whatever Plivo's own detector said."""
+    db = env["db"]
+    call_id, task_id = await _dial(env, env["a"])
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    vm = await _say(env, call_id, "Hi. We are not available at the moment. Please leave a "
+                                  "message, and we will get back to you.")
+    assert "an AI assistant for Acme Roofing" in service.spoken_text(vm)
+    assert vm.endswith("<Hangup/></Response>")
+    assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
+                             call_id) == "voicemail"

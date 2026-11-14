@@ -89,6 +89,17 @@ def asks_about_results(text: str) -> bool:
     return is_question(text) and bool(_ABOUT_RESULTS.search(text))
 
 
+_VOICEMAIL = re.compile(
+    r"\bleave (?:a|your) (?:message|name)\b|\bafter the (?:tone|beep)\b|\bvoice ?mail\b"
+    r"|\bmailbox\b|\brecord your message\b", re.I)
+
+
+def is_voicemail_greeting(text: str) -> bool:
+    """ "We are not available, please leave a message" -- a machine, whatever Plivo's detector
+    said (live 2026-11-14: CallHippo's greeting was answered like a person)."""
+    return bool(_VOICEMAIL.search(text))
+
+
 def wants_info(text: str) -> bool:
     """ "I want to know about ...", "tell me about ..." -- a question without a question word,
     to be answered, not thanked for (live 2026-11-12)."""

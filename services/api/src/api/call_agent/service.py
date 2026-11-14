@@ -401,6 +401,12 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         await repo.update_session(db, claims, call_id, session=state.to_json(), outcome=outcome)
         return TurnResult(_hangup(text, voice), outcome, True)
 
+    # The first thing "said" is a voicemail greeting ("please leave a message"): a machine,
+    # whatever Plivo's detector said -- leave the approved message (live 2026-11-14).
+    if (speech and not any(role == "user" for role, _ in state.history)
+            and script.is_voicemail_greeting(speech)):
+        await repo.update_session(db, claims, call_id, outcome="voicemail", amd_result="machine")
+        return TurnResult(await voicemail_xml(db, claims), "voicemail", True)
     if session.amd_result == "machine":
         if not speech:  # nobody answered the opening: it really is a voicemail
             await repo.update_session(db, claims, call_id, outcome="voicemail")

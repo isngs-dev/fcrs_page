@@ -251,3 +251,11 @@ calls get their own AI: with `ANTHROPIC_API_KEY` + `CALLS_LLM_MODEL` set (server
 `anthropic`, that model and key (embeddings settings kept — the knowledge base was embedded there). Call
 answers (`answer_from_knowledge`) and openings (`opening_lines`) take it as `llm_config`; everyone else, and
 those tenants' chatbot, keep the tenant's setting. Either setting unset → off.
+
+**R23 — voicemail greetings (2026-11-14):** the first test call on Claude Haiku reached CallHippo's voicemail;
+its greeting ("We are not available… please leave a message") was transcribed as speech, so the turn logic
+kept talking ("I'm the AI assistant and I can't take messages…"). Now the caller's first utterance matching a
+voicemail greeting (`script.is_voicemail_greeting`: "leave a/your message|name", "after the tone/beep",
+"voicemail", "mailbox", "record your message") leaves the approved voicemail message and hangs up
+(`outcome=voicemail`, `amd_result=machine`, retried per policy) — whatever Plivo's detector said. Only the
+first utterance: a person who later says "I'll leave a message" is never hung up on.

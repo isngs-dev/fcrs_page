@@ -388,3 +388,18 @@ def test_saying_no_to_booking_mid_booking(text: str, declines: bool) -> None:
 ])
 def test_a_question_about_bookings_is_not_a_booking(text: str, about_results: bool) -> None:
     assert script.asks_about_results(text) is about_results
+
+
+@pytest.mark.parametrize(("text", "voicemail"), [
+    # Live 2026-11-14: CallHippo's greeting was answered as if a person had spoken.
+    ("Hi. We are not available at the moment. Please leave a message, and we will get back "
+     "to you.", True),
+    ("You've reached the voicemail of Sam. Leave your name and number after the tone.", True),
+    ("The person you are calling is not available. Please record your message after the beep.",
+     True),
+    ("Hi, yes, this is Sam", False),
+    ("I'm not available on Monday, can we do Tuesday?", False),  # a person, about a time
+    ("can you leave me a message with the details by email", False),
+])
+def test_a_voicemail_greeting_is_recognised(text: str, voicemail: bool) -> None:
+    assert script.is_voicemail_greeting(text) is voicemail
