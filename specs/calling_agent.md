@@ -274,3 +274,22 @@ goodbye, until the caller hung up. Now "I'm done" phrases (`script.is_done`: a l
 all the answers", "no more/other/further questions", "that's everything", "all set" — never a question) are a
 goodbye (`GOODBYE_LINE` + hang-up), and after her own farewell (`script.said_farewell`: "thanks for your
 time", "have a good day", "take care", "goodbye") a short non-question reply ends the call the same way.
+
+**R26 — the closing line is final (2026-11-14):** a reschedule booked on "Yes."; the caller's "Okay." during
+"You're booked…" cut that line off (barge-in) and ran as a new turn — the booking ran again and said "we
+already have a meeting scheduled at that time". Now, once a turn ends the call, the streamed call ignores the
+caller (no barge-in, no turns): the closing line plays whole, then the call hangs up.
+
+**R27 — the call is about them, not only the meeting (owner, 2026-11-14):** the calls felt like Rebecca only
+handled the booking. This overturns L6's "book and close the call":
+- **After the meeting is settled** (kept, booked or rescheduled) she invites questions instead of hanging up
+  (`script.INVITE`: "…anything you'd like to know about our services, or anything I can clear up for you?").
+  The new booking becomes the one that stands (`state.booked`), so nothing books twice; outcome stays `booked`.
+- **After every answer** a short follow-up question (`script.FOLLOW_UPS`, rotating) — never dead air; skipped
+  when the answer already ends in a question.
+- **A question she can't answer, with a call booked:** "That's a good question for our team. They'll go over
+  it with you in detail on your call on <day, date, time>." (`script.on_your_call_line`).
+- **Goodbye:** with a call booked, the closing names it (`script.booked_goodbye_line`); with none, one polite
+  offer to book (`script.CLOSE_OFFER_LINE`, once per call — `state.close_offered`; not after her own farewell,
+  not on "no" to the opening), then the plain goodbye.
+All of these are code-owned lines; the model still never offers or confirms a booking itself.

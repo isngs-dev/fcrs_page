@@ -223,6 +223,13 @@ NO_SLOTS_LINE = ("I don't see an open time right now, so I'll have our team reac
 WRAP_UP_LINE = "I want to respect your time, so I'll have our team follow up. Thanks, goodbye."
 ANYTHING_ELSE = "Is there anything else I can help with?"
 CLOSING = "Thanks for your time, and have a great day. Goodbye."
+# After the meeting is settled she opens the floor instead of hanging up (owner, 2026-11-14).
+INVITE = ("In the meantime, is there anything you'd like to know about our services, or "
+          "anything I can clear up for you?")
+FOLLOW_UPS = ("Is there anything else you'd like to know?", "What else can I help you with?",
+              "Anything else I can clear up for you?")
+CLOSE_OFFER_LINE = ("Before you go, our team can walk you through this in more detail on a "
+                    "short call. Would you like me to find a time with them?")
 DISCOVERY_THANKS_LINE = ("Thanks, that's really helpful. Would you like me to find a time with "
                          "our team to talk it through?")
 DISCOVERY_NO_LINE = ("No problem. Would you like me to find a time with our team, or is there "
@@ -264,8 +271,19 @@ def booked_question(at: datetime, timezone: str) -> str:
 
 
 def kept_line(at: datetime, timezone: str) -> str:
-    return (f"Great, you're all set for {say_time(at, timezone)}. "
-            "Is there anything I can help with before then?")
+    return f"Great, you're all set for {say_time(at, timezone)}. {INVITE}"
+
+
+def booked_goodbye_line(at: datetime, timezone: str) -> str:
+    """The goodbye when a call with the team stands: their questions go there in detail."""
+    return (f"Our team will go over everything in more detail on your call on "
+            f"{say_time(at, timezone)}. {CLOSING}")
+
+
+def on_your_call_line(at: datetime, timezone: str) -> str:
+    """After a question she can't answer, with a call booked: where it will be answered."""
+    return (f"They'll go over it with you in detail on your call on {say_time(at, timezone)}. "
+            f"{FOLLOW_UPS[0]}")
 
 
 # ponytail: any "move"/"change" while a booking is held counts; the read-back catches a misfire.
@@ -313,11 +331,11 @@ def booked_line(slot: datetime, timezone: str, *, emailed: bool = True,
                 link: bool = False) -> str:
     when = f"You're booked for {say_time(slot, timezone)}."
     if not emailed:
-        return f"{when} Our team will send you the meeting details. {CLOSING}"
+        return f"{when} Our team will send you the meeting details. {INVITE}"
     if link:
         return (f"{when} I'm sending the meeting link to your email now, and you'll get a "
-                f"reminder before the call. {CLOSING}")
-    return f"{when} You'll get a confirmation email and a reminder before the call. {CLOSING}"
+                f"reminder before the call. {INVITE}")
+    return f"{when} You'll get a confirmation email and a reminder before the call. {INVITE}"
 
 
 # -- What the caller asks for: a day/time, an email address ---------------------------------
@@ -525,6 +543,7 @@ class CallState:
     history: list[list[str]] = field(default_factory=list)  # [role, text]
     booked: dict[str, str] | None = None  # their upcoming booking: event_id, at (ISO), tz
     rescheduling: bool = False
+    close_offered: bool = False  # the one "before you go, shall I book a call?" was asked
 
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "day": self.day, "at": self.at, "zone": self.zone,
@@ -532,7 +551,7 @@ class CallState:
                 "silences": self.silences, "misses": self.misses,
                 "recording_started": self.recording_started, "question": self.question,
                 "history": self.history[-12:], "booked": self.booked,
-                "rescheduling": self.rescheduling}
+                "rescheduling": self.rescheduling, "close_offered": self.close_offered}
 
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
@@ -546,4 +565,5 @@ class CallState:
                    question=data.get("question"),
                    history=[list(h) for h in data.get("history", [])],
                    booked=data.get("booked"),
-                   rescheduling=bool(data.get("rescheduling", False)))
+                   rescheduling=bool(data.get("rescheduling", False)),
+                   close_offered=bool(data.get("close_offered", False)))

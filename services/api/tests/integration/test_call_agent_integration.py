@@ -385,13 +385,35 @@ async def test_the_callers_own_time_is_booked_with_one_confirmation(env: dict[st
 
     end = await _say(env, call_id, "yes")
     assert service.spoken_text(end) == script.booked_line(slot, "America/New_York")
-    assert end.endswith("<Hangup/></Response>")  # no "anything else?": the call ends here
+    # Owner, 2026-11-14: booked, then she invites their questions instead of hanging up.
+    assert not end.endswith("<Hangup/></Response>")
     event = await db.fetchrow("SELECT starts_at, timezone, email FROM schedule_events "
                               "WHERE tenant_id = $1", a)
     assert event is not None and event["starts_at"] == slot
     assert (event["timezone"], event["email"]) == ("America/New_York", "jane@example.com")
     assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
                              call_id) == "booked"
+    # "Okay." after the booking never books again; "no" closes, naming the booked call.
+    assert service.spoken_text(await _say(env, call_id, "Okay.")) != script.TAKEN_LINE
+    bye = await _say(env, call_id, "no")
+    assert service.spoken_text(bye) == script.booked_goodbye_line(slot, "America/New_York")
+    assert bye.endswith("<Hangup/></Response>")
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 1
+    assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
+                             call_id) == "booked"
+
+
+async def test_without_a_booking_she_offers_a_call_once_before_goodbye(
+        env: dict[str, Any]) -> None:
+    """Owner, 2026-11-14: not booked -> a polite offer to book before the call ends, once."""
+    call_id = await _answered(env, env["a"])
+    await _say(env, call_id, "How much is a repair?")
+    offer = await _say(env, call_id, "that's all, bye")
+    assert service.spoken_text(offer) == script.CLOSE_OFFER_LINE
+    assert not offer.endswith("<Hangup/></Response>")
+    end = await _say(env, call_id, "no, bye")
+    assert service.spoken_text(end) == script.GOODBYE_LINE
+    assert end.endswith("<Hangup/></Response>")
 
 
 async def test_a_date_with_the_time_right_after_it_is_heard_correctly(
@@ -1074,7 +1096,9 @@ async def test_asking_about_the_service_after_the_opening_gets_an_answer_not_a_t
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
     assert service.spoken_text(await _say(env, call_id, "yes")) == f"Great. {_QUESTION}"
     answer = service.spoken_text(await _say(env, call_id, "So I want to know about roofing thing."))
-    assert answer == "We charge two hundred dollars for that."  # the knowledge-base answer
+    # the knowledge-base answer, then a follow-up: never dead air after an answer
+    assert answer.startswith("We charge two hundred dollars for that. ")
+    assert answer.endswith(script.FOLLOW_UPS) and answer.endswith("?")
     assert answer != script.DISCOVERY_THANKS_LINE
 
 
@@ -1096,7 +1120,8 @@ async def test_a_booked_lead_saying_goodbye_is_not_a_transfer_or_a_no(
     await _say(env, call_id, "yes")
     await _say(env, call_id, "keep it")
     end = await _say(env, call_id, goodbye)
-    assert service.spoken_text(end) == script.GOODBYE_LINE
+    # the goodbye names their booked call: that's where the detail comes
+    assert service.spoken_text(end) == script.booked_goodbye_line(booked_at, "America/New_York")
     assert end.endswith("<Hangup/></Response>")
     assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
                              call_id) == "completed"
@@ -1118,7 +1143,9 @@ async def test_a_question_about_booked_inspections_is_answered_not_a_new_booking
     await _say(env, call_id, "yes")
     await _say(env, call_id, "keep that")
     answer = service.spoken_text(await _say(env, call_id, "So do you guarantee book inspection?"))
-    assert answer == "We charge two hundred dollars for that."  # the knowledge-base answer
+    # the knowledge-base answer, then a follow-up: never dead air after an answer
+    assert answer.startswith("We charge two hundred dollars for that. ")
+    assert answer.endswith(script.FOLLOW_UPS) and answer.endswith("?")
     assert script.WHICH_TIME not in answer
 
 
@@ -1188,8 +1215,8 @@ async def test_questions_about_the_booked_call_are_answered_from_the_booking(
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
     await _say(env, call_id, "yes")
     await _say(env, call_id, "keep it")
-    assert service.spoken_text(await _say(env, call_id, "How long would the call be?")) == (
-        "It's a 30-minute call with our team.")
+    assert service.spoken_text(await _say(env, call_id, "How long would the call be?")
+                               ).startswith("It's a 30-minute call with our team. ")
     facts = seen[-1] or ""
     assert "30 minutes" in facts and script.say_time(booked_at, "America/New_York") in facts
 

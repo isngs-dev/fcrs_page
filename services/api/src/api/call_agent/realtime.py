@@ -266,6 +266,8 @@ class RealtimeCall:
 
     async def _from_flux(self) -> None:
         async for heard in self._listener.events():
+            if self._ending:  # her closing line plays out whole; nothing after it is a turn
+                continue
             if heard.event == "StartOfTurn":
                 if self._silence is not None:
                     self._silence.cancel()
@@ -341,7 +343,7 @@ class RealtimeCall:
         lines.put_nowait(None)
         if self._speech is not None:
             await asyncio.wait({self._speech})  # talked over -> cancelled; we carry on
-        return True
+        return not end  # after her closing line: hang up when it has played, no more turns
 
     async def _speak(self, lines: asyncio.Queue[str | None], said: list[str], heard_at: float,
                      thought_at: float) -> None:

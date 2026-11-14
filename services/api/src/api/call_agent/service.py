@@ -311,15 +311,15 @@ async def next_open_slots(db: Database, claims: AuthClaims, now: datetime,
 
 
 async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, start: datetime,
-                timezone: str, email: str | None) -> tuple[str, str | None]:
-    """Book the agreed slot (L6) -> ``("booked", meet_url)``, ``("taken", None)`` when it went
-    meanwhile, ``("failed", None)`` when the connected calendar refused it (the booking is
-    undone, like the widget: never a booked row without its calendar event)."""
+                timezone: str, email: str | None) -> tuple[str, str | None, str | None]:
+    """Book the agreed slot (L6) -> ``("booked", meet_url, event_id)``, ``("taken", ...)`` when
+    it went meanwhile, ``("failed", ...)`` when the connected calendar refused it (the booking
+    is undone, like the widget: never a booked row without its calendar event)."""
     contact = await get_contact(db, claims, session.contact_id) if session.contact_id else None
     slots = await next_open_slots(db, claims, datetime.now(UTC), count=None, on=start)
     slot_list = slots[0] if slots else []
     if start not in slot_list:
-        return "taken", None
+        return "taken", None, None
     availability = await get_availability(db, claims)
     rules = availability.rules if availability else {}
     minutes = int(rules.get("slot_minutes", 30))
@@ -332,7 +332,7 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
             consent={"granted": True, "purpose": "booking", "text": "Agreed on a phone call",
                      "call_id": session.call_id, "captured_at": datetime.now(UTC).isoformat()})
     except AppException:  # SLOT_UNAVAILABLE race
-        return "taken", None
+        return "taken", None, None
     await create_reminder_jobs(db, claims, event_id=event.event_id, starts_at=event.starts_at,
                                now=datetime.now(UTC))
     try:  # the caller hands a refusal to the team
@@ -340,7 +340,7 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
             db, claims, event, attendee_email=email, attendee_name=name,
             attendee_phone=customer_number(session))
     except CalendarSyncFailed:
-        return "failed", None
+        return "failed", None, None
     if contact is not None:  # A11 M4
         await memory.remember(db, claims, contact.contact_id, channel="call", kind="booked",
                               text=f"Booked a call for {event.starts_at:%Y-%m-%d %H:%M} UTC")
@@ -371,7 +371,7 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
                                phone=customer_number(session), meet_url=meet_url)
     if session.contact_id:  # the call knows the contact: no email lookup needed
         await emit(db, claims, "meeting_booked", {"contact_id": session.contact_id})
-    return "booked", meet_url
+    return "booked", meet_url, event.event_id
 
 
 async def _handoff(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
@@ -435,8 +435,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     # She already said goodbye in her own words: "mhmm" / "thank you" back ends the call
     # (live 2026-11-14: four goodbyes, then the caller hung up).
     said = next((t for r, t in reversed(state.history[:-1]) if r == "assistant"), "")
-    if (kind in ("yes", "no", "other") and script.said_farewell(said)
-            and len(speech.split()) <= 4 and not script.is_question(speech)):
+    acked_farewell = (kind in ("yes", "no", "other") and script.said_farewell(said)
+                      and len(speech.split()) <= 4 and not script.is_question(speech))
+    if acked_farewell:
         kind = "goodbye"
 
     # A call is booked (earlier, or on this call): "I'll talk with your team on Monday" /
@@ -512,8 +513,20 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                 f'confirmSound="{call_url(call_id, "whisper")}">'
                 f"<Number>{config.transfer_number}</Number></Dial>", "escalated")
         return await bye(script.TEAM_LINE, "escalated")
-    if kind == "goodbye":
+    async def close() -> TurnResult:
+        """They're done: with a call booked, that's where the detail comes; without one, one
+        polite offer to book it -- then goodbye (owner, 2026-11-14)."""
+        if state.booked and not state.rescheduling:
+            return await bye(script.booked_goodbye_line(
+                datetime.fromisoformat(state.booked["at"]), state.booked["tz"]), "completed")
+        if not (state.close_offered or acked_farewell or session.outcome == "booked"
+                or len(state.history) <= 2):
+            state.close_offered = True
+            return await say(script.CLOSE_OFFER_LINE)
         return await bye(script.GOODBYE_LINE, "completed")
+
+    if kind == "goodbye":
+        return await close()
     if kind == "not_interested":
         return await bye(script.NOT_INTERESTED_LINE, "not_interested")
 
@@ -539,7 +552,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
 
     async def finish_booking(email: str | None) -> TurnResult:
         chosen = datetime.fromisoformat(state.chosen or "")
-        status, meet_url = await _book(db, claims, session, chosen, tz, email)
+        status, meet_url, event_id = await _book(db, claims, session, chosen, tz, email)
         if status == "failed":
             await _handoff(db, claims, session, "calendar_sync_failed")
             return await bye(script.SYNC_FAILED_LINE, "escalated")
@@ -552,8 +565,14 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             await cancel_event(db, claims, state.booked["event_id"])
             await _handoff(db, claims, session, "booking_rescheduled",
                            old_starts_at=state.booked["at"], new_starts_at=chosen.isoformat())
-        return await bye(script.booked_line(chosen, tz, emailed=bool(email), link=bool(meet_url)),
-                         "booked")
+        # Booked: the call stays open for their questions (owner, 2026-11-14) -- the new
+        # booking is now the one that stands.
+        state.booked = {"event_id": event_id or "", "at": chosen.astimezone(UTC).isoformat(),
+                        "tz": tz}
+        state.rescheduling, state.stage = False, "talking"
+        state.chosen = state.day = state.at = None
+        await repo.update_session(db, claims, call_id, outcome="booked")
+        return await say(script.booked_line(chosen, tz, emailed=bool(email), link=bool(meet_url)))
 
     # They booked already (the website form): keep it or move it -- never a second booking.
     if (state.booked and not state.rescheduling and state.stage in ("talking", "booked_check")
@@ -637,7 +656,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if kind == "no":
         if len(state.history) <= 2:  # "no" to "is now a good time?"
             return await bye(script.CALLBACK_LINE, "callback")
-        return await bye(script.GOODBYE_LINE, "completed")
+        return await close()
 
     history = [ChatMessage(role=r, content=t) for r, t in state.history[:-1]][-6:]
     try:
@@ -670,8 +689,12 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         if has_booking and session.contact_id:  # the team sees it before their call
             await memory.remember(db, claims, session.contact_id, channel="call", kind="asked",
                                   text=speech)
-        back = back or ("They can go over it with you on your call." if held
+        back = back or (script.on_your_call_line(datetime.fromisoformat(state.booked["at"]),
+                                                 state.booked["tz"]) if held and state.booked
                         else "Would you like me to find a time with them?")
+    elif back is None and not reply.rstrip().endswith("?"):  # never dead air after an answer
+        asked = sum(1 for r, _ in state.history if r == "assistant")
+        back = script.FOLLOW_UPS[asked % len(script.FOLLOW_UPS)]
     return await say(f"{reply} {back}" if back else reply)
 
 

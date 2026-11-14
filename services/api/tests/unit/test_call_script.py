@@ -244,9 +244,26 @@ def test_booked_line_mentions_the_meeting_link_only_when_there_is_one() -> None:
     assert "our team will send" in script.booked_line(slot, tz, emailed=False, link=False).lower()
 
 
-def test_the_booking_ends_the_call_politely_without_another_question() -> None:
+def test_after_booking_she_invites_questions_instead_of_hanging_up() -> None:
+    """Owner, 2026-11-14: the call felt like it was only about the meeting."""
     line = script.booked_line(datetime(2026, 11, 3, 23, 30, tzinfo=UTC), "America/New_York")
-    assert "?" not in line and line.endswith("Goodbye.")
+    assert line.endswith(script.INVITE) and "Goodbye" not in line
+    assert not script.said_farewell(line)
+
+
+def test_the_goodbye_and_the_miss_line_name_the_booked_call() -> None:
+    at = datetime(2026, 11, 18, 20, 30, tzinfo=UTC)
+    when = "Wednesday, November 18 at 3:30 PM Eastern time"
+    assert when in script.booked_goodbye_line(at, "America/New_York")
+    assert script.booked_goodbye_line(at, "America/New_York").endswith(script.CLOSING)
+    miss = script.on_your_call_line(at, "America/New_York")
+    assert when in miss and miss.endswith("?")
+
+
+def test_the_one_closing_offer_survives_the_saved_state() -> None:
+    state = script.CallState(close_offered=True)
+    assert script.CallState.from_json(state.to_json()).close_offered is True
+    assert script.CallState.from_json({}).close_offered is False
 
 
 def test_the_final_check_reads_back_everything_once() -> None:

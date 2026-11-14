@@ -208,6 +208,35 @@ async def test_the_last_line_is_heard_before_the_call_ends() -> None:
     assert plivo.closed  # stream over -> the call hangs up (nothing after <Stream>)
 
 
+async def test_words_during_her_closing_line_neither_cut_it_off_nor_get_a_turn() -> None:
+    """Live 2026-11-14: "Okay." during "You're booked..." cut the line off and ran the booking
+    again -- "we already have a meeting scheduled at that time"."""
+    heard: list[str] = []
+
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        heard.append(speech)
+        return "You're booked for Wednesday at 3:30 PM. Goodbye.", True
+
+    call, plivo, flux, voice = _call(brain)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
+    voice.hold = asyncio.Event()  # the closing line is still playing
+    flux.hear("EndOfTurn", "Yes.")
+    await _until(lambda: len(plivo.events("playAudio")) == 2)
+    flux.hear("StartOfTurn", "okay")
+    flux.hear("EndOfTurn", "Okay.")
+    await asyncio.sleep(0.02)
+    assert plivo.events("clearAudio") == []  # the closing line isn't cut off
+    voice.hold.set()
+    await _until(lambda: len(plivo.events("checkpoint")) == 2)
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[1]["name"])
+    await asyncio.wait_for(task, 1)
+    assert heard == ["Yes."]  # "Okay." never reached the turn logic
+    assert plivo.closed
+
+
 async def test_silence_after_she_speaks_is_a_turn_too() -> None:
     heard: list[str] = []
 
