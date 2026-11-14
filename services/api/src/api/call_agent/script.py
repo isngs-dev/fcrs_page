@@ -72,7 +72,8 @@ def closes_with_booking(text: str) -> bool:
 
 _DECLINES_BOOKING = re.compile(
     r"\balready (?:booked|have|got|scheduled|set|moved|made)\b"
-    r"|\bdon'?t (?:want|need) (?:to|a|another)\b|\bnot now\b|\bno need\b|\bnever ?mind\b", re.I)
+    r"|\bdon'?t (?:want|need) (?:to|a|another)\b|\bdon'?t (?:book|schedule|set up|arrange)\b"
+    r"|\bnot now\b|\bno need\b|\bnever ?mind\b", re.I)
 _ABOUT_RESULTS = re.compile(r"\bguarantee|\bpromise|\bhow many\b|\bhow much\b|\bresults?\b",
                             re.I)
 
@@ -87,6 +88,23 @@ def asks_about_results(text: str) -> bool:
     """ "Do you guarantee booked inspections?" mentions booking but asks about results: answer
     it, don't start a booking (live 2026-11-13)."""
     return is_question(text) and bool(_ABOUT_RESULTS.search(text))
+
+
+_DONE = re.compile(
+    r"^\W*nothing\b|\b(?:got|have|had) (?:all )?(?:the |my )?answers?\b"
+    r"|\bno (?:more|other|further) questions?\b|\bthat'?s everything\b|\ball set\b", re.I)
+_FAREWELL = re.compile(r"\bthanks for your time\b|\btake care\b|\bgoodbye\b"
+                       r"|\bhave a (?:good|great|nice|lovely) (?:day|one|evening)\b", re.I)
+
+
+def is_done(text: str) -> bool:
+    """ "Nothing. I've got the answers" -- they're finished: a goodbye (live 2026-11-14)."""
+    return "?" not in text and bool(_DONE.search(text))
+
+
+def said_farewell(line: str) -> bool:
+    """Her last line closed the call ("Have a good day."): a "mhmm" back ends it."""
+    return bool(_FAREWELL.search(line))
 
 
 _VOICEMAIL = re.compile(
@@ -135,7 +153,7 @@ def classify(text: str) -> Kind:
         return "callback"
     if _PERSON_RE.search(text):
         return "person"
-    if _GOODBYE_RE.search(text):
+    if _GOODBYE_RE.search(text) or is_done(text):
         return "goodbye"
     if _NOT_INTERESTED.search(text):
         return "not_interested"

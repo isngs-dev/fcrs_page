@@ -432,6 +432,12 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if (state.stage == "confirming" and kind in ("goodbye", "book", "other")
             and script.agrees(speech)):
         kind = "yes"
+    # She already said goodbye in her own words: "mhmm" / "thank you" back ends the call
+    # (live 2026-11-14: four goodbyes, then the caller hung up).
+    said = next((t for r, t in reversed(state.history[:-1]) if r == "assistant"), "")
+    if (kind in ("yes", "no", "other") and script.said_farewell(said)
+            and len(speech.split()) <= 4 and not script.is_question(speech)):
+        kind = "goodbye"
 
     # A call is booked (earlier, or on this call): "I'll talk with your team on Monday" /
     # "no, thank you" is a goodbye -- not a transfer request, not "not interested".

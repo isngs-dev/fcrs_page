@@ -1079,7 +1079,10 @@ async def test_asking_about_the_service_after_the_opening_gets_an_answer_not_a_t
 
 
 @pytest.mark.parametrize("goodbye", ["No. Thank you. I will talk with your team on Monday.",
-                                     "no thank you, see you on the call"])
+                                     "no thank you, see you on the call",
+                                     # Live 2026-11-14: she said goodbye but never hung up.
+                                     "Nothing. I've got the answers for all the questions.",
+                                     "I got all the answers for the questions."])
 async def test_a_booked_lead_saying_goodbye_is_not_a_transfer_or_a_no(
         env: dict[str, Any], goodbye: str) -> None:
     """Live 2026-11-12: with a call booked, "No. Thank you. I will talk with your team on
@@ -1128,6 +1131,21 @@ async def test_no_thanks_mid_booking_leaves_the_booking_flow(env: dict[str, Any]
     assert out == f"No problem. {script.ANYTHING_ELSE}"
     assert await env["db"].fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
                                     call_id) != "escalated"
+
+
+async def test_a_short_reply_to_her_own_farewell_ends_the_call(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-14: the model said "Have a good day.", the caller said "Mhmm." twice and
+    she kept saying goodbye until the caller hung up."""
+    async def answer(*args: Any, **kwargs: Any) -> str | None:
+        return "Glad to hear it. Have a good day."
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    call_id = await _answered(env, env["a"])
+    await _say(env, call_id, "The roofing part was explained well by your website")
+    end = await _say(env, call_id, "Mhmm.")
+    assert service.spoken_text(end) == script.GOODBYE_LINE
+    assert end.endswith("<Hangup/></Response>")
 
 
 async def test_a_crm_question_and_a_booking_decline_keep_the_booking(

@@ -22,6 +22,10 @@ from api.config import get_api_settings
     ("I don't want to book a call, stop calling me", "opt_out"),
     # Live 2026-11-14: declining a booking hung up and put the number on do-not-call.
     ("No. I don't want to book a call.", "other"),
+    ("Nothing. I've got the answers for all the questions.", "goodbye"),
+    ("I got all the answers for the questions.", "goodbye"),
+    ("no more questions, thanks", "goodbye"),
+    ("Nothing, but how much does a repair cost?", "other"),
     ("Please don't schedule a meeting yet", "other"),
     ("You have the wrong number", "wrong_number"),
     ("Are you a robot?", "robot"),

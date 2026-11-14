@@ -267,3 +267,10 @@ do-not-call list. Now change/move/push reschedule only with the booking as their
 the time", "push my appointment"), and "book/schedule/set up/arrange a call|meeting" is ignored by the
 opt-out rule — "don't call me", "stop calling", "remove my number" still opt out, in the same sentence too.
 A booking decline is never a booking request (`_BOOK` skips `declines_booking`).
+
+**R25 — finished means goodbye (2026-11-14):** "Nothing. I've got the answers for all the questions." got a
+model-written farewell but no hang-up; "Yes." then got "What questions can I answer?" and each "Mhmm" another
+goodbye, until the caller hung up. Now "I'm done" phrases (`script.is_done`: a leading "nothing", "got/have
+all the answers", "no more/other/further questions", "that's everything", "all set" — never a question) are a
+goodbye (`GOODBYE_LINE` + hang-up), and after her own farewell (`script.said_farewell`: "thanks for your
+time", "have a good day", "take care", "goodbye") a short non-question reply ends the call the same way.
