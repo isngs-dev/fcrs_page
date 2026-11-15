@@ -272,7 +272,7 @@ async def test_the_email_is_professional_personal_and_asks_for_a_call(
 
 async def test_with_a_call_booked_the_email_never_asks_them_to_book(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    when = "Tuesday, November 17 at 10:00 AM (America/New_York)"
+    when = "Tuesday, November 17 at 10:00 AM Eastern time"
     _, provider = await _compose(monkeypatch, "SUBJECT: Your call\n\nHi Jane, hello.", ["x"],
                                  booked_when=when)
     system, user = (m.content for m in provider.prompts[0])
@@ -287,7 +287,7 @@ def test_a_booked_call_is_written_out_and_closes_the_email() -> None:
     from datetime import UTC, datetime
 
     when = composer.meeting_when(datetime(2026, 11, 17, 15, 0, tzinfo=UTC), "America/New_York")
-    assert when == "Tuesday, November 17 at 10:00 AM (America/New_York)"
+    assert when == "Tuesday, November 17 at 10:00 AM Eastern time"
     line = composer.booked_line(when)
     assert when in line and "Book a time" not in line and "reply to this email" in line
 
@@ -313,3 +313,26 @@ def test_the_html_footer_shows_unsubscribe_not_the_long_address() -> None:
 def test_the_sender_name_is_rebecca_at_the_business() -> None:
     assert composer.sender_name("iSN Business Solutions") == "Rebecca at iSN Business Solutions"
     assert composer.sender_name(None) == "Rebecca"
+
+
+def test_an_unlisted_time_zone_is_still_written_out() -> None:
+    from datetime import UTC, datetime
+
+    when = composer.meeting_when(datetime(2026, 11, 17, 15, 0, tzinfo=UTC), "Europe/Paris")
+    assert when == "Tuesday, November 17 at 4:00 PM (Europe/Paris)"
+
+
+@pytest.mark.parametrize(("name", "email", "first"), [
+    ("Jane Doe", "jd@example.com", "Jane"),
+    # Owner, 2026-11-15: no name on record -> "Hello," -- the address often has it.
+    (None, "kaustubh.b1@isngs.com", "Kaustubh"),
+    ("", "maria_lopez@example.com", "Maria"),
+    (None, "info@example.com", None),
+    (None, "sales.team@example.com", None),
+    (None, "jsmith@example.com", None),  # not clearly a first name: stay neutral
+    (None, "ab.cd@example.com", None),
+    (None, None, None),
+])
+def test_the_greeting_name_comes_from_the_record_or_a_clear_address(
+        name: str | None, email: str | None, first: str | None) -> None:
+    assert composer.greeting_name(name, email) == first

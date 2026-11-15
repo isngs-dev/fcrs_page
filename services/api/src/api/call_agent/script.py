@@ -273,6 +273,11 @@ _ZONE_NAMES = {"America/New_York": "Eastern", "America/Detroit": "Eastern",
                "Asia/Kolkata": "India"}
 
 
+def zone_label(timezone: str) -> str | None:
+    """ "Eastern" for America/New_York: how the zone is said and written; ``None`` if unlisted."""
+    return _ZONE_NAMES.get(timezone)
+
+
 def say_time(at: datetime, timezone: str) -> str:
     local = at.astimezone(ZoneInfo(timezone))
     minutes = "" if local.minute == 0 else f":{local:%M}"

@@ -37,7 +37,7 @@ from api.config import get_api_settings
 from api.contacts.repository import get_contact, get_contact_id_by_identity, get_contact_timezone
 from api.email_agent import replies
 from api.email_agent import repository as repo
-from api.email_agent.composer import assemble_body
+from api.email_agent.composer import assemble_body, greeting_name, meeting_when
 from api.email_agent.config_repository import EmailAgentConfig, get_email_agent_config
 from api.email_agent.inbound import (
     InboundEmail,
@@ -216,7 +216,7 @@ async def _act(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact: A
     config = await get_email_agent_config(db, claims)
     if config is None or not config.enabled:
         return await _handoff(db, claims, ctx, contact, label, "EMAIL_NOT_READY")
-    first = (contact.name or "").split(" ")[0] or "there"
+    first = greeting_name(contact.name, contact.email) or "there"
 
     if label == "question":
         answer = await replies.answer_question(
@@ -471,9 +471,7 @@ async def _try_book(db: Database, claims: AuthClaims, ctx: dict[str, Any], conta
     if organizer:
         await notify_organizer(db, claims, event, organizer, name=contact.name,
                                email=contact.email, phone=contact.phone, meet_url=meet_url)
-    local = event.starts_at.astimezone(zone)
-    return _Booked(when=(f"{local:%A %B} {local.day} at {local.hour % 12 or 12}:{local:%M %p} "
-                         f"({availability.timezone})"), meet_url=meet_url)
+    return _Booked(when=meeting_when(event.starts_at, availability.timezone), meet_url=meet_url)
 
 
 async def _suppress(db: Database, claims: AuthClaims, email: str, *, reason: str) -> None:

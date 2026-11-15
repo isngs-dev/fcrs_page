@@ -27,6 +27,7 @@ from api.email_agent.composer import (
     assemble_body,
     booked_line,
     compose,
+    greeting_name,
     meeting_when,
     sender_name,
 )
@@ -134,7 +135,7 @@ async def prepare_and_maybe_send(
     booked_when = meeting_when(upcoming.starts_at, upcoming.timezone) if upcoming else None
     composed = await compose(db, claims, goal=task.goal, intent=task.intent,
                              booked_when=booked_when,
-                             first_name=(contact.name or "").split(" ")[0] or None,
+                             first_name=greeting_name(contact.name, contact.email),
                              visitor_ids=visitor_ids,
                              memory=await memory.render(db, claims, contact.contact_id,
                                                         include_chat=False))

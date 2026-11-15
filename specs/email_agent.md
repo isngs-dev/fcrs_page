@@ -93,3 +93,8 @@ The e-mails read as too short and generic. This overturns A2's "under 150 words"
 - **Answers to their replies** (`replies._ANSWER_PROMPT`): 100–200 words, greeting + full answer + a next step.
 - **Booked / rescheduled confirmations** (`inbound_service`): fuller code-owned templates.
 - **Signature:** "Kind regards, / Rebecca / AI assistant for <company>" — the AI disclosure stays.
+- **Time zone and greeting (2026-11-15):** a booked call is written "…at 10:00 AM Eastern time"
+  (`composer.meeting_when`, the same zone names the calls use; an unlisted zone stays in brackets). With no
+  name on record the greeting takes a first name from an address that clearly starts with one
+  ("kaustubh.b1@" → "Kaustubh"; `composer.greeting_name`) — role addresses ("info@") and unclear ones
+  ("jsmith@") stay neutral.

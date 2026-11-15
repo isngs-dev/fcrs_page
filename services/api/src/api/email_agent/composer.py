@@ -20,6 +20,7 @@ from common.errors import ValidationError
 
 from api.agents.memory import chat_summary
 from api.agents.memory import frame as frame_memory
+from api.call_agent.script import zone_label
 from api.config import get_api_settings
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
@@ -150,10 +151,31 @@ def sender_name(company: str | None) -> str:
 
 
 def meeting_when(starts_at: datetime, timezone: str) -> str:
-    """ "Tuesday, November 17 at 10:00 AM (America/New_York)" -- a booked call, as written."""
+    """ "Tuesday, November 17 at 10:00 AM Eastern time" -- a booked call, as written (the
+    zone's own name in brackets when it has no everyday one)."""
     local = starts_at.astimezone(ZoneInfo(timezone))
+    label = zone_label(timezone)
     return (f"{local:%A}, {local:%B} {local.day} at {local.hour % 12 or 12}:{local:%M %p} "
-            f"({timezone})")
+            f"{f'{label} time' if label else f'({timezone})'}")
+
+
+_ROLE_ADDRESSES = frozenset({
+    "info", "sales", "admin", "office", "contact", "support", "hello", "team", "mail", "help",
+    "billing", "accounts", "enquiries", "inquiries", "service", "marketing", "noreply"})
+
+
+def greeting_name(name: str | None, email: str | None) -> str | None:
+    """The first name to greet them by: from their record, else from an address that clearly
+    starts with one ("kaustubh.b1@", "maria_lopez@") -- otherwise ``None`` (a neutral greeting).
+    ponytail: only "letters, then a separator" counts; "jsmith@" and role addresses stay
+    neutral. Ask for the name in the form/chat if this guesses wrong too often."""
+    first = (name or "").split(" ")[0]
+    if first:
+        return first
+    match = re.match(r"([A-Za-z]{3,})[._-]", (email or "").partition("@")[0])
+    if match is None or match.group(1).lower() in _ROLE_ADDRESSES:
+        return None
+    return match.group(1).capitalize()
 
 
 def booked_line(when: str) -> str:
