@@ -861,7 +861,9 @@ async def after_call(db: Database, claims: AuthClaims, payload: dict[str, Any]) 
     session = await repo.get_session(db, claims, call_id)
     if session is None:
         return "CALL_GONE"
-    turns = await repo.list_turns(db, claims, call_id)
+    # What she couldn't understand (a mishearing) never becomes a note or part of the summary.
+    turns = script.understood_turns(await repo.list_turns(db, claims, call_id))
+    spoke = any(t["speaker"] == "caller" for t in turns)
     summary = sentiment = None
     llm = await get_llm_config(db, claims)
     if llm is not None and len(turns) > 1:
@@ -903,7 +905,7 @@ async def after_call(db: Database, claims: AuthClaims, payload: dict[str, Any]) 
         for turn in [t for t in turns if t["speaker"] == "caller" and "?" in t["text"]][-3:]:
             await memory.remember(db, claims, contact.contact_id, channel="call", kind="asked",
                                   text=turn["text"])
-        if summary:
+        if summary and spoke:  # a voicemail has nothing to remember
             await memory.remember(db, claims, contact.contact_id, channel="call",
                                   kind="summary", text=summary)
     if outcome in _STOP_OUTCOMES and session.contact_id:

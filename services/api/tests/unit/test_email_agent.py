@@ -336,3 +336,26 @@ def test_an_unlisted_time_zone_is_still_written_out() -> None:
 def test_the_greeting_name_comes_from_the_record_or_a_clear_address(
         name: str | None, email: str | None, first: str | None) -> None:
     assert composer.greeting_name(name, email) == first
+
+
+@pytest.mark.parametrize(("body", "first", "expected"), [
+    # Live 2026-11-15: "Kaustubh, you asked how capable..." -- no greeting line at all.
+    ("Kaustubh, you asked how capable the assistant is.", "Kaustubh",
+     "Hi Kaustubh,\n\nYou asked how capable the assistant is."),
+    ("You asked about pricing.", "Jane", "Hi Jane,\n\nYou asked about pricing."),
+    ("Hi Jane,\n\nYou asked about pricing.", "Jane", "Hi Jane,\n\nYou asked about pricing."),
+    ("Hello Jane,\nYou asked about pricing.", "Jane", "Hi Jane,\n\nYou asked about pricing."),
+    ("Dear Ms Doe,\n\nYou asked about pricing.", "Jane", "Hi Jane,\n\nYou asked about pricing."),
+    ("Hi there, you asked about pricing.", None, "Hello,\n\nYou asked about pricing."),
+    ("You asked about pricing.", None, "Hello,\n\nYou asked about pricing."),
+    ("Janet's roof is fine.", "Jane", "Hi Jane,\n\nJanet's roof is fine."),
+])
+def test_the_greeting_line_is_code_owned(body: str, first: str | None, expected: str) -> None:
+    assert composer.with_greeting(body, first) == expected
+
+
+async def test_the_model_is_told_not_to_write_the_greeting(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    result, provider = await _compose(monkeypatch, "SUBJECT: Your roof\n\nJane, hello there.", ["x"])
+    assert "Do not write a greeting line" in provider.prompts[0][0].content
+    assert result.body == "Hi Jane,\n\nHello there."

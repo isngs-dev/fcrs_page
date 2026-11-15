@@ -453,3 +453,34 @@ def test_a_voicemail_greeting_is_recognised(text: str, voicemail: bool) -> None:
 ])
 def test_a_question_of_her_own_that_a_yes_should_answer(line: str, asked: str | None) -> None:
     assert script.her_question(line) == asked
+
+
+def test_what_she_did_not_understand_never_reaches_the_notes() -> None:
+    """Live 2026-11-14: "Meta ads" was heard as "my dad"; she asked them to repeat it, but the
+    misheard question was saved and a later e-mail mentioned "your dad's roofing business"."""
+    turns = [
+        {"speaker": "rebecca", "text": "Hi, this is Rebecca."},
+        {"speaker": "caller", "text": "So how can it generate genuine leads?"},
+        {"speaker": "rebecca", "text": "Leads come from Google and Meta."},
+        {"speaker": "caller", "text": "So can you generate leads with my dad?"},
+        {"speaker": "rebecca", "text": "I'm not sure what you mean by \"with my dad.\" Could you "
+                                       "say that again?"},
+        {"speaker": "caller", "text": "How do you generate leads using meta ads?"},
+        {"speaker": "rebecca", "text": "Meta ads run on Facebook and Instagram."},
+    ]
+    kept = script.understood_turns(turns)
+    assert [t["text"] for t in kept if t["speaker"] == "caller"] == [
+        "So how can it generate genuine leads?", "How do you generate leads using meta ads?"]
+    assert not any("dad" in t["text"] for t in kept)
+    assert script.understood_turns([]) == []
+
+
+@pytest.mark.parametrize(("line", "asked"), [
+    ("Sorry, I didn't catch that. Are you still there?", True),
+    ("Could you repeat that for me?", True),
+    ("Are you asking whether your father could be involved, or something else?", True),
+    ("Meta ads run on Facebook. Is there anything else you'd like to know?", False),
+    ("What day and time works best for you?", False),
+])
+def test_a_request_to_repeat_is_recognised(line: str, asked: bool) -> None:
+    assert script.asked_to_repeat(line) is asked

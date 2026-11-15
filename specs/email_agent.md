@@ -98,3 +98,7 @@ The e-mails read as too short and generic. This overturns A2's "under 150 words"
   name on record the greeting takes a first name from an address that clearly starts with one
   ("kaustubh.b1@" → "Kaustubh"; `composer.greeting_name`) — role addresses ("info@") and unclear ones
   ("jsmith@") stay neutral.
+- **Greeting line is code-owned (2026-11-15):** the model once opened "Kaustubh, you asked…" with no
+  greeting. Now the model is told not to greet; `composer.with_greeting` puts "Hi <first name>," (or
+  "Hello,") on its own line and strips any greeting or leading "<name>," the model wrote anyway. Applies to
+  outreach, follow-ups and answers to replies.

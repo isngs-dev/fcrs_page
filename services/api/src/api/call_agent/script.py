@@ -113,6 +113,31 @@ def her_question(line: str) -> str | None:
     return last if last.endswith("?") and not _OPEN_ENDED.search(last) else None
 
 
+_REPEAT = re.compile(
+    r"\bsay that again\b|\bnot sure what you mean\b|\bdidn'?t (?:quite )?(?:catch|get|understand)\b"
+    r"|\b(?:could|can|would) you (?:please )?(?:repeat|rephrase|clarify)\b|\bwhat do you mean\b"
+    r"|\bdid you mean\b|\bare you asking\b", re.I)
+
+
+def asked_to_repeat(line: str) -> bool:
+    """She didn't understand what was just said ("Could you say that again?")."""
+    return bool(_REPEAT.search(line))
+
+
+def understood_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The transcript without what she couldn't make sense of: a caller turn she answered with
+    a request to repeat, and that request. A mishearing ("Meta ads" -> "my dad") must not
+    become a fact in the notes, the summary or a later e-mail (live 2026-11-14)."""
+    kept: list[dict[str, Any]] = []
+    for turn in turns:
+        if (turn["speaker"] != "caller" and asked_to_repeat(turn["text"])
+                and kept and kept[-1]["speaker"] == "caller"):
+            kept.pop()
+            continue
+        kept.append(turn)
+    return kept
+
+
 def is_done(text: str) -> bool:
     """ "Nothing. I've got the answers" -- they're finished: a goodbye (live 2026-11-14)."""
     return "?" not in text and bool(_DONE.search(text))

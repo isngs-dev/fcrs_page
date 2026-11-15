@@ -18,7 +18,7 @@ from common.errors import ValidationError
 
 from api.agents.memory import frame as frame_memory
 from api.config import get_api_settings
-from api.email_agent.composer import Composed
+from api.email_agent.composer import Composed, with_greeting
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, LLMProvider
@@ -71,8 +71,9 @@ _ANSWER_PROMPT = (
     "below. If the Context does not answer the question, reply with exactly "
     f"`{_NO_ANSWER_SENTINEL}` and nothing else. Never invent prices, discounts, guarantees, "
     "timelines or commitments. Write a professional, warm reply of 100 to 200 words in two "
-    "or three short paragraphs separated by blank lines: greet them by first name and "
-    "acknowledge their question; answer it fully and clearly from the Context, including the "
+    "or three short paragraphs separated by blank lines: open by acknowledging their "
+    "question (do not write a greeting line or start with their name -- the greeting is "
+    "added automatically); answer it fully and clearly from the Context, including the "
     "details that help them decide; close with one helpful next step (for example that they "
     "can reply with any further questions). Complete sentences, no slang, plain text, no "
     "markdown, no signature or sign-off name (added automatically), never claim to be a human. "
@@ -108,7 +109,7 @@ async def answer_question(db: Database, claims: AuthClaims, *, reply_text: str,
         return Composed(band="escalate", reason=f"GUARDRAIL_{(guard.rule or '').upper()}")
     if unstated_commitments(text, context):
         return Composed(band="escalate", reason="UNSTATED_COMMITMENT")
-    return Composed(band="answer", body=text,
+    return Composed(band="answer", body=with_greeting(text, first_name),
                     sources=[{"chunk_id": c.chunk_id, "doc_id": c.doc_id} for c in chunks])
 
 

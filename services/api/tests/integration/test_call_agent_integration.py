@@ -1325,3 +1325,25 @@ async def test_a_voicemail_greeting_gets_the_approved_message_not_a_reply(
     assert vm.endswith("<Hangup/></Response>")
     assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
                              call_id) == "voicemail"
+
+
+async def test_a_misheard_question_never_reaches_the_notes_after_the_call(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-14/15: "Meta ads" heard as "my dad"; she asked them to repeat it, but the
+    misheard question was saved and a later e-mail said "your dad's roofing business"."""
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    call_id, _ = await _dial(env, a)
+    for speaker, text in [
+            ("rebecca", "Hi, this is Rebecca."),
+            ("caller", "So can you generate leads with my dad?"),
+            ("rebecca", "I'm not sure what you mean. Could you say that again?"),
+            ("caller", "How do you generate leads using meta ads?"),
+            ("rebecca", "Meta ads run on Facebook and Instagram.")]:
+        await repo.add_turn(db, claims, call_id, speaker=speaker, text=text)
+    await service.after_call(db, claims, {"call_id": call_id, "outcome": "completed"})
+    contact_id = await db.fetchval("SELECT contact_id FROM call_sessions WHERE call_id = $1",
+                                   call_id)
+    notes = [i["text"] for i in await memory.items(db, claims, str(contact_id))]
+    assert "How do you generate leads using meta ads?" in notes
+    assert not any("dad" in n for n in notes)

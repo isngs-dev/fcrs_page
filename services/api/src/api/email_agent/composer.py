@@ -37,9 +37,10 @@ _EMAIL_SYSTEM_PROMPT = (
     "contacted it or is its customer. Use ONLY facts stated in the Context below; "
     "never invent facts, prices, discounts, guarantees, timelines or commitments. "
     "Structure, in three or four short paragraphs separated by blank lines:\n"
-    "1. A greeting by first name and an opening that refers specifically to what this "
-    "person asked about or told us (from 'Previous conversation' and what we know about "
-    "them) -- never a generic opener.\n"
+    "1. An opening that refers specifically to what this person asked about or told us "
+    "(from 'Previous conversation' and what we know about them) -- never a generic opener. "
+    "Do not write a greeting line and do not start with their name: the greeting "
+    "(\"Hi <first name>,\") is added automatically above your text.\n"
     "2. One or two paragraphs of genuinely useful substance from the Context that speak to "
     "their questions or situation: what the service does for them, how it works, what to "
     "expect. Concrete, not salesy.\n"
@@ -139,7 +140,8 @@ async def compose(
     if unstated:
         return Composed(band="escalate", reason="UNSTATED_COMMITMENT")
     return Composed(
-        band="answer" if chunks else "no_context", subject=parsed[0], body=parsed[1],
+        band="answer" if chunks else "no_context", subject=parsed[0],
+        body=with_greeting(parsed[1], first_name),
         sources=[{"chunk_id": c.chunk_id, "doc_id": c.doc_id} for c in chunks],
     )
 
@@ -148,6 +150,25 @@ def sender_name(company: str | None) -> str:
     """The From name: a person at the business ("Rebecca at Acme"), like the signature. Gmail
     files mail from a brand name in Promotions more often than mail from a person."""
     return f"Rebecca at {company}" if company else "Rebecca"
+
+
+_GREETING_LINE = re.compile(
+    r"\s*(?:hi|hello|hey|dear|good (?:morning|afternoon|evening))\b[^\n,!.:]{0,40}[,!.:]?\s*",
+    re.I)
+
+
+def with_greeting(body: str, first_name: str | None) -> str:
+    """The greeting line is code-owned: "Hi Jane," (or "Hello," with no name) on its own line,
+    then the model's text -- minus any greeting or leading "Jane, " it wrote anyway
+    (live 2026-11-15: "Kaustubh, you asked..." with no greeting at all)."""
+    text = body.strip()
+    match = _GREETING_LINE.match(text)
+    if match:
+        text = text[match.end():]
+    if first_name and re.match(rf"{re.escape(first_name)}\s*[,:]\s+", text, re.I):
+        text = re.sub(rf"^{re.escape(first_name)}\s*[,:]\s+", "", text, flags=re.I)
+    text = text[:1].upper() + text[1:]
+    return f"{f'Hi {first_name}' if first_name else 'Hello'},\n\n{text}"
 
 
 def meeting_when(starts_at: datetime, timezone: str) -> str:

@@ -299,3 +299,10 @@ qualifying leads or booking inspections?" → "Yes." → "Great! What questions 
 last line ended on a question written for this conversation (`script.her_question`: not "anything else?",
 not a booking offer or a fixed check), a bare "yes" goes to the answer path as
 "Yes, please. You asked me: <her question>", so retrieval and the model answer what she offered.
+
+**R29 — a mishearing never becomes a note (2026-11-15):** "Meta ads" was heard as "my dad"; Rebecca asked
+the caller to repeat it, but after the call the misheard question was saved to the contact's notes and a
+later e-mail said "your dad's roofing business". Now `script.understood_turns` drops any caller turn she
+answered with a request to repeat (`script.asked_to_repeat`), together with that request, before the
+after-call step writes the "asked" notes and the summary. A call where the caller never spoke (voicemail)
+saves no summary to the notes.
