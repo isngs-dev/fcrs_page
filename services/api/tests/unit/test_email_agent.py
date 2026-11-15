@@ -265,6 +265,8 @@ async def test_the_email_is_professional_personal_and_asks_for_a_call(
     assert "120 to 200 words" in system and "under 150 words" not in system
     assert "refers specifically to what this person asked about" in system
     assert "inviting them to book a short call" in system and "{next_step}" not in system
+    # Live 2026-11-15: "I understand you had no further questions at the time".
+    assert "never comment on how an earlier conversation ended" in system
     assert "Their booked call" not in user
 
 
@@ -275,6 +277,8 @@ async def test_with_a_call_booked_the_email_never_asks_them_to_book(
                                  booked_when=when)
     system, user = (m.content for m in provider.prompts[0])
     assert "do NOT ask them to book a call" in system
+    # Live 2026-11-15: the time was written twice, in two formats (model + the fixed line).
+    assert "do not state the call's day or time yourself" in system
     assert "inviting them to book a short call" not in system
     assert f"Their booked call with our team: {when}" in user
 
