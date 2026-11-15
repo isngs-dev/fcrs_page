@@ -204,7 +204,8 @@ class _Provider:
 _CLAIMS = AuthClaims(subject="system:agents", role=Role.CLIENT_ADMIN, tenant_id="t-1")
 
 
-async def _compose(monkeypatch: pytest.MonkeyPatch, text: str, chunks: list[str]) -> Any:
+async def _compose(monkeypatch: pytest.MonkeyPatch, text: str, chunks: list[str],
+                   booked_when: str | None = None) -> Any:
     provider = _Provider(text)
 
     async def llm_config(db: Any, claims: Any) -> Any:
@@ -221,7 +222,8 @@ async def _compose(monkeypatch: pytest.MonkeyPatch, text: str, chunks: list[str]
     monkeypatch.setattr(composer, "provider_for", lambda config: provider)
     monkeypatch.setattr(composer, "chat_summary", no_summary)  # A11: moved to agents.memory
     result = await composer.compose(None, _CLAIMS, goal="follow_up",  # type: ignore[arg-type]
-                                    intent="Follow up", first_name="Jane", visitor_ids=[])
+                                    intent="Follow up", first_name="Jane", visitor_ids=[],
+                                    booked_when=booked_when)
     return result, provider
 
 
@@ -251,7 +253,39 @@ def test_footer_is_code_owned() -> None:
                                   company="Acme", physical_address="1 Main St, Miami FL",
                                   unsubscribe_url="https://u/1")
     assert body.endswith("Unsubscribe: https://u/1")
-    assert "— Rebecca, AI assistant for Acme" in body and "1 Main St, Miami FL" in body
+    assert "Kind regards,\nRebecca\nAI assistant for Acme" in body  # the AI disclosure stays
+    assert "1 Main St, Miami FL" in body
+
+
+async def test_the_email_is_professional_personal_and_asks_for_a_call(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Owner, 2026-11-15: the e-mails were too short and generic."""
+    _, provider = await _compose(monkeypatch, "SUBJECT: Your roof\n\nHi Jane, hello.", ["x"])
+    system, user = (m.content for m in provider.prompts[0])
+    assert "120 to 200 words" in system and "under 150 words" not in system
+    assert "refers specifically to what this person asked about" in system
+    assert "inviting them to book a short call" in system and "{next_step}" not in system
+    assert "Their booked call" not in user
+
+
+async def test_with_a_call_booked_the_email_never_asks_them_to_book(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    when = "Tuesday, November 17 at 10:00 AM (America/New_York)"
+    _, provider = await _compose(monkeypatch, "SUBJECT: Your call\n\nHi Jane, hello.", ["x"],
+                                 booked_when=when)
+    system, user = (m.content for m in provider.prompts[0])
+    assert "do NOT ask them to book a call" in system
+    assert "inviting them to book a short call" not in system
+    assert f"Their booked call with our team: {when}" in user
+
+
+def test_a_booked_call_is_written_out_and_closes_the_email() -> None:
+    from datetime import UTC, datetime
+
+    when = composer.meeting_when(datetime(2026, 11, 17, 15, 0, tzinfo=UTC), "America/New_York")
+    assert when == "Tuesday, November 17 at 10:00 AM (America/New_York)"
+    line = composer.booked_line(when)
+    assert when in line and "Book a time" not in line and "reply to this email" in line
 
 
 def test_the_html_footer_shows_unsubscribe_not_the_long_address() -> None:

@@ -23,7 +23,13 @@ from api.agents.repository import get_agent_settings, start_run
 from api.config import get_api_settings
 from api.contacts.repository import get_contact, list_identities
 from api.email_agent import repository as repo
-from api.email_agent.composer import assemble_body, compose, sender_name
+from api.email_agent.composer import (
+    assemble_body,
+    booked_line,
+    compose,
+    meeting_when,
+    sender_name,
+)
 from api.email_agent.config_repository import (
     EmailAgentConfig,
     get_email_agent_config,
@@ -39,6 +45,7 @@ from api.email_agent.providers import (
 from api.leads.repository import get_lead
 from api.notifications.config_repository import get_notification_config
 from api.scheduling.calendar_config_repository import get_calendar_config
+from api.scheduling.repository import get_upcoming_for_contact
 
 _log = get_logger(__name__)
 
@@ -121,7 +128,12 @@ async def prepare_and_maybe_send(
         if lead is not None and lead.visitor_id:
             visitor_ids.append(lead.visitor_id)
 
+    # Their call is already booked: the e-mail says so and never asks them to book again.
+    upcoming = await get_upcoming_for_contact(db, claims, lead_id=contact.lead_id,
+                                              email=contact.email)
+    booked_when = meeting_when(upcoming.starts_at, upcoming.timezone) if upcoming else None
     composed = await compose(db, claims, goal=task.goal, intent=task.intent,
+                             booked_when=booked_when,
                              first_name=(contact.name or "").split(" ")[0] or None,
                              visitor_ids=visitor_ids,
                              memory=await memory.render(db, claims, contact.contact_id,
@@ -133,7 +145,9 @@ async def prepare_and_maybe_send(
 
     company = config.from_name or "our team"
     body = assemble_body(
-        body=composed.body, booking=await _booking_line(db, claims, config), company=company,
+        body=composed.body, company=company,
+        booking=booked_line(booked_when) if booked_when
+        else await _booking_line(db, claims, config),
         physical_address=str(settings.physical_address),
         unsubscribe_url=unsubscribe_url(str(claims.tenant_id), contact.contact_id, contact.email),
     )

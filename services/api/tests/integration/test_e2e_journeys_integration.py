@@ -91,7 +91,7 @@ class _Model:
                        reasoning_effort: str | None = None) -> Completion:
         self.prompts.append(messages)
         system = messages[0].content
-        if "follow-up email" in system:
+        if "professional, warm business email" in system:
             text = ("SUBJECT: Your flat roof question\n\nHi Jane, thanks for asking about "
                     "flat-roof repairs. We repair flat roofs, and an inspection takes about an "
                     "hour. Would a short call to find a time suit you?")

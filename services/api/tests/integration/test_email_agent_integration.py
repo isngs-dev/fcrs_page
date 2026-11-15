@@ -161,6 +161,29 @@ async def _task(db: Database, step: int = 0) -> Any:
 # -- Executor ----------------------------------------------------------------------------
 
 
+async def test_with_a_call_booked_the_email_confirms_it_instead_of_a_booking_link(
+        env: dict[str, Any]) -> None:
+    """Owner, 2026-11-15: after booking, the follow-ups still said "book a time"."""
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from api.email_agent.composer import meeting_when
+    from api.scheduling.repository import record_form_booking
+
+    db, mailer, a = env["db"], env["mailer"], _claims(env["a"])
+    contact_id = await _setup(db, a, lead=True)
+    at = datetime.now(UTC).replace(microsecond=0) + timedelta(days=3)
+    assert await record_form_booking(
+        db, a, ref=f"form:{uuid4().hex}", starts_at=at, ends_at=at + timedelta(minutes=30),
+        timezone="America/New_York", lead_id=None, email="jane@example.com", name="Jane Doe",
+        consent={"granted": True}) is not None
+    counts = await _plan_and_dispatch(db, a, contact_id, datetime.now(UTC))
+    assert counts.get("completed") == 1
+    [email] = mailer.sent
+    assert f"confirmed for {meeting_when(at, 'America/New_York')}" in email.body_text
+    assert "Book a time that suits you" not in email.body_text
+
+
 async def test_auto_send_sends_with_headers_and_writes_back(env: dict[str, Any]) -> None:
     db, mailer, a = env["db"], env["mailer"], _claims(env["a"])
     contact_id = await _setup(db, a, lead=True)
@@ -173,7 +196,8 @@ async def test_auto_send_sends_with_headers_and_writes_back(env: dict[str, Any])
     assert email.message_id.endswith("@mail.acme.com>") and email.in_reply_to is None
     assert email.unsubscribe_url and "/public/email/unsubscribe/" in email.unsubscribe_url
     assert "Book a time that suits you: https://cal.com/acme" in email.body_text
-    assert "— Rebecca, AI assistant for Acme" in email.body_text and _ADDRESS in email.body_text
+    assert "Kind regards,\nRebecca\nAI assistant for Acme" in email.body_text
+    assert _ADDRESS in email.body_text
     assert email.from_name == "Rebecca at Acme"  # a person, not a brand: Primary over Promotions
 
     task = await _task(db)

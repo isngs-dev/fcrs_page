@@ -188,7 +188,8 @@ async def _follow_up_if_quiet(db: Database, claims: AuthClaims, contact_id: str)
             steps=[AgentTask(channel="email", offset=FOLLOW_UP_DELAY, goal="follow_up",
                              max_attempts=3,
                              intent="They replied and we answered; they have gone quiet since. "
-                                    "Briefly check our answer helped and offer a short call.")])
+                                    "Check our answer helped, add something useful related to "
+                                    "what they asked, and offer a short call.")])
     except AppException:  # a plan is already active (e.g. contact_later) -- leave it
         pass
 
@@ -240,8 +241,13 @@ async def _act(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact: A
                 await memory.remember(db, claims, contact.contact_id, channel="email",
                                       kind="booked", text=f"Moved their meeting to {moved.when}")
                 return await _reply(db, claims, ctx, contact, config,
-                                    f"Hi {first},\n\nDone — your call is now {moved.when}. "
-                                    f"We'll send you a reminder before it.{moved.join_line}",
+                                    f"Hi {first},\n\nThank you for letting us know. Your "
+                                    f"call has been moved and is now confirmed for {moved.when}"
+                                    f". We'll send you a reminder before it.{moved.join_line}"
+                                    "\n\nIf this time stops working for you, or you have any "
+                                    "questions before the call, simply reply to this email and "
+                                    "we'll be glad to help.\n\nWe look forward to speaking "
+                                    "with you.",
                                     band="template", sources=[], action="rescheduled",
                                     force_send=True)
             if moved == "taken":
@@ -293,8 +299,13 @@ async def _act(db: Database, claims: AuthClaims, ctx: dict[str, Any], contact: A
             await memory.remember(db, claims, contact.contact_id, channel="email",
                                   kind="booked", text=f"Booked a call for {booked.when}")
             return await _reply(db, claims, ctx, contact, config,
-                                f"Hi {first},\n\nYou're booked for {booked.when}. We'll send "
-                                f"you a reminder before the call.{booked.join_line}",
+                                f"Hi {first},\n\nThank you for confirming. You're booked for "
+                                f"{booked.when}, and we'll send you a reminder before the "
+                                f"call.{booked.join_line}\n\nOn the call, our team will walk "
+                                "you through how everything works and answer your questions "
+                                "in detail. If anything comes to mind beforehand, or you need "
+                                "a different time, simply reply to this email and we'll take "
+                                "care of it.\n\nWe look forward to speaking with you.",
                                 band="template", sources=[], action="booked", force_send=True)
         if booked == "taken":  # their time, declined; we never pick one for them
             return await _reply(db, claims, ctx, contact, config,
