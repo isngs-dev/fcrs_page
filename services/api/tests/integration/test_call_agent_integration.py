@@ -139,7 +139,8 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, Any]]:
     monkeypatch.setattr(booking, "send_notification", notify)
 
     async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
-                     about_caller: Any = None, can_book: bool = False) -> str | None:
+                     about_caller: Any = None, can_book: bool = False,
+                     assistant: Any = None) -> str | None:
         return None if "warranty" in question else "We charge two hundred dollars for that."
 
     monkeypatch.setattr(service, "answer_from_knowledge", answer)
@@ -1224,7 +1225,8 @@ async def test_questions_about_the_booked_call_are_answered_from_the_booking(
     seen: list[str | None] = []
 
     async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
-                     about_caller: Any = None, can_book: bool = False) -> str | None:
+                     about_caller: Any = None, can_book: bool = False,
+                     assistant: Any = None) -> str | None:
         seen.append(about_caller)
         return "It's a 30-minute call with our team."
 
@@ -1294,7 +1296,7 @@ async def test_listed_tenants_calls_answer_with_the_server_claude_setting(
 
     async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
                      about_caller: Any = None, can_book: bool = False,
-                     llm_config: Any = None) -> str | None:
+                     llm_config: Any = None, assistant: Any = None) -> str | None:
         used.append((claims.tenant_id, llm_config))
         return "We charge two hundred dollars for that."
 
@@ -1856,3 +1858,36 @@ async def test_call_settings_say_which_phone_network_the_client_is_on(
     assert on_telnyx["telnyx_callback_url"] == f"{_BASE}/public/call-agent/telnyx/callbacks"
     on_plivo = (await client.get("/admin/outreach/call-config", cookies=_cookie(b))).json()
     assert on_plivo["phone_provider"] == "plivo" and "telnyx_callback_url" not in on_plivo
+
+
+
+async def test_who_is_this_gets_her_name_and_the_business_not_the_model(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-16: "What was your name again?" -> "I don't have a personal name"."""
+    asked: list[str] = []
+
+    async def answer(db: Any, claims: Any, question: str, *args: Any, **kwargs: Any) -> str | None:
+        asked.append(question)
+        return "We charge two hundred dollars for that."
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    call_id = await _answered(env, env["a"])  # asks one question first
+    asked.clear()
+    for question in ("Who is this calling?", "What was your name again?"):
+        said = service.spoken_text(await _say(env, call_id, question))
+        assert said == script.who_line("Acme Roofing")
+    assert asked == []
+
+
+async def test_the_model_is_told_her_name_on_every_answer(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+
+    async def answer(db: Any, claims: Any, question: str, *args: Any, **kwargs: Any) -> str | None:
+        seen.append(kwargs.get("assistant"))
+        return "We charge two hundred dollars for that."
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    call_id = await _answered(env, env["a"])  # asks one question first
+    await _say(env, call_id, "How much is a roof inspection?")
+    assert seen == ["Rebecca, the AI assistant at Acme Roofing"] * 2  # every answer

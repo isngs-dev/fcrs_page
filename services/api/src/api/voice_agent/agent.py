@@ -77,7 +77,10 @@ _VOICE_SYSTEM_PROMPT = (
     "numbers and prices the way a person says them aloud. The caller's words come from "
     "speech recognition and can be cut off or wrong: if they make no sense, don't guess, "
     "just ask them to say it again. If the caller only "
-    "greets or thanks you, reply briefly and ask how you can help. If the context "
+    "greets or thanks you, reply briefly and ask how you can help. If the caller asks a "
+    "broad question about the business or its service (what else they should know, or to "
+    "tell them more), give a short summary of the most useful points from the context. If "
+    "the context "
     "does not contain the answer, reply with exactly NO_ANSWER_FOUND and nothing "
     "else. Never guess, never promise, never say anything is booked, and never "
     "invent prices, dates or commitments."
@@ -264,10 +267,18 @@ async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: LiveVoice, cont
     return text
 
 
+def _who_prompt(assistant: str | None) -> str:
+    """Her name, so "what's your name?" never gets "I don't have a personal name" (2026-11-16)."""
+    if not assistant:
+        return ""
+    return (f"You are {assistant}. If asked who you are or your name, say you're {assistant}; "
+            "never say you have no name. ")
+
+
 async def answer_from_knowledge(
     db: Database, claims: AuthClaims, question: str, history: list[ChatMessage],
     *, model: str | None = None, about_caller: str | None = None, can_book: bool = False,
-    llm_config: LLMConfig | None = None,
+    llm_config: LLMConfig | None = None, assistant: str | None = None,
 ) -> str | None:
     """A short spoken answer grounded in the tenant's knowledge base, or ``None``
     when the knowledge base doesn't hold it (or the reply fails the output
@@ -291,6 +302,8 @@ async def answer_from_knowledge(
     context = "\n".join(f"[{c.chunk_id}] {c.content}" for c in result.chunks)
     prompt = [
         ChatMessage(role="system", content=(
+            # ``assistant``: who she is (the calling agent's "Rebecca, the AI assistant at X")
+            f"{_who_prompt(assistant)}"
             f"{_VOICE_SYSTEM_PROMPT}{f' {_CAN_BOOK_PROMPT}' if can_book else ''}\n\n"
             f"Context:\n{context}\n\n{frame_memory(about_caller)}"
         ).strip()),  # A11: the caller's story, as data

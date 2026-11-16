@@ -389,3 +389,10 @@ a matching contact (its plans stop), and says "Done. <company> won't call you ag
 a number that isn't a Telnyx tenant's is rejected. Steps are marked in `client_state` (set by our own
 commands, echoed in Telnyx's signed events), so our outbound calls' events are never treated as callbacks.
 Every request's Ed25519 signature is checked first.
+
+**R31 — she knows her name; broad questions get a summary (2026-11-16, first Telnyx call):** she opened
+"Rebecca here" but told the caller "I don't have a personal name", and "Is there anything else I should know
+about Roof Engine?" got the miss line. Now "who is this / who's calling / who am I speaking with / your name"
+is answered by the code (`script.who_line`: "I'm Rebecca, the AI assistant at <company>. How can I help you
+today?"), every model answer on a call is told who she is (`answer_from_knowledge(assistant=...)`), and the
+voice prompt summarises the most useful points from the context for a broad question instead of missing.

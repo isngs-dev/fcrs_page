@@ -16,7 +16,8 @@ from email_validator import EmailNotValidError, validate_email
 
 from api.voice_agent.agent import _GOODBYE_RE, _PERSON_RE
 
-Kind = Literal["recording_objection", "opt_out", "wrong_number", "robot", "callback", "person",
+Kind = Literal["recording_objection", "opt_out", "wrong_number", "robot", "who", "callback",
+               "person",
                "goodbye", "not_interested", "book", "yes", "no", "other"]
 
 _OPT_OUT = re.compile(
@@ -28,6 +29,10 @@ _RECORDING = re.compile(r"\b(?:don'?t|do not|stop|not|no)\b.{0,15}\brecord", re.
 _ROBOT = re.compile(r"\b(?:are you|is this|am i (?:talking|speaking) (?:to|with))\b.{0,12}"
                     r"\b(?:robot|bot|machine|ai|a\.i\.|real person|human|recording|computer)\b",
                     re.I)
+# "Who is this calling?" / "What was your name again?" -- answered by the code with her name
+# and the business (live 2026-11-16: the model said "I don't have a personal name").
+_WHO = re.compile(r"\bwho(?:'s| is| am i| are you)\b.{0,20}\b(?:this|calling|speaking|talking)\b"
+                  r"|\byour name\b", re.I)
 _CALLBACK = re.compile(
     r"\bcall (?:me )?(?:back|later|another time|tomorrow|next week)\b"
     r"|\b(?:not a good time|bad time|busy right now|i'?m busy|in a meeting|can'?t talk"
@@ -190,6 +195,8 @@ def classify(text: str) -> Kind:
         return "wrong_number"
     if _ROBOT.search(text):
         return "robot"
+    if _WHO.search(text):
+        return "who"
     if _CALLBACK.search(text):
         return "callback"
     if _PERSON_RE.search(text):
@@ -244,6 +251,12 @@ def whisper(*, caller: str, asked: str | None) -> str:
 
 
 ROBOT_LINE = "Yes, I'm an AI assistant. I can answer questions or book a time with our team."
+
+
+def who_line(company: str) -> str:
+    return f"I'm Rebecca, the AI assistant at {company}. How can I help you today?"
+
+
 RECORDING_STOPPED = "No problem, I've stopped the recording."
 OPT_OUT_LINE = "Understood. I've removed your number and we won't call again. Goodbye."
 WRONG_NUMBER_LINE = "I'm sorry for the trouble. I'll remove this number. Goodbye."

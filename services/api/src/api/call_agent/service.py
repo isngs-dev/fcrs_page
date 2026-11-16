@@ -598,6 +598,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         return await bye(script.WRONG_NUMBER_LINE, "wrong_number")
     if kind == "robot":
         return await say(script.ROBOT_LINE)
+    if kind == "who":  # her name and the business, from the code -- never the model's guess
+        return await say(script.who_line(config.company_name))
     if kind == "callback":
         if session.direction == "inbound" and not await schedule_callback(db, claims, session):
             await _handoff(db, claims, session, "callback_requested")
@@ -778,6 +780,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         calls = await realtime.calls_llm(db, claims)  # Claude for streamed calls, if set
         query = f"Yes, please. You asked me: {her_own}" if her_own else speech
         reply = await answer_from_knowledge(db, claims, query, history,
+                                            assistant=f"Rebecca, the AI assistant at "
+                                                      f"{config.company_name}",
                                             model=None if calls else config.voice_model,
                                             about_caller=about, can_book=not held,
                                             **({"llm_config": calls} if calls else {}))

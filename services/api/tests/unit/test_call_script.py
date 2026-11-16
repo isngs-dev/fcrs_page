@@ -484,3 +484,25 @@ def test_what_she_did_not_understand_never_reaches_the_notes() -> None:
 ])
 def test_a_request_to_repeat_is_recognised(line: str, asked: bool) -> None:
     assert script.asked_to_repeat(line) is asked
+
+
+
+@pytest.mark.parametrize(("text", "asks"), [
+    # Live 2026-11-16 (Telnyx): both went to the model, which said "I don't have a personal name".
+    ("Who is this calling?", True),
+    ("What was your name again?", True),
+    ("who am I speaking with", True),
+    ("Sorry, who's this?", True),
+    ("what's your name", True),
+    ("What is this call regarding?", False),
+    ("who is your team lead for my area?", False),
+    ("Can you tell me the name of the program?", False),
+])
+def test_who_is_calling_is_recognised(text: str, asks: bool) -> None:
+    assert (script.classify(text) == "who") is asks
+
+
+def test_she_says_her_name_and_the_business() -> None:
+    line = script.who_line("Acme Roofing")
+    assert line.startswith("I'm Rebecca, the AI assistant at Acme Roofing.")
+    assert line.endswith("?")

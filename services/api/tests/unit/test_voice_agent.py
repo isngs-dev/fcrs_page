@@ -159,7 +159,7 @@ def test_the_time_limit_hands_over_after_answering() -> None:
 
 
 async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_book: bool = False,
-                       ) -> tuple[str | None, AsyncMock]:
+                       assistant: str | None = None) -> tuple[str | None, AsyncMock]:
     from api.llm.provider import Completion
 
     generate = AsyncMock(return_value=Completion(
@@ -176,7 +176,7 @@ async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_b
         patch("api.voice_agent.agent.provider_for", return_value=provider),
     ):
         reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [],  # type: ignore[arg-type]
-                                            can_book=can_book)
+                                            can_book=can_book, assistant=assistant)
     return reply, generate
 
 
@@ -768,3 +768,23 @@ async def test_a_calls_ai_setting_replaces_the_tenants_for_the_answer(env: None)
     assert reply == "Yes, we do."
     tenant.assert_not_awaited()
     assert chosen == [calls] and generate.await_args.kwargs["model"] == "claude-haiku-5-5"
+
+
+
+async def test_the_model_knows_her_name_and_the_business() -> None:
+    """Live 2026-11-16: she opened "Rebecca here" but told the caller "I don't have a personal
+    name". The calling agent now tells the model who she is."""
+    _, generate = await _answer_with("Sure.", assistant="Rebecca, the AI assistant at Acme Roofing")
+    system = generate.call_args.args[0][0].content
+    assert system.startswith("You are Rebecca, the AI assistant at Acme Roofing")
+    assert "never say you have no name" in system
+    _, plain = await _answer_with("Sure.")  # the website's "Call us" agent: unchanged
+    assert "You are Rebecca" not in plain.call_args.args[0][0].content
+
+
+async def test_a_broad_question_gets_a_short_summary_not_a_miss() -> None:
+    """Live 2026-11-16: "Is there anything else I should know about Roof Engine?" -> "That's a
+    good question for our team"."""
+    _, generate = await _answer_with("Sure.")
+    system = generate.call_args.args[0][0].content
+    assert "broad question" in system and "most useful points" in system
