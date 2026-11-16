@@ -92,10 +92,11 @@ class Listener(Protocol):
 
 
 Voice = Callable[[str], AsyncIterator[bytes]]
-# Said the moment an AI answer starts, instead of silence (option A, 2026-11-13). Rotated,
-# never twice in a row. Not "Sure." (the booking line starts with it) and not "Good question"
-# (the miss line says it).
-BRIDGES = ("Right.", "Okay.", "Mm-hm.")
+# Said only when an AI answer is slow to start (owner, 2026-11-16): neutral words -- "Right."
+# or "Okay." before "No, we don't do that" sounded like a yes. Rotated, never twice in a row.
+# Not "Good question" (the miss line says it).
+BRIDGES = ("Let me check.", "One moment.", "Let me see.")
+BRIDGE_DELAY = 1.2  # seconds; Claude Haiku's first sentence is ~1.0 s, so most answers need none
 
 
 class Speaking(Protocol):
@@ -207,10 +208,12 @@ class RealtimeCall:
 
     def __init__(self, plivo: Socket, listener: Listener, voice: Voice, brain: Brain, *,
                  opening: str, record: Record, silence_seconds: float = SILENCE_SECONDS,
+                 bridge_delay: float = BRIDGE_DELAY,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self._plivo, self._listener, self._voice, self._brain = plivo, listener, voice, brain
         self._opening, self._record = opening, record
         self._silence_seconds, self._clock = silence_seconds, clock
+        self._bridge_delay = bridge_delay
         self._stream_id = ""
         self._turns: asyncio.Queue[tuple[str, float]] = asyncio.Queue()
         self._speech: asyncio.Task[None] | None = None  # her audio being sent now
@@ -316,10 +319,17 @@ class RealtimeCall:
             if still_theirs():
                 say(text)
 
-        async def bridge() -> None:
-            if still_theirs() and not first_line_at:  # only before she has said anything
+        bridging: list[asyncio.Task[None]] = []
+
+        async def bridge_if_slow() -> None:
+            await asyncio.sleep(self._bridge_delay)
+            if still_theirs() and not first_line_at:  # the answer still hasn't started
                 say(BRIDGES[self._bridges % len(BRIDGES)], part_of_answer=False)
                 self._bridges += 1
+
+        async def bridge() -> None:
+            if not bridging and still_theirs() and not first_line_at:
+                bridging.append(asyncio.create_task(bridge_if_slow()))
 
         try:
             text, end = await self._brain(speech, _TurnVoice(sentence, bridge))
@@ -329,6 +339,9 @@ class RealtimeCall:
             await self._plivo.close()
             self._done.set()
             return False
+        finally:
+            for task in bridging:  # the answer is in: a bridge now would only be late
+                task.cancel()
         stale = not self._turns.empty() and not end  # they kept talking
         self._ending = self._ending or end
         rest = "" if stale or self._cut_off else remainder(text, said)

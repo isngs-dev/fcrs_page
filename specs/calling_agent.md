@@ -415,3 +415,10 @@ the caller stays quiet after an answer (~8 s, the silence turn), she asks once
 (`script.ANYTHING_ELSE_AFTER_PAUSE`); a further silence ends the call politely. Silence after her own
 question is still "Sorry, I didn't catch that. Are you still there?". The invitation after the meeting is
 settled (`INVITE`) stays — it's said once.
+
+**R34 — no "Right."/"Okay." before a "No" (owner, 2026-11-16):** the bridge word said the moment an AI answer
+started ("Right.", "Okay.", "Mm-hm.") sounded like agreement before "No, we don't do that…". Now the bridge
+words are neutral (`BRIDGES = ("Let me check.", "One moment.", "Let me see.")`) and are said only when the
+answer hasn't started within `BRIDGE_DELAY` (1.2 s; Claude Haiku's first sentence is ~1.0 s), so most answers
+start straight away with none; a bridge is never said once the answer has begun. The voice prompt also tells
+the model to begin with the answer itself, never a filler word such as Sure, Right or Okay.

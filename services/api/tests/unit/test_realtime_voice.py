@@ -405,7 +405,7 @@ async def test_a_short_bridge_fills_the_wait_and_is_never_part_of_the_answer() -
         await speak.sentence("We run Google and Meta ads.")
         return "We run Google and Meta ads. And landing pages.", False
 
-    call, plivo, flux, voice = _call(brain, said)
+    call, plivo, flux, voice = _call(brain, said, bridge_delay=0.01)
     task = asyncio.create_task(call.run())
     plivo.push(event="start", start={"streamId": "s-1"})
     await _until(lambda: len(plivo.events("checkpoint")) == 1)
@@ -503,5 +503,33 @@ async def test_a_turn_with_nothing_to_say_keeps_the_silence_clock_running() -> N
     plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
     await _until(lambda: heard == ["", "", ""])
     assert len(plivo.events("playAudio")) == opening  # nothing spoken after the opening
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+
+def test_no_bridge_word_sounds_like_a_yes() -> None:
+    """Owner, 2026-11-16: "Right." / "Okay." before "No, we don't do that" sounded wrong."""
+    agreeing = {"right", "okay", "ok", "sure", "yes", "yeah", "mm-hm", "great", "absolutely"}
+    for bridge in realtime.BRIDGES:
+        assert not set(bridge.lower().strip(".!").split()) & agreeing, bridge
+
+
+async def test_a_fast_answer_starts_without_a_bridge() -> None:
+    """A bridge only covers a slow answer: one that starts in time is said straight away."""
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        await speak.bridge()
+        await speak.sentence("No, we don't do commercial roofs.")  # well within the delay
+        return "No, we don't do commercial roofs.", False
+
+    call, plivo, flux, voice = _call(brain, bridge_delay=0.5)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
+    flux.hear("EndOfTurn", "do you do commercial roofs")
+    await _until(lambda: len(plivo.events("checkpoint")) == 2)
+    await asyncio.sleep(0.6)  # past the delay: the bridge must never come late
+    assert voice.said == ["Hi, Rebecca here.", "No, we don't do commercial roofs."]
     plivo.push(event="stop")
     await asyncio.wait_for(task, 1)

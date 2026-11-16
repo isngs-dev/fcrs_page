@@ -796,3 +796,11 @@ async def test_the_model_is_told_not_to_end_every_answer_with_a_question() -> No
     _, generate = await _answer_with("Sure.")
     system = generate.call_args.args[0][0].content
     assert "Do not end your answer with a question" in system
+
+
+
+async def test_the_model_starts_with_the_answer_not_a_filler_word() -> None:
+    """Owner, 2026-11-16: "Sure..." before "No, we don't do that" sounded wrong."""
+    _, generate = await _answer_with("Sure.")
+    system = generate.call_args.args[0][0].content
+    assert "Begin with the answer itself" in system
