@@ -788,3 +788,11 @@ async def test_a_broad_question_gets_a_short_summary_not_a_miss() -> None:
     _, generate = await _answer_with("Sure.")
     system = generate.call_args.args[0][0].content
     assert "broad question" in system and "most useful points" in system
+
+
+
+async def test_the_model_is_told_not_to_end_every_answer_with_a_question() -> None:
+    """Owner, 2026-11-16: "Is there anything else you'd like to know?" after every answer."""
+    _, generate = await _answer_with("Sure.")
+    system = generate.call_args.args[0][0].content
+    assert "Do not end your answer with a question" in system

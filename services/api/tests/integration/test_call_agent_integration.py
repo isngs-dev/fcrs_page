@@ -1097,9 +1097,8 @@ async def test_asking_about_the_service_after_the_opening_gets_an_answer_not_a_t
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
     assert service.spoken_text(await _say(env, call_id, "yes")) == f"Great. {_QUESTION}"
     answer = service.spoken_text(await _say(env, call_id, "So I want to know about roofing thing."))
-    # the knowledge-base answer, then a follow-up: never dead air after an answer
-    assert answer.startswith("We charge two hundred dollars for that. ")
-    assert answer.endswith(script.FOLLOW_UPS) and answer.endswith("?")
+    # the knowledge-base answer, nothing tacked on (2026-11-16: too many "anything else?")
+    assert answer == "We charge two hundred dollars for that."  # no question tacked on
     assert answer != script.DISCOVERY_THANKS_LINE
 
 
@@ -1144,9 +1143,8 @@ async def test_a_question_about_booked_inspections_is_answered_not_a_new_booking
     await _say(env, call_id, "yes")
     await _say(env, call_id, "keep that")
     answer = service.spoken_text(await _say(env, call_id, "So do you guarantee book inspection?"))
-    # the knowledge-base answer, then a follow-up: never dead air after an answer
-    assert answer.startswith("We charge two hundred dollars for that. ")
-    assert answer.endswith(script.FOLLOW_UPS) and answer.endswith("?")
+    # the knowledge-base answer, nothing tacked on (2026-11-16: too many "anything else?")
+    assert answer == "We charge two hundred dollars for that."  # no question tacked on
     assert script.WHICH_TIME not in answer
 
 
@@ -1239,7 +1237,7 @@ async def test_questions_about_the_booked_call_are_answered_from_the_booking(
     await _say(env, call_id, "yes")
     await _say(env, call_id, "keep it")
     assert service.spoken_text(await _say(env, call_id, "How long would the call be?")
-                               ).startswith("It's a 30-minute call with our team. ")
+                               ) == "It's a 30-minute call with our team."
     facts = seen[-1] or ""
     assert "30 minutes" in facts and script.say_time(booked_at, "America/New_York") in facts
 
@@ -1917,5 +1915,26 @@ async def test_speaking_after_a_hold_carries_on_normally(env: dict[str, Any]) ->
     await _say(env, call_id, "")  # a quiet turn while they're away
     back = service.spoken_text(await _say(env, call_id, "Sorry, how much is a repair?"))
     assert back.startswith("We charge two hundred dollars for that.")
-    # back to the usual silence rule (no long quiet wait any more)
+    # back to the usual silence rule (no long quiet wait any more): a pause after an answer
+    # gets the one follow-up (R33)
+    assert service.spoken_text(await _say(env, call_id, "")) == script.ANYTHING_ELSE_AFTER_PAUSE
+
+
+
+async def test_after_an_answer_she_gives_them_space_and_asks_once_after_a_pause(
+        env: dict[str, Any]) -> None:
+    """Owner, 2026-11-16: "Is there anything else you'd like to know?" after every answer
+    left the caller no room to talk. Now: the answer alone; one follow-up only after a pause."""
+    call_id = await _answered(env, env["a"])
+    answer = service.spoken_text(await _say(env, call_id, "How much is a roof inspection?"))
+    assert answer == "We charge two hundred dollars for that."
+    pause = service.spoken_text(await _say(env, call_id, ""))
+    assert pause == script.ANYTHING_ELSE_AFTER_PAUSE
+    assert (await _say(env, call_id, "")).endswith("<Hangup/></Response>")
+
+
+async def test_silence_after_her_own_question_is_still_are_you_there(
+        env: dict[str, Any]) -> None:
+    call_id = await _answered(env, env["a"])
+    await _say(env, call_id, "I'd like to book a time")  # she asks which day and time
     assert service.spoken_text(await _say(env, call_id, "")) == script.SILENCE_LINE

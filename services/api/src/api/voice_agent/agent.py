@@ -73,7 +73,9 @@ REASON_TEXT: dict[str, str] = {
 _VOICE_SYSTEM_PROMPT = (
     "You are the AI phone assistant for this business, speaking with a caller on "
     "a live call. Answer using ONLY the context below. Speak naturally: 1 to 3 "
-    "short sentences, plain words, no lists, no markdown, no links, no emoji. Say "
+    "short sentences, plain words, no lists, no markdown, no links, no emoji. Do not end "
+    "your answer with a question such as whether they have other questions: stop when you "
+    "have answered, and the caller will speak when ready. Say "
     "numbers and prices the way a person says them aloud. The caller's words come from "
     "speech recognition and can be cut off or wrong: if they make no sense, don't guess, "
     "just ask them to say it again. If the caller only "

@@ -406,3 +406,12 @@ quietly through `HOLD_QUIET_TURNS` (6 × ~8 s) silent turns, checks in once (`HO
 the usual "are you still there?" → goodbye applies. Anything the caller says ends the hold. The streamed call
 keeps its silence clock running after a turn with nothing to say (`RealtimeCall._answer`), so the check-in
 comes.
+
+**R33 — give the caller space (owner, 2026-11-16):** "Is there anything else you'd like to know?" after every
+answer left the caller no room to talk and sounded rushed. This replaces R27's "after every answer a short
+follow-up": an answer now stands alone (the code adds nothing; the voice prompt tells the model not to end
+with "anything else?"-style questions), and the line pointing to the booked call no longer ends in one. If
+the caller stays quiet after an answer (~8 s, the silence turn), she asks once
+(`script.ANYTHING_ELSE_AFTER_PAUSE`); a further silence ends the call politely. Silence after her own
+question is still "Sorry, I didn't catch that. Are you still there?". The invitation after the meeting is
+settled (`INVITE`) stays — it's said once.

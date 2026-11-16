@@ -527,8 +527,12 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         state.silences += 1
         if state.silences >= 2:
             return await bye(script.GOODBYE_LINE, "completed")
+        if state.answered:  # a pause after an answer: now, once, ask if there's more
+            state.answered = False
+            return await say(script.ANYTHING_ELSE_AFTER_PAUSE)
         return await say(script.SILENCE_LINE)
     state.silences = 0
+    state.answered = False
     state.on_hold, state.hold_silences = False, 0  # they're back
     state.history.append(["user", speech])
     opening_question, state.question = state.question, None  # only right after the opening
@@ -814,9 +818,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         back = back or (script.on_your_call_line(datetime.fromisoformat(state.booked["at"]),
                                                  state.booked["tz"]) if held and state.booked
                         else "Would you like me to find a time with them?")
-    elif back is None and not reply.rstrip().endswith("?"):  # never dead air after an answer
-        asked = sum(1 for r, _ in state.history if r == "assistant")
-        back = script.FOLLOW_UPS[asked % len(script.FOLLOW_UPS)]
+    else:  # the answer alone: they speak when ready; a pause gets one follow-up
+        state.answered = back is None and not reply.rstrip().endswith("?")
     return await say(f"{reply} {back}" if back else reply)
 
 

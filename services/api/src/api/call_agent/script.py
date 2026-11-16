@@ -293,8 +293,9 @@ CLOSING = "Thanks for your time, and have a great day. Goodbye."
 # After the meeting is settled she opens the floor instead of hanging up (owner, 2026-11-14).
 INVITE = ("In the meantime, is there anything you'd like to know about our services, or "
           "anything I can clear up for you?")
-FOLLOW_UPS = ("Is there anything else you'd like to know?", "What else can I help you with?",
-              "Anything else I can clear up for you?")
+# Asked once, only after a pause that follows an answer -- never tacked onto every answer
+# (owner, 2026-11-16: the caller had no room to talk).
+ANYTHING_ELSE_AFTER_PAUSE = "Is there anything else you'd like to know?"
 CLOSE_OFFER_LINE = ("Before you go, our team can walk you through this in more detail on a "
                     "short call. Would you like me to find a time with them?")
 DISCOVERY_THANKS_LINE = ("Thanks, that's really helpful. Would you like me to find a time with "
@@ -354,8 +355,7 @@ def booked_goodbye_line(at: datetime, timezone: str) -> str:
 
 def on_your_call_line(at: datetime, timezone: str) -> str:
     """After a question she can't answer, with a call booked: where it will be answered."""
-    return (f"They'll go over it with you in detail on your call on {say_time(at, timezone)}. "
-            f"{FOLLOW_UPS[0]}")
+    return f"They'll go over it with you in detail on your call on {say_time(at, timezone)}."
 
 
 # ponytail: any "move"/"change" while a booking is held counts; the read-back catches a misfire.
@@ -617,6 +617,7 @@ class CallState:
     rescheduling: bool = False
     close_offered: bool = False  # the one "before you go, shall I book a call?" was asked
     on_hold: bool = False  # they asked her to hold: silence is waited out quietly
+    answered: bool = False  # her last turn answered a question (a pause then gets one follow-up)
     hold_silences: int = 0
 
     def to_json(self) -> dict[str, Any]:
@@ -626,7 +627,8 @@ class CallState:
                 "recording_started": self.recording_started, "question": self.question,
                 "history": self.history[-12:], "booked": self.booked,
                 "rescheduling": self.rescheduling, "close_offered": self.close_offered,
-                "on_hold": self.on_hold, "hold_silences": self.hold_silences}
+                "on_hold": self.on_hold, "hold_silences": self.hold_silences,
+                "answered": self.answered}
 
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
@@ -643,4 +645,5 @@ class CallState:
                    rescheduling=bool(data.get("rescheduling", False)),
                    close_offered=bool(data.get("close_offered", False)),
                    on_hold=bool(data.get("on_hold", False)),
-                   hold_silences=int(data.get("hold_silences", 0)))
+                   hold_silences=int(data.get("hold_silences", 0)),
+                   answered=bool(data.get("answered", False)))

@@ -257,7 +257,8 @@ def test_the_goodbye_and_the_miss_line_name_the_booked_call() -> None:
     assert when in script.booked_goodbye_line(at, "America/New_York")
     assert script.booked_goodbye_line(at, "America/New_York").endswith(script.CLOSING)
     miss = script.on_your_call_line(at, "America/New_York")
-    assert when in miss and miss.endswith("?")
+    # 2026-11-16: no "anything else?" tacked on -- the caller speaks when ready
+    assert when in miss and miss.endswith(".") and "anything else" not in miss.lower()
 
 
 def test_the_one_closing_offer_survives_the_saved_state() -> None:
