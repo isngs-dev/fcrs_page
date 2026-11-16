@@ -256,14 +256,17 @@ export function EmailConfigForm({ config }: { config: EmailConfig }) {
 
 export function CallConfigForm({ config }: { config: CallConfig }) {
   const { busy, note, save } = useSave();
+  // 2026-11-16: a client on Telnyx never sees Plivo's fields; its stored Plivo login (if any)
+  // is sent back unchanged so a save never wipes it.
+  const onTelnyx = config.phoneProvider === "telnyx";
 
   function submit(form: HTMLFormElement) {
     const data = new FormData(form);
-    const token = text(data, "auth_token");
+    const token = onTelnyx ? "" : text(data, "auth_token");
     void save(() =>
       saveCallAgentConfig({
         enabled: data.get("enabled") === "on",
-        plivo_auth_id: text(data, "auth_id"),
+        plivo_auth_id: onTelnyx ? config.plivoAuthId ?? "" : text(data, "auth_id"),
         from_number: text(data, "from_number"),
         transfer_number: optional(data, "transfer_number"),
         company_name: text(data, "company_name"),
@@ -287,7 +290,7 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
   }
 
   return (
-    <Card title="AI calling (Plivo)" help="Rebecca always says she's an AI assistant and, when recording, that the call is recorded.">
+    <Card title="AI calling" help="Rebecca always says she's an AI assistant and, when recording, that the call is recorded.">
       <form
         className="flex flex-col gap-3"
         onSubmit={(e) => {
@@ -296,13 +299,17 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
         }}
       >
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Plivo Auth ID">
-            <Input name="auth_id" required minLength={5} maxLength={64} defaultValue={config.plivoAuthId ?? ""} autoComplete="off" />
-          </Field>
-          <Field label={config.configured ? "Plivo Auth Token (saved — leave blank to keep)" : "Plivo Auth Token"}>
-            <Input name="auth_token" type="password" autoComplete="off" maxLength={200} required={!config.configured} />
-          </Field>
-          <Field label="Your Plivo number">
+          {onTelnyx ? null : (
+            <>
+              <Field label="Plivo Auth ID">
+                <Input name="auth_id" required minLength={5} maxLength={64} defaultValue={config.plivoAuthId ?? ""} autoComplete="off" />
+              </Field>
+              <Field label={config.configured ? "Plivo Auth Token (saved — leave blank to keep)" : "Plivo Auth Token"}>
+                <Input name="auth_token" type="password" autoComplete="off" maxLength={200} required={!config.configured} />
+              </Field>
+            </>
+          )}
+          <Field label="Your calling number">
             <Input name="from_number" type="tel" required defaultValue={config.fromNumber ?? ""} />
           </Field>
           <Field label="Transfer to (a person, optional)">
@@ -345,7 +352,14 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
           <Check name="recording" label="Record calls (announced first)" defaultChecked={config.recordingEnabled ?? true} />
           <Check name="inbound" label="Answer calls to this number" defaultChecked={config.inboundEnabled ?? true} />
         </div>
-        {config.inboundAnswerUrl ? (
+        {onTelnyx ? (
+          config.telnyxCallbackUrl ? (
+            <div className="rounded-[10px] bg-secondary px-4 py-3 text-[12px]">
+              <p className="font-semibold">In Telnyx, set your Voice API application&apos;s webhook URL to:</p>
+              <p className="break-all">{config.telnyxCallbackUrl}</p>
+            </div>
+          ) : null
+        ) : config.inboundAnswerUrl ? (
           <div className="rounded-[10px] bg-secondary px-4 py-3 text-[12px]">
             <p className="font-semibold">In Plivo, create an Application with these URLs (POST) and attach your number:</p>
             <p className="break-all">Answer URL: {config.inboundAnswerUrl}</p>

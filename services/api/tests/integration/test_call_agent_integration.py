@@ -1844,3 +1844,15 @@ def telnyx_module() -> Any:
     from api.call_agent import telnyx
 
     return telnyx
+
+
+async def test_call_settings_say_which_phone_network_the_client_is_on(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """2026-11-16: the console hides the Plivo-only fields for a client on Telnyx."""
+    client, a, b = env["client"], env["a"], env["b"]
+    _on_telnyx(env, monkeypatch, a)
+    on_telnyx = (await client.get("/admin/outreach/call-config", cookies=_cookie(a))).json()
+    assert on_telnyx["phone_provider"] == "telnyx"
+    assert on_telnyx["telnyx_callback_url"] == f"{_BASE}/public/call-agent/telnyx/callbacks"
+    on_plivo = (await client.get("/admin/outreach/call-config", cookies=_cookie(b))).json()
+    assert on_plivo["phone_provider"] == "plivo" and "telnyx_callback_url" not in on_plivo

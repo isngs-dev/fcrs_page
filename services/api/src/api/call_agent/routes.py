@@ -62,11 +62,18 @@ class CallConfigBody(BaseModel):
     missed_call_alert_emails: list[EmailStr] = Field(default_factory=list, max_length=5)
 
 
-def _config_out(config: repo.CallConfig | None) -> dict[str, Any]:
-    if config is None:
-        return {"configured": False}
+def _config_out(config: repo.CallConfig | None, tenant_id: str | None) -> dict[str, Any]:
+    """The call settings, plus which phone network this client's calls go through -- the
+    console shows only that network's fields (2026-11-16)."""
     base = (get_api_settings().public_api_base_url or "").rstrip("/")
-    return {"configured": True, **config.__dict__, "has_auth_token": True,
+    network: dict[str, Any] = (
+        {"phone_provider": "telnyx",
+         # paste into the Telnyx Voice API application's webhook URL (callbacks)
+         "telnyx_callback_url": f"{base}/public/call-agent/telnyx/callbacks"}
+        if telnyx.enabled_for(tenant_id) else {"phone_provider": "plivo"})
+    if config is None:
+        return {"configured": False, **network}
+    return {"configured": True, **config.__dict__, "has_auth_token": True, **network,
             # A7: paste these into the Plivo Application attached to from_number.
             "inbound_answer_url": f"{base}/public/call-agent/inbound/answer",
             "inbound_hangup_url": f"{base}/public/call-agent/inbound/hangup"}
@@ -81,7 +88,8 @@ def _mount(r: APIRouter, admin: Callable[..., Any], staff: Callable[..., Any]) -
     @r.get("/call-config")
     async def get_config(request: Request,
                          claims: AuthClaims = Depends(staff)) -> dict[str, Any]:  # noqa: B008
-        return _config_out(await repo.get_call_config(request.app.state.db, claims))
+        return _config_out(await repo.get_call_config(request.app.state.db, claims),
+                           claims.tenant_id)
 
     @r.put("/call-config")
     async def put_config(body: CallConfigBody, request: Request,
@@ -108,7 +116,7 @@ def _mount(r: APIRouter, admin: Callable[..., Any], staff: Callable[..., Any]) -
                            metadata={"token_changed": body.plivo_auth_token is not None,
                                      "recording_enabled": body.recording_enabled},
                            actor_context=get_platform_admin_actor(request))
-        return _config_out(await repo.get_call_config(db, claims))
+        return _config_out(await repo.get_call_config(db, claims), claims.tenant_id)
 
     @r.get("/calls")
     async def list_calls(request: Request, status: str | None = None, limit: int = 50,

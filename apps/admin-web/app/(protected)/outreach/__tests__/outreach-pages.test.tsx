@@ -162,6 +162,30 @@ describe("Outreach pages (A8)", () => {
     // 2026-11-16: who is emailed to call a lead back -- shown, so a save keeps them
     expect(html).toMatch(/name="missed_call_alert_emails"[^>]*value="kaustubh@example.com, sales@example.com"/);
     expect(html).not.toMatch(/name="auth_token"[^>]*value=/);
+    expect(html).toContain("Your calling number"); // 2026-11-16: no network name on the card
+    expect(html).not.toContain("AI calling (Plivo)");
+    expect(html).toContain("Plivo Auth ID"); // a client on Plivo still sets its Plivo login
+  });
+
+  it("a client on Telnyx sees no Plivo fields, only the Telnyx callback URL", async () => {
+    as("CLIENT_ADMIN");
+    backend({
+      "/settings": { enabled_channels: [], email_mode: "draft_for_review", outreach_paused: false, region_profile: "US",
+        call_window_start: "09:00", call_window_end: "20:00", max_touches_per_contact: 3, max_call_attempts: 2,
+        min_hours_between_touches: 48, first_inbound_email_delay_minutes: 5, monthly_cost_cap_micros: 150000000,
+        physical_address: null, inbound_auto_enabled: false, identity_gate_enabled: true,
+        email_window_start: "08:00", email_window_end: "18:00" },
+      "/email-config": { configured: false },
+      "/call-config": { configured: true, plivo_auth_id: "MA1", from_number: "+13055550188", has_auth_token: true,
+        phone_provider: "telnyx", telnyx_callback_url: "https://api.example.com/public/call-agent/telnyx/callbacks",
+        inbound_answer_url: "https://api.example.com/public/call-agent/inbound/answer" },
+      "/suppressions": [],
+    });
+    const html = renderToStaticMarkup(await SettingsPage());
+    expect(html).not.toContain("Plivo");
+    expect(html).not.toMatch(/name="auth_token"/);
+    expect(html).toMatch(/name="from_number"[^>]*value="\+13055550188"/);
+    expect(html).toContain("https://api.example.com/public/call-agent/telnyx/callbacks");
   });
 });
 
