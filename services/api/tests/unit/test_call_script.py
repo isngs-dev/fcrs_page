@@ -448,7 +448,7 @@ def test_a_voicemail_greeting_is_recognised(text: str, voicemail: bool) -> None:
      "Are you asking whether your father could be involved?"),
     ("Meta ads reach homeowners. Is there anything else you'd like to know?", None),
     ("Results vary. Would you like to know anything more about it?", None),
-    ("That's a good question for our team. Would you like me to find a time with them?", None),
+    (f"{script.MISS_LINES[0]} Would you like me to find a time with them?", None),
     ("Great, you're all set. " + script.INVITE, None),
     ("We charge two hundred dollars for that.", None),
 ])
@@ -533,3 +533,13 @@ def test_hold_state_survives_between_turns() -> None:
     back = script.CallState.from_json(state.to_json())
     assert (back.on_hold, back.hold_silences) == (True, 3)
     assert script.CallState.from_json({}).on_hold is False
+
+
+
+def test_the_fallback_miss_lines_say_the_same_thing_in_different_words() -> None:
+    """Owner, 2026-11-16: never the same script every time, but always the same idea."""
+    assert len(set(script.MISS_LINES)) >= 3
+    for line in script.MISS_LINES:
+        assert "marketing expert" in line and line.endswith(".")
+    assert [script.miss_line(n) for n in (1, 2, 3)] == list(script.MISS_LINES[:3])
+    assert script.miss_line(1) != script.miss_line(2)

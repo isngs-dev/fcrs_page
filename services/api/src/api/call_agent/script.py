@@ -283,7 +283,21 @@ TRANSFER_MISSED_LINE = ("Sorry, our team couldn't pick up right now. Someone wil
                         "soon. Goodbye.")
 TEAM_LINE = ("Someone from our team will get back to you shortly. Thanks for your time, goodbye.")
 TRANSFER_LINE = "Let me connect you with a member of our team. One moment, please."
-MISS_LINE = "That's a good question for our team."
+# When the model's own hand-off for the question isn't usable: the same idea, never the same
+# words twice in a row (owner, 2026-11-16).
+MISS_LINES = (
+    "That's a great question. I believe our marketing expert will be more precise in answering "
+    "that.",
+    "Good question. Our marketing expert will be able to give you a more precise answer on that.",
+    "That's a really good question, and our marketing expert can answer it more precisely than "
+    "I can.",
+)
+MISS_LINE = MISS_LINES[0]
+
+
+def miss_line(misses: int) -> str:
+    """The fallback hand-off for the ``misses``-th question she couldn't answer (1-based)."""
+    return MISS_LINES[(max(misses, 1) - 1) % len(MISS_LINES)]
 LINK_LINE = ("I'll have our team send you a link to pick a time that suits you. Thanks, goodbye.")
 NO_SLOTS_LINE = ("I don't see an open time right now, so I'll have our team reach out to find one. "
                  "Thanks, goodbye.")

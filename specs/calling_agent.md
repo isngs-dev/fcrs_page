@@ -422,3 +422,14 @@ words are neutral (`BRIDGES = ("Let me check.", "One moment.", "Let me see.")`) 
 answer hasn't started within `BRIDGE_DELAY` (1.2 s; Claude Haiku's first sentence is ~1.0 s), so most answers
 start straight away with none; a bridge is never said once the answer has begun. The voice prompt also tells
 the model to begin with the answer itself, never a filler word such as Sure, Right or Okay.
+
+**R35 — "our marketing expert will be more precise" (owner, 2026-11-16):** a question she can't answer from
+the knowledge base, or one with nothing to do with the business, now gets a hand-off in this spirit: "That's
+a great question. I believe our marketing expert will be more precise in answering that." — worded for the
+question, never the same script every time. The voice prompt asks the model for `NO_ANSWER_FOUND |` plus one
+or two warm sentences naming the question's topic; `voice_agent.agent._spoken_handoff` keeps it only if it is
+4–40 words, hands off to an expert/team, and carries no booking, time, price, number, promise or anything the
+output guardrails block (returned as `MissReply`, still a miss). Otherwise a rotating code fallback
+(`script.MISS_LINES`, `miss_line(n)`: same idea, different words, never twice in a row). The next step stays
+code-owned (the booked call, or the offer to find a time). The website's "Call us" agent is unchanged
+(`handoff=False`).

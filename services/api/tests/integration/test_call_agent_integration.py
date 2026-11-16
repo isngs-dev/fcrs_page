@@ -140,7 +140,7 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, Any]]:
 
     async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
                      about_caller: Any = None, can_book: bool = False,
-                     assistant: Any = None) -> str | None:
+                     assistant: Any = None, **_: Any) -> str | None:
         return None if "warranty" in question else "We charge two hundred dollars for that."
 
     monkeypatch.setattr(service, "answer_from_knowledge", answer)
@@ -1224,7 +1224,7 @@ async def test_questions_about_the_booked_call_are_answered_from_the_booking(
 
     async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
                      about_caller: Any = None, can_book: bool = False,
-                     assistant: Any = None) -> str | None:
+                     assistant: Any = None, **_: Any) -> str | None:
         seen.append(about_caller)
         return "It's a 30-minute call with our team."
 
@@ -1254,8 +1254,11 @@ async def test_with_a_call_booked_unanswered_questions_go_to_the_team_not_a_hand
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
     await _say(env, call_id, "yes")
     await _say(env, call_id, "keep it")
-    for question in ("Is there a warranty on the ads?", "And a warranty on the landing page?"):
-        assert script.MISS_LINE in service.spoken_text(await _say(env, call_id, question))
+    said = [service.spoken_text(await _say(env, call_id, question))
+            for question in ("Is there a warranty on the ads?",
+                             "And a warranty on the landing page?")]
+    assert all(any(line in s for line in script.MISS_LINES) for s in said)
+    assert said[0] != said[1]  # 2026-11-16: never the same line twice in a row
     after = await _say(env, call_id, "Okay.")
     assert service.spoken_text(after) == "Great! What questions can I answer?"
     assert not after.endswith("<Hangup/></Response>")
@@ -1294,7 +1297,8 @@ async def test_listed_tenants_calls_answer_with_the_server_claude_setting(
 
     async def answer(db: Any, claims: Any, question: str, history: Any, *, model: Any = None,
                      about_caller: Any = None, can_book: bool = False,
-                     llm_config: Any = None, assistant: Any = None) -> str | None:
+                     llm_config: Any = None, assistant: Any = None,
+                     **_: Any) -> str | None:
         used.append((claims.tenant_id, llm_config))
         return "We charge two hundred dollars for that."
 
@@ -1938,3 +1942,23 @@ async def test_silence_after_her_own_question_is_still_are_you_there(
     call_id = await _answered(env, env["a"])
     await _say(env, call_id, "I'd like to book a time")  # she asks which day and time
     assert service.spoken_text(await _say(env, call_id, "")) == script.SILENCE_LINE
+
+
+
+async def test_a_miss_uses_the_models_own_hand_off_for_that_question(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.voice_agent.agent import MissReply
+
+    handoff = ("That's a great question about storm insurance. I believe our marketing expert "
+               "will be more precise in answering that.")
+    seen: list[Any] = []
+
+    async def answer(db: Any, claims: Any, question: str, *args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("handoff"))
+        return MissReply(handoff)
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    call_id = await _answered(env, env["a"])
+    said = service.spoken_text(await _say(env, call_id, "Does storm insurance cover this?"))
+    assert said == f"{handoff} Would you like me to find a time with them?"
+    assert seen[-1] is True

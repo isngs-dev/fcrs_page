@@ -84,8 +84,11 @@ _VOICE_SYSTEM_PROMPT = (
     "broad question about the business or its service (what else they should know, or to "
     "tell them more), give a short summary of the most useful points from the context. If "
     "the context "
-    "does not contain the answer, reply with exactly NO_ANSWER_FOUND and nothing "
-    "else. Never guess, never promise, never say anything is booked, and never "
+    "does not contain the answer, or the question has nothing to do with the business, reply "
+    "with exactly NO_ANSWER_FOUND | followed by one or two short sentences that warmly "
+    "acknowledge what they asked (name its topic) and say our marketing expert will be able "
+    "to answer it more precisely -- in your own words, offering no call, time or price. "
+    "Never guess, never promise, never say anything is booked, and never "
     "invent prices, dates or commitments."
 )
 _NO_ANSWER = "NO_ANSWER_FOUND"
@@ -278,10 +281,37 @@ def _who_prompt(assistant: str | None) -> str:
             "never say you have no name. ")
 
 
+class MissReply(str):
+    """Her own hand-off for a question the knowledge base can't answer ("That's a great
+    question about X -- our marketing expert will be more precise on that"), owner 2026-11-16.
+    Still a miss for the turn logic: it adds the next step (the booked call, or an offer)."""
+
+
+# A hand-off is words of acknowledgement only: no booking, time, price or promise -- the code
+# owns those. It must actually hand the question to someone.
+_HANDOFF_FORBIDDEN = re.compile(
+    r"\b(?:book\w*|schedul\w*|appointment\w*|call you|email\w*|send\w*|tomorrow|today"
+    r"|tonight|promis\w*|guarantee\w*|free)\b|\$|\d", re.I)
+_HANDOFF_TO = re.compile(r"\b(?:expert|team|specialist)\b", re.I)
+
+
+def _spoken_handoff(reply: str, context: str) -> str | None:
+    """The model's hand-off after ``NO_ANSWER_FOUND |``, if it follows the rules."""
+    text = " ".join(reply.split(_NO_ANSWER, 1)[1].lstrip(" |:-").split())
+    if not (4 <= len(text.split()) <= 40) or not _HANDOFF_TO.search(text):
+        return None
+    if _HANDOFF_FORBIDDEN.search(text) or _NO_ANSWER in text or BOOK_A_TIME in text:
+        return None
+    if not scan_output(text).ok or unstated_commitments(text, context):
+        return None
+    return text
+
+
 async def answer_from_knowledge(
     db: Database, claims: AuthClaims, question: str, history: list[ChatMessage],
     *, model: str | None = None, about_caller: str | None = None, can_book: bool = False,
     llm_config: LLMConfig | None = None, assistant: str | None = None,
+    handoff: bool = False,
 ) -> str | None:
     """A short spoken answer grounded in the tenant's knowledge base, or ``None``
     when the knowledge base doesn't hold it (or the reply fails the output
@@ -341,6 +371,12 @@ async def answer_from_knowledge(
         miss = f"empty reply (stop_reason={stop_reason})"
     elif _NO_ANSWER in reply:
         miss = "not in the knowledge base"
+        # ``handoff``: the calling agent says her own words for this question (2026-11-16)
+        written = _spoken_handoff(reply, context) if handoff else None
+        if written:
+            _log.info("voice agent could not answer", extra={
+                "event": "voice_agent_miss", "reason": f"{miss}, own hand-off"})
+            return MissReply(written)
     elif not scan_output(reply).ok:
         miss = "reply failed the output guardrails"
     elif unstated_commitments(reply, context):  # A9 H4: no spoken price/promise not in the KB

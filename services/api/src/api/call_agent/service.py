@@ -65,7 +65,7 @@ from api.scheduling.repository import (
     list_booked,
 )
 from api.scheduling.slots import compute_slots
-from api.voice_agent.agent import BOOK_A_TIME, answer_from_knowledge, opening_lines
+from api.voice_agent.agent import BOOK_A_TIME, MissReply, answer_from_knowledge, opening_lines
 from api.voice_agent.plivo import ANSWER_WAIT, OPENING_WAIT, listen, speak
 
 TELNYX_RECORDING = "telnyx:"  # a Telnyx recording's stored "URL": its id
@@ -797,6 +797,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         reply = await answer_from_knowledge(db, claims, query, history,
                                             assistant=f"Rebecca, the AI assistant at "
                                                       f"{config.company_name}",
+                                            handoff=True,
                                             model=None if calls else config.voice_model,
                                             about_caller=about, can_book=not held,
                                             **({"llm_config": calls} if calls else {}))
@@ -809,9 +810,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         return await pick_time()
     back = (script.WHICH_TIME if state.stage == "asking_time"
             else final_check() if state.stage == "confirming" else None)
-    if reply is None:
-        state.misses += 1
-        reply = script.MISS_LINE
+    if reply is None or isinstance(reply, MissReply):
+        state.misses += 1  # her own words for this question, else a rotating fallback
+        reply = str(reply) if reply else script.miss_line(state.misses)
         if has_booking and session.contact_id:  # the team sees it before their call
             await memory.remember(db, claims, session.contact_id, channel="call", kind="asked",
                                   text=speech)

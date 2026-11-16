@@ -159,7 +159,8 @@ def test_the_time_limit_hands_over_after_answering() -> None:
 
 
 async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_book: bool = False,
-                       assistant: str | None = None) -> tuple[str | None, AsyncMock]:
+                       assistant: str | None = None, handoff: bool = False,
+                       ) -> tuple[str | None, AsyncMock]:
     from api.llm.provider import Completion
 
     generate = AsyncMock(return_value=Completion(
@@ -176,7 +177,8 @@ async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_b
         patch("api.voice_agent.agent.provider_for", return_value=provider),
     ):
         reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [],  # type: ignore[arg-type]
-                                            can_book=can_book, assistant=assistant)
+                                            can_book=can_book, assistant=assistant,
+                                            handoff=handoff)
     return reply, generate
 
 
@@ -804,3 +806,37 @@ async def test_the_model_starts_with_the_answer_not_a_filler_word() -> None:
     _, generate = await _answer_with("Sure.")
     system = generate.call_args.args[0][0].content
     assert "Begin with the answer itself" in system
+
+
+
+_HANDOFF = ("That's a great question about insurance claims. I believe our marketing expert "
+            "will be more precise in answering that.")
+
+
+async def test_a_question_she_cannot_answer_gets_her_own_contextual_hand_off() -> None:
+    """Owner, 2026-11-16: "That's a great question, I believe our marketing expert will be more
+    precise in answering that" -- worded for THIS question, not the same line every time."""
+    from api.voice_agent.agent import MissReply
+
+    reply, generate = await _answer_with(f"NO_ANSWER_FOUND | {_HANDOFF}", handoff=True)
+    assert isinstance(reply, MissReply) and reply == _HANDOFF
+    system = generate.call_args.args[0][0].content
+    assert "NO_ANSWER_FOUND |" in system and "marketing expert" in system
+
+
+@pytest.mark.parametrize("handoff_text", [
+    "I'll book you a call with our marketing expert tomorrow.",  # a promise / booking offer
+    "Our marketing expert can schedule that with you.",  # a word form: "schedule"
+    "Our marketing expert charges $500 for that.",  # a price the knowledge base doesn't state
+    "That's a great question.",  # doesn't hand off to anyone
+    "",  # nothing after the sentinel
+])
+async def test_a_hand_off_that_breaks_the_rules_falls_back_to_the_code(handoff_text: str) -> None:
+    reply, _ = await _answer_with(f"NO_ANSWER_FOUND | {handoff_text}", handoff=True)
+    assert reply is None  # the turn logic says one of its own lines instead
+
+
+async def test_without_hand_offs_a_miss_is_still_none() -> None:
+    """The website's "Call us" agent: unchanged."""
+    reply, _ = await _answer_with(f"NO_ANSWER_FOUND | {_HANDOFF}")
+    assert reply is None
