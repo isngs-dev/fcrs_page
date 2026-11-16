@@ -543,3 +543,31 @@ def test_the_fallback_miss_lines_say_the_same_thing_in_different_words() -> None
         assert "marketing expert" in line and line.endswith(".")
     assert [script.miss_line(n) for n in (1, 2, 3)] == list(script.MISS_LINES[:3])
     assert script.miss_line(1) != script.miss_line(2)
+
+
+
+@pytest.mark.parametrize(("text", "why"), [
+    # Live 2026-11-16 (Telnyx): "I don't have the details of that earlier call in front of me".
+    ("You had called me.", True),
+    ("you called me", True),
+    ("Why are you calling?", True),
+    ("Why did you call me?", True),
+    ("What is this call regarding?", True),
+    ("What's this about?", True),
+    ("Can you call me back tomorrow?", False),  # a callback, not "why"
+    ("Why did you call it Roof Engine?", False),
+    ("What is this service about?", False),  # a question about the business
+])
+def test_why_are_you_calling_is_recognised(text: str, why: bool) -> None:
+    assert (script.classify(text) == "why") is why
+
+
+def test_why_she_is_calling_names_the_real_reason() -> None:
+    from datetime import UTC, datetime
+
+    at = datetime(2026, 11, 17, 15, 0, tzinfo=UTC)
+    booked = script.why_line("Acme Roofing", at, "America/New_York")
+    assert booked.startswith("Yes, I'm calling about your call with our team on Tuesday, "
+                             "November 17 at 10 AM Eastern time")
+    plain = script.why_line("Acme Roofing", None, None)
+    assert "Acme Roofing" in plain and "enquiry" in plain and "{" not in plain

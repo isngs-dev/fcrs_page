@@ -175,3 +175,47 @@ async def test_erase_aborts_before_deleting_anything_when_plivo_fails(env: dict[
     assert r.status_code == 502 and r.json()["error_code"] == "RECORDING_DELETE_FAILED"
     assert await db.fetchval("SELECT count(*) FROM call_sessions WHERE tenant_id = $1", a) == 1
     assert await db.fetchval("SELECT count(*) FROM email_messages WHERE tenant_id = $1", a) == 1
+
+
+
+# -- Recordings are deleted where they were made (2026-11-16) -----------------------------------
+
+
+async def test_a_client_moved_to_telnyx_still_erases_its_old_plivo_recordings(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-16: Roof-Engine moved Plivo -> Telnyx; erasing a contact sent its old Plivo
+    recordings to Telnyx, which can't delete them, and nothing was erased."""
+    from tests.integration.test_call_agent_integration import _on_telnyx
+
+    db, client, plivo, a = env["db"], env["client"], env["plivo"], env["a"]
+    contact_id, plivo_call = await _contact_with_everything(env)  # a Plivo recording: rec-1
+    telnyx, _ = _on_telnyx(env, monkeypatch, a)
+    await db.execute(
+        "INSERT INTO call_sessions (tenant_id, call_id, direction, contact_id, from_e164, to_e164, "
+        "status, recording_id, recording_url, recording_consent) VALUES ($1, 'tx-call', "
+        "'outbound', $2, '+17865550000', '+12025550123', 'completed', 'rec-t', 'telnyx:rec-t', "
+        "true)", a, contact_id)
+
+    r = await client.delete(f"/admin/outreach/contacts/{contact_id}/agent-data",
+                            cookies=_cookie(a))
+    assert r.status_code == 200, r.text
+    assert r.json()["recordings_deleted"] == 2
+    assert ("delete_recording", {"recording_id": "rec-1"}) in plivo.calls  # at Plivo
+    assert ("delete_recording", {"recording_id": "rec-t"}) in telnyx.calls  # at Telnyx
+    assert not [c for c in telnyx.calls if c == ("delete_recording", {"recording_id": "rec-1"})]
+    assert plivo_call
+
+
+async def test_retention_deletes_each_recording_where_it_was_made(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.integration.test_call_agent_integration import _on_telnyx
+
+    db, plivo, a = env["db"], env["plivo"], env["a"]
+    await _recorded_call(env, a, "rec-old", days_old=100)  # made on Plivo
+    telnyx, _ = _on_telnyx(env, monkeypatch, a)  # ...then the client moved to Telnyx
+    tx = await _recorded_call(env, a, "rec-tx", days_old=100)
+    await db.execute("UPDATE call_sessions SET recording_url = 'telnyx:rec-tx' WHERE call_id = $1",
+                     tx)
+    assert await call_service.purge_expired_recordings(db) == {"deleted": 2, "failed": 0}
+    assert [kw["recording_id"] for n, kw in plivo.calls if n == "delete_recording"] == ["rec-old"]
+    assert [kw["recording_id"] for n, kw in telnyx.calls if n == "delete_recording"] == ["rec-tx"]

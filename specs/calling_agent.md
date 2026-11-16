@@ -433,3 +433,17 @@ output guardrails block (returned as `MissReply`, still a miss). Otherwise a rot
 (`script.MISS_LINES`, `miss_line(n)`: same idea, different words, never twice in a row). The next step stays
 code-owned (the booked call, or the offer to find a time). The website's "Call us" agent is unchanged
 (`handoff=False`).
+
+**R36 — "you called me" gets the real reason (2026-11-16, Telnyx call):** "You had called me." got "I don't
+have the details of that earlier call in front of me…" — the model wasn't told she is the one calling, or why.
+Now "you called me / why are you calling / what's this (call) about" is answered by the code
+(`script.why_line`): with a booked call, "Yes, I'm calling about your call with our team on <when>, to make
+sure that time still works for you and to answer any questions before then."; otherwise "Yes, I'm calling from
+<company> to follow up on your recent enquiry and to answer any questions you have." Callback requests ("call
+me back") and questions about the business ("what is this service about?") are not caught.
+
+**D-T6 amended — recordings are deleted where they were made (2026-11-16):** erasing a contact on a client
+that moved from Plivo to Telnyx sent its old Plivo recordings to Telnyx, which can't delete them, so the erase
+(all-or-nothing) erased nothing. `service.recording_provider` now picks the provider from the recording
+itself — `telnyx:<id>` / `pending:<call>` → Telnyx, anything else → Plivo with the tenant's stored Plivo login
+— for both the contact erase and the retention purge. No longer a known limitation.

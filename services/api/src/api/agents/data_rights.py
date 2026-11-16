@@ -18,7 +18,7 @@ from api.agents.executors import TransientExecutorError
 from api.agents.outreach_repository import delete_plans_for_contact, list_plans_for_contact
 from api.agents.repository import list_consents, suppressions_for_values
 from api.call_agent import repository as call_repo
-from api.call_agent.service import telephony_for
+from api.call_agent.service import recording_provider
 from api.contacts.repository import get_contact, list_identities
 from api.email_agent import repository as email_repo
 
@@ -79,9 +79,10 @@ async def erase_agent_data(db: Database, claims: AuthClaims, contact_id: str) ->
         try:
             if config is None:
                 raise RecordingDeleteFailedError()
-            provider = await telephony_for(db, str(claims.tenant_id), config)
-            for rec in recordings:
+            for rec in recordings:  # each at the provider that made it (2026-11-16)
                 if rec["recording_id"]:
+                    provider = await recording_provider(db, str(claims.tenant_id), config,
+                                                        rec["recording_url"], rec["recording_id"])
                     await provider.delete_recording(recording_id=rec["recording_id"])
         except (AppException, TransientExecutorError) as exc:
             raise RecordingDeleteFailedError() from exc

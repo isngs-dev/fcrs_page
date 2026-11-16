@@ -380,7 +380,7 @@ async def session_by_call_uuid(db: Database, claims: AuthClaims, call_uuid: str
 async def expired_recordings_system(db: Database, *, limit: int = 200) -> list[dict[str, Any]]:
     """Recordings older than their tenant's retention (system-scoped, Beat-driven)."""
     rows = await db.fetch(
-        "SELECT s.tenant_id, s.call_id, s.recording_id FROM call_sessions s "
+        "SELECT s.tenant_id, s.call_id, s.recording_id, s.recording_url FROM call_sessions s "
         "JOIN tenant_call_agent_configs c USING (tenant_id) "
         "WHERE s.recording_url IS NOT NULL "
         "AND s.created_at < now() - make_interval(days => c.recording_retention_days) "
@@ -392,7 +392,7 @@ async def contact_recordings(db: Database, claims: AuthClaims, contact_id: str
                              ) -> list[dict[str, Any]]:
     _reject_global(claims)
     rows = await db.fetch(
-        "SELECT call_id, recording_id FROM call_sessions WHERE tenant_id = $1 "
+        "SELECT call_id, recording_id, recording_url FROM call_sessions WHERE tenant_id = $1 "
         "AND contact_id = $2 AND recording_url IS NOT NULL", claims.tenant_id, contact_id)
     return [dict(r) for r in rows]
 

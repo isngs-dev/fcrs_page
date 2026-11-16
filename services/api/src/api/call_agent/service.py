@@ -104,6 +104,20 @@ def telnyx_for(tenant_id: str) -> TelnyxTelephony:
     return telnyx_factory(str(s.telnyx_api_key), str(s.telnyx_connection_id))
 
 
+async def recording_provider(db: Database, tenant_id: str, config: repo.CallConfig,
+                             recording_url: str | None, recording_id: str | None
+                             ) -> TelephonyProvider:
+    """The provider that MADE this recording -- not the tenant's current one (live 2026-11-16:
+    a client moved from Plivo to Telnyx couldn't erase its old Plivo recordings)."""
+    if (recording_url or "").startswith(TELNYX_RECORDING) or (recording_id or "").startswith(
+            "pending:"):
+        return telnyx_for(tenant_id)
+    token = await repo.get_auth_token(db, tenant_id)
+    if not token:
+        raise ValidationError("The Plivo auth token is missing.", code="CALL_NOT_READY")
+    return telephony_factory(config.plivo_auth_id, token)
+
+
 async def telephony_for(db: Database, tenant_id: str, config: repo.CallConfig
                         ) -> TelephonyProvider:
     if telnyx.enabled_for(tenant_id):  # recordings (start/stop/delete/fetch) go there too
@@ -149,7 +163,8 @@ async def purge_expired_recordings(db: Database, *, limit: int = 200) -> dict[st
             if row["recording_id"]:
                 if config is None:
                     raise ValidationError("No call config.", code="CALL_NOT_READY")
-                provider = await telephony_for(db, row["tenant_id"], config)
+                provider = await recording_provider(db, row["tenant_id"], config,
+                                                    row["recording_url"], row["recording_id"])
                 await provider.delete_recording(recording_id=row["recording_id"])
         except (AppException, TransientExecutorError) as exc:
             counts["failed"] += 1
@@ -613,6 +628,11 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if kind == "hold":  # no follow-up question: they're stepping away for a moment
         state.on_hold, state.hold_silences = True, 0
         return await say(script.HOLD_LINE)
+    if kind == "why":  # the real reason for the call, from the code
+        return await say(script.why_line(
+            config.company_name,
+            datetime.fromisoformat(state.booked["at"]) if state.booked else None,
+            state.booked["tz"] if state.booked else None))
     if kind == "who":  # her name and the business, from the code -- never the model's guess
         return await say(script.who_line(config.company_name))
     if kind == "callback":

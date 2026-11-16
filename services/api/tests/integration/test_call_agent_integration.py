@@ -1962,3 +1962,32 @@ async def test_a_miss_uses_the_models_own_hand_off_for_that_question(
     said = service.spoken_text(await _say(env, call_id, "Does storm insurance cover this?"))
     assert said == f"{handoff} Would you like me to find a time with them?"
     assert seen[-1] is True
+
+
+
+async def test_you_called_me_gets_the_real_reason_for_the_call(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-16: "You had called me." -> "I don't have the details of that earlier call"."""
+    asked: list[str] = []
+
+    async def answer(db: Any, claims: Any, question: str, *args: Any, **kwargs: Any) -> Any:
+        asked.append(question)
+        return "We charge two hundred dollars for that."
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    call_id = await _answered(env, env["a"])
+    asked.clear()
+    said = service.spoken_text(await _say(env, call_id, "You had called me."))
+    assert said == script.why_line("Acme Roofing", None, None)
+    assert asked == []  # the code says why -- never the model's guess
+
+    booked_at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(9),
+                                 tzinfo=_NY)
+    await _form_booking(env, env["b"], booked_at)
+    call_b, _ = await _dial(env, env["b"])
+    await _webhook(env, call_b, "answer", {"CallUUID": "uuid-2"}, token=_TOKENS["b"])
+    turn = await _webhook(env, call_b, "turn", {"Speech": "Why are you calling?",
+                                                "CallUUID": "uuid-2"}, token=_TOKENS["b"])
+    assert turn.status_code == 200, turn.text
+    said_b = service.spoken_text(str(turn.text))
+    assert said_b == script.why_line("Acme Roofing", booked_at, "America/New_York")

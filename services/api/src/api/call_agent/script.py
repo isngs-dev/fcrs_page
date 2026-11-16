@@ -16,7 +16,7 @@ from email_validator import EmailNotValidError, validate_email
 
 from api.voice_agent.agent import _GOODBYE_RE, _PERSON_RE
 
-Kind = Literal["recording_objection", "opt_out", "wrong_number", "robot", "who", "hold",
+Kind = Literal["recording_objection", "opt_out", "wrong_number", "robot", "who", "why", "hold",
                "callback",
                "person",
                "goodbye", "not_interested", "book", "yes", "no", "other"]
@@ -40,6 +40,12 @@ _HOLD = re.compile(r"\b(?:hold|hang) on\b|\bhold for\b"
                    r"|\b(?:one|1|just a|wait a|give me a) (?:sec|second|2nd|minute|moment)\b"
                    r"|^\W*(?:one|1) (?:sec|second|2nd)\b", re.I)
 _ASKS_SOMETHING = re.compile(r"\b(?:what|how|why|when|where|which|much|price|cost|need)\b", re.I)
+# "You called me." / "Why are you calling?" / "What's this about?" -- answered by the code
+# with the real reason (live 2026-11-16: the model talked about "that earlier call").
+_WHY = re.compile(r"\byou (?:had |have |just )?called me\b"
+                  r"|\bwhy (?:are|were|did) you (?:calling|call|ring)\b(?! it)"
+                  r"|\bwhat(?:'s| is) (?:this|the) call (?:about|regarding|for)\b"
+                  r"|\bwhat(?:'s| is) this (?:about|regarding)\b", re.I)
 _CALLBACK = re.compile(
     r"\bcall (?:me )?(?:back|later|another time|tomorrow|next week)\b"
     r"|\b(?:not a good time|bad time|busy right now|i'?m busy|in a meeting|can'?t talk"
@@ -204,6 +210,8 @@ def classify(text: str) -> Kind:
         return "robot"
     if _WHO.search(text):
         return "who"
+    if _WHY.search(text):
+        return "why"
     # "Hold on, how much is a repair?" asks something: that's a question, not a hold.
     if _HOLD.search(text) and not _ASKS_SOMETHING.search(text) and len(text.split()) <= 9:
         return "hold"
@@ -261,6 +269,16 @@ def whisper(*, caller: str, asked: str | None) -> str:
 
 
 ROBOT_LINE = "Yes, I'm an AI assistant. I can answer questions or book a time with our team."
+
+
+def why_line(company: str, booked_at: datetime | None, timezone: str | None) -> str:
+    """Why she is calling, from the facts: their booked call, else their enquiry."""
+    if booked_at is not None and timezone:
+        return (f"Yes, I'm calling about your call with our team on "
+                f"{say_time(booked_at, timezone)}, to make sure that time still works for you and "
+                "to answer any questions before then.")
+    return (f"Yes, I'm calling from {company} to follow up on your recent enquiry and to answer "
+            "any questions you have.")
 
 
 def who_line(company: str) -> str:
