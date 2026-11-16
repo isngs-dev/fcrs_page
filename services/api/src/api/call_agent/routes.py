@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import httpx
@@ -16,13 +17,13 @@ from common.errors import NotFoundError, ValidationError
 from common.logging import get_logger
 from common.phone import to_e164
 from fastapi import APIRouter, Depends, Request, Response, WebSocket
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from api.agents.dispatch import system_claims
 from api.agents.repository import contact_visible
 from api.audit.repository import record_audit
 from api.auth.dependencies import get_platform_admin_actor, require_roles, resolve_tenant_scope
-from api.call_agent import realtime, script, service
+from api.call_agent import realtime, script, service, telnyx
 from api.call_agent import repository as repo
 from api.config import get_api_settings
 from api.voice_agent.agent import SPEAK_AS_WRITTEN
@@ -57,6 +58,8 @@ class CallConfigBody(BaseModel):
     recording_enabled: bool = True
     inbound_enabled: bool = True  # A7: answer calls to from_number
     recording_retention_days: int = Field(default=90, ge=1, le=3650)  # A9 H8
+    # Emailed "please call this lead" after each call they didn't pick up (2026-11-16).
+    missed_call_alert_emails: list[EmailStr] = Field(default_factory=list, max_length=5)
 
 
 def _config_out(config: repo.CallConfig | None) -> dict[str, Any]:
@@ -84,6 +87,8 @@ def _mount(r: APIRouter, admin: Callable[..., Any], staff: Callable[..., Any]) -
     async def put_config(body: CallConfigBody, request: Request,
                          claims: AuthClaims = Depends(admin)) -> dict[str, Any]:  # noqa: B008
         values = body.model_dump(exclude={"plivo_auth_token"})
+        values["missed_call_alert_emails"] = sorted(
+            {str(e).strip().lower() for e in body.missed_call_alert_emails})
         for key in ("from_number", "transfer_number"):
             if values[key]:
                 values[key] = to_e164(values[key])
@@ -192,6 +197,9 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
     claims = system_claims(session.tenant_id)
     await websocket.accept()
     settings = get_api_settings()
+    on_telnyx = telnyx.enabled_for(session.tenant_id)
+    if on_telnyx:  # the stream may beat the "answered" event: the opening can't wait for it
+        await service.answered(db, claims, session)
     turns = await repo.list_turns(db, claims, call_id)
     opening = next((t["text"] for t in turns if t["speaker"] == "rebecca"), "")
     recorded = {"opening": False}
@@ -232,8 +240,61 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
         voice = realtime.elevenlabs_voice(client, str(settings.elevenlabs_api_key),
                                           str(settings.elevenlabs_voice_id),
                                           settings.elevenlabs_model)
-        await realtime.RealtimeCall(websocket, listener, voice, brain, opening=opening,
-                                    record=record).run()
+        socket = telnyx.TelnyxSocket(websocket) if on_telnyx else websocket
+        try:
+            await realtime.RealtimeCall(socket, listener, voice, brain, opening=opening,
+                                        record=record).run()
+        finally:
+            if on_telnyx:  # closing the stream doesn't end a Telnyx call: hang up ourselves
+                await _telnyx_hangup(session)
+
+
+async def _telnyx_hangup(session: repo.CallSessionRow) -> None:
+    if not session.provider_call_uuid:
+        return
+    try:
+        await service.telnyx_for(session.tenant_id).hangup(call_uuid=session.provider_call_uuid)
+    except Exception as exc:  # noqa: BLE001 -- already over (they hung up first) or an outage:
+        # the call's time limit ends it either way; say so in the logs.
+        _log.warning("telnyx hangup not sent", extra={
+            "event": "telnyx_hangup_failed", "reason": type(exc).__name__})
+
+
+@public_router.post("/telnyx/calls/{call_id}/events")
+async def telnyx_events(call_id: str, request: Request) -> Response:
+    """Telnyx's events for one call (T2). Our ticket proves the call id is ours, Telnyx's
+    Ed25519 signature proves the sender; every failure is the same 401. Events for another
+    call, repeats and unknown types are acknowledged and ignored."""
+    if not service.verify_ticket(call_id, request.query_params.get("ticket")):
+        raise telnyx.TelnyxSignatureInvalidError()
+    db = request.app.state.db
+    session = await repo.get_session_system(db, call_id)
+    if session is None or not telnyx.enabled_for(session.tenant_id):
+        raise telnyx.TelnyxSignatureInvalidError()
+    body = await request.body()
+    telnyx.verify_signature(public_key=str(get_api_settings().telnyx_public_key), body=body,
+                            signature=request.headers.get(telnyx.SIGNATURE_HEADER),
+                            timestamp=request.headers.get(telnyx.TIMESTAMP_HEADER))
+    event = telnyx.parse_event(body)
+    if event.kind == "other" or event.call_control_id != session.provider_call_uuid:
+        return Response(status_code=200)
+    claims = system_claims(session.tenant_id)
+    if event.kind == "answered":
+        await service.answered(db, claims, session)
+    elif event.kind == "machine":
+        await service.on_machine(db, claims, session)
+    elif event.kind == "recording_saved":
+        await service.recording_saved(db, claims, session, event.recording_id)
+    elif event.kind == "stream_failed":
+        _log.error("telnyx stream failed", extra={
+            "event": "telnyx_stream_failed", "reason": event.reason})
+        await _telnyx_hangup(session)  # nobody can hear or speak: end it, the hangup settles it
+    elif event.kind == "hangup":
+        seconds = (int((datetime.now(UTC) - session.answered_at).total_seconds())
+                   if session.answered_at else 0)
+        await service.on_hangup(db, claims, session,
+                                {**event.params, "Duration": str(seconds)})
+    return Response(status_code=200)
 
 
 @public_router.post("/calls/{call_id}/answer")

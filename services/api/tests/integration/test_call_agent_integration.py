@@ -1347,3 +1347,350 @@ async def test_a_misheard_question_never_reaches_the_notes_after_the_call(
     notes = [i["text"] for i in await memory.items(db, claims, str(contact_id))]
     assert "How do you generate leads using meta ads?" in notes
     assert not any("dad" in n for n in notes)
+
+
+# -- Telnyx (T1-T3, 2026-11-16): listed tenants dial, hear events and stream through Telnyx ----
+
+
+class _Telnyx:
+    """Records every Telnyx API call the agent makes."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.dialled = 0
+
+    async def dial(self, **kw: Any) -> PlacedCall:
+        self.calls.append(("dial", kw))
+        self.dialled += 1
+        return PlacedCall(request_uuid=f"leg-{self.dialled}", call_uuid=f"v2:call-{self.dialled}")
+
+    async def start_recording(self, **kw: Any) -> Recording:
+        self.calls.append(("start_recording", kw))
+        return Recording(recording_id=f"pending:{kw['call_uuid']}", url=None)
+
+    async def stop_recording(self, **kw: Any) -> None:
+        self.calls.append(("stop_recording", kw))
+
+    async def delete_recording(self, **kw: Any) -> None:
+        self.calls.append(("delete_recording", kw))
+
+    async def recording_ids(self, **kw: Any) -> list[str]:
+        self.calls.append(("recording_ids", kw))
+        return ["rec-looked-up"]
+
+    async def hangup(self, **kw: Any) -> None:
+        self.calls.append(("hangup", kw))
+
+    async def fetch_recording(self, **kw: Any) -> bytes:
+        self.calls.append(("fetch_recording", kw))
+        return b"ID3-telnyx-audio"
+
+    def names(self) -> list[str]:
+        return [n for n, _ in self.calls]
+
+
+def _on_telnyx(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, *tenants: str) -> Any:
+    """Put ``tenants`` on Telnyx (and on the stream it needs). Returns (fake, signing key)."""
+    import base64
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    private = Ed25519PrivateKey.generate()
+    public = base64.b64encode(private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))
+    listed = ",".join(tenants)
+    for key, value in {"REALTIME_VOICE_TENANTS": listed, "DEEPGRAM_API_KEY": uuid4().hex,
+                       "ELEVENLABS_API_KEY": uuid4().hex, "ELEVENLABS_VOICE_ID": "voice-1",
+                       "TELNYX_TENANTS": listed, "TELNYX_API_KEY": uuid4().hex,
+                       "TELNYX_PUBLIC_KEY": public.decode(), "TELNYX_CONNECTION_ID": "conn-1",
+                       "TELNYX_FROM_NUMBER": "+13055550199"}.items():
+        monkeypatch.setenv(key, value)
+    get_api_settings.cache_clear()
+    fake = _Telnyx()
+    monkeypatch.setattr(service, "telnyx_factory", lambda api_key, connection_id: fake)
+    return fake, private
+
+
+async def _telnyx_event(env: dict[str, Any], private: Any, call_id: str, event_type: str, *,
+                        control_id: str = "v2:call-1", ticket: str | None = None,
+                        sign_with: Any = None, **payload: Any) -> Any:
+    import base64
+    import json
+    import time
+
+    body = json.dumps({"data": {"record_type": "event", "event_type": event_type,
+                                "id": uuid4().hex,
+                                "payload": {"call_control_id": control_id, **payload}}}).encode()
+    stamp = str(int(time.time()))
+    signature = base64.b64encode((sign_with or private).sign(stamp.encode() + b"|" + body))
+    return await env["client"].post(
+        f"/public/call-agent/telnyx/calls/{call_id}/events",
+        params={"ticket": ticket or service.ticket(call_id)}, content=body,
+        headers={"telnyx-signature-ed25519": signature.decode(), "telnyx-timestamp": stamp,
+                 "content-type": "application/json"})
+
+
+async def _row(env: dict[str, Any], call_id: str) -> Any:
+    return await env["db"].fetchrow("SELECT * FROM call_sessions WHERE call_id = $1", call_id)
+
+
+async def test_a_listed_tenant_is_dialled_through_telnyx_and_others_stay_on_plivo(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a, b = env["a"], env["b"]
+    fake, _ = _on_telnyx(env, monkeypatch, a)
+    call_a, _ = await _dial(env, a)
+    [(name, sent)] = fake.calls
+    assert name == "dial" and env["plivo"].calls == []
+    assert (sent["to_e164"], sent["from_e164"], sent["time_limit"]) == (
+        "+12025550123", "+13055550199", 300)
+    assert sent["webhook_url"] == (f"{_BASE}/public/call-agent/telnyx/calls/{call_a}/events"
+                                   f"?ticket={service.ticket(call_a)}")
+    assert sent["stream_url"] == (f"wss://api.example.com/public/call-agent/calls/{call_a}/stream"
+                                  f"?ticket={service.ticket(call_a)}")
+    row = await _row(env, call_a)
+    assert (row["provider_call_uuid"], row["provider_request_uuid"], row["from_e164"]) == (
+        "v2:call-1", "leg-1", "+13055550199")
+
+    await _dial(env, b)  # not listed: Plivo, as before
+    assert env["plivo"].names() == ["place_call"] and fake.dialled == 1
+
+
+async def test_telnyx_events_drive_the_same_call_lifecycle(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a, db = env["a"], env["db"]
+    fake, key = _on_telnyx(env, monkeypatch, a)
+    call_id, task_id = await _dial(env, a)
+
+    for _ in range(2):  # Telnyx may deliver an event twice: the opening is written once
+        assert (await _telnyx_event(env, key, call_id, "call.answered")).status_code == 200
+    row = await _row(env, call_id)
+    assert row["status"] == "in_progress" and row["answered_at"] is not None
+    turns = await db.fetch("SELECT speaker, text FROM call_transcript_turns WHERE call_id = $1",
+                           call_id)
+    assert [t["speaker"] for t in turns] == ["rebecca"]
+    assert turns[0]["text"].startswith("Hi Jane, Rebecca here") and _HOOK in turns[0]["text"]
+
+    await _telnyx_event(env, key, call_id, "call.machine.detection.ended", result="human")
+    assert (await _row(env, call_id))["amd_result"] is None
+    await _telnyx_event(env, key, call_id, "call.machine.detection.ended", result="machine")
+    assert (await _row(env, call_id))["amd_result"] == "machine"
+
+    # The recording is named only when saved: stored by id (its download links expire).
+    await _telnyx_event(env, key, call_id, "call.recording.saved", recording_id="rec-9",
+                        recording_urls={"mp3": "https://files.example.com/x.mp3"})
+    row = await _row(env, call_id)
+    assert (row["recording_id"], row["recording_url"]) == ("rec-9", "telnyx:rec-9")
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    assert await service.recording_audio(db, claims, call_id) == b"ID3-telnyx-audio"
+    assert fake.calls[-1] == ("fetch_recording", {"url": "telnyx:rec-9"})
+
+    for _ in range(2):  # and a hangup settles the call once
+        await _telnyx_event(env, key, call_id, "call.hangup", hangup_cause="normal_clearing",
+                            hangup_source="callee")
+    row = await _row(env, call_id)
+    assert (row["status"], row["outcome"]) == ("completed", "completed")
+    assert row["ended_at"] is not None and row["duration_s"] is not None
+    assert await db.fetchval("SELECT count(*) FROM agent_events WHERE kind = 'call_completed' "
+                             "AND tenant_id = $1", a) == 1
+    assert (await db.fetchrow("SELECT status FROM outreach_tasks WHERE task_id = $1",
+                              task_id))["status"] == "completed"
+
+
+async def test_an_unanswered_telnyx_call_is_retried_like_any_other(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a = env["a"]
+    _, key = _on_telnyx(env, monkeypatch, a)
+    call_id, task_id = await _dial(env, a)
+    await _telnyx_event(env, key, call_id, "call.hangup", hangup_cause="timeout",
+                        hangup_source="unknown")
+    row = await _row(env, call_id)
+    assert (row["status"], row["outcome"]) == ("no_answer", "no_answer")
+    task = await env["db"].fetchrow("SELECT status, last_error FROM outreach_tasks "
+                                    "WHERE task_id = $1", task_id)
+    assert (task["status"], task["last_error"]) == ("scheduled", "CALL_NO_ANSWER")
+
+
+async def test_a_recording_saved_after_they_objected_is_deleted_not_kept(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a, db = env["a"], env["db"]
+    fake, key = _on_telnyx(env, monkeypatch, a)
+    call_id, _ = await _dial(env, a)
+    await _telnyx_event(env, key, call_id, "call.answered")
+    await db.execute("UPDATE call_sessions SET recording_consent = false WHERE call_id = $1",
+                     call_id)
+    await _telnyx_event(env, key, call_id, "call.recording.saved", recording_id="rec-9")
+    await _telnyx_event(env, key, call_id, "call.recording.saved")  # no id: looked up by call
+    row = await _row(env, call_id)
+    assert (row["recording_id"], row["recording_url"]) == (None, None)
+    assert [c for c in fake.calls if c[0] == "delete_recording"] == [
+        ("delete_recording", {"recording_id": "rec-9"}),
+        ("delete_recording", {"recording_id": "pending:v2:call-1"})]
+
+
+async def test_forged_or_misdirected_telnyx_events_change_nothing(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    a, b = env["a"], env["b"]
+    _, key = _on_telnyx(env, monkeypatch, a)
+    call_a, _ = await _dial(env, a)
+    call_b, _ = await _dial(env, b)  # tenant B is on Plivo
+
+    stranger = Ed25519PrivateKey.generate()
+    forged = await _telnyx_event(env, key, call_a, "call.answered", sign_with=stranger)
+    bad_ticket = await _telnyx_event(env, key, call_a, "call.answered", ticket="forged")
+    wrong_provider = await _telnyx_event(env, key, call_b, "call.answered")
+    unknown = await _telnyx_event(env, key, "no-such-call", "call.answered",
+                                  ticket=service.ticket("no-such-call"))
+    for response in (forged, bad_ticket, wrong_provider, unknown):  # one answer for all
+        assert response.status_code == 401
+        assert response.json()["error_code"] == "TELNYX_SIGNATURE_INVALID"
+    # A real, signed event about ANOTHER call, posted to this call's URL: acknowledged, ignored.
+    other = await _telnyx_event(env, key, call_a, "call.hangup", control_id="v2:someone-else",
+                                hangup_cause="normal_clearing")
+    assert other.status_code == 200
+    for call_id in (call_a, call_b):
+        row = await _row(env, call_id)
+        assert (row["status"], row["answered_at"], row["ended_at"]) == ("dialing", None, None)
+
+
+async def test_the_telnyx_stream_says_the_opening_and_hangs_up_when_she_is_done(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stream can connect before the "answered" event: the opening must not depend on
+    it. And closing the stream doesn't end a Telnyx call -- the hang-up is ours to send."""
+    from types import SimpleNamespace
+
+    from api.call_agent import realtime, routes, telnyx
+
+    a, db = env["a"], env["db"]
+    fake, key = _on_telnyx(env, monkeypatch, a)
+    call_id, _ = await _dial(env, a)
+    seen: dict[str, Any] = {}
+
+    class _Listener:
+        async def close(self) -> None:
+            return None
+
+    async def connect(api_key: str, keyterms: Any) -> _Listener:
+        return _Listener()
+
+    class _Call:
+        def __init__(self, socket: Any, listener: Any, voice: Any, brain: Any, *, opening: str,
+                     record: Any) -> None:
+            seen.update(socket=socket, opening=opening)
+
+        async def run(self) -> None:
+            seen["ran"] = True
+
+    monkeypatch.setattr(realtime.FluxListener, "connect", connect)
+    monkeypatch.setattr(realtime, "RealtimeCall", _Call)
+
+    class _Ws:
+        query_params = {"ticket": service.ticket(call_id)}
+        app = SimpleNamespace(state=SimpleNamespace(db=db))
+        accepted = False
+
+        async def accept(self) -> None:
+            self.accepted = True
+
+        async def close(self, code: int = 1000) -> None:
+            return None
+
+    ws = _Ws()
+    await routes.stream(ws, call_id)  # type: ignore[arg-type]
+    assert ws.accepted and seen["ran"]
+    assert isinstance(seen["socket"], telnyx.TelnyxSocket)
+    assert seen["opening"].startswith("Hi Jane, Rebecca here") and _HOOK in seen["opening"]
+    assert fake.calls[-1] == ("hangup", {"call_uuid": "v2:call-1"})
+    row = await _row(env, call_id)
+    assert row["status"] == "in_progress" and row["answered_at"] is not None
+
+    await _telnyx_event(env, key, call_id, "call.answered")  # arrives late: nothing twice
+    turns = await db.fetch("SELECT text FROM call_transcript_turns WHERE call_id = $1", call_id)
+    assert [t["text"] for t in turns] == [seen["opening"]]
+
+
+# -- Missed-call alert emails to the team (owner, 2026-11-16) -----------------------------------
+
+
+async def _alert_to(env: dict[str, Any], tenant: str, emails: list[str]) -> None:
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=tenant)
+    config = await repo.get_call_config(env["db"], claims)
+    assert config is not None
+    values = {**config.__dict__, "missed_call_alert_emails": emails}
+    await repo.upsert_call_config(env["db"], claims, values=values, auth_token=None)
+
+
+async def _alerts(env: dict[str, Any], tenant: str) -> list[Any]:
+    return list(await env["db"].fetch(
+        "SELECT recipient, subject, body FROM notification_jobs WHERE tenant_id = $1 "
+        "AND payload->>'kind' = 'missed_call_alert' ORDER BY recipient", tenant))
+
+
+async def test_a_missed_call_emails_the_team_to_call_the_lead(env: dict[str, Any]) -> None:
+    a, b = env["a"], env["b"]
+    await _alert_to(env, a, ["kaustubh@example.com", "sales@example.com"])
+    await _alert_to(env, b, ["someone@other.example"])
+    call_id, _ = await _dial(env, a)
+    for _ in range(2):  # a repeated hangup webhook never emails twice
+        await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "CallStatus": "no-answer"})
+    alerts = await _alerts(env, a)
+    assert [r["recipient"] for r in alerts] == ["kaustubh@example.com", "sales@example.com"]
+    first = alerts[0]
+    assert "Jane Doe" in first["subject"] and "call" in first["subject"].lower()
+    assert "+12025550123" in first["body"] and "jane@example.com" in first["body"]
+    assert "didn't pick up" in first["body"] and "attempt 1 of" in first["body"]
+    assert "will try again on" in first["body"]
+    assert await _alerts(env, b) == []  # another tenant's team never hears of it
+
+
+async def test_a_call_that_went_to_voicemail_alerts_the_team_too(env: dict[str, Any]) -> None:
+    a, db = env["a"], env["db"]
+    await _alert_to(env, a, ["kaustubh@example.com"])
+    call_id, _ = await _dial(env, a)
+    await db.execute("UPDATE call_sessions SET outcome = 'voicemail' WHERE call_id = $1", call_id)
+    await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "CallStatus": "completed"})
+    [alert] = await _alerts(env, a)
+    assert "voicemail" in alert["body"]
+
+
+async def test_the_last_missed_try_says_rebecca_will_not_call_again(env: dict[str, Any]) -> None:
+    a, db = env["a"], env["db"]
+    await _alert_to(env, a, ["kaustubh@example.com"])
+    call_id, task_id = await _dial(env, a)
+    await db.execute("UPDATE outreach_tasks SET max_attempts = 1 WHERE task_id = $1", task_id)
+    await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "CallStatus": "no-answer"})
+    [alert] = await _alerts(env, a)
+    assert "last try" in alert["body"] and "will try again" not in alert["body"]
+
+
+async def test_no_alert_for_an_answered_call_or_without_alert_emails(env: dict[str, Any]) -> None:
+    a, b = env["a"], env["b"]
+    await _alert_to(env, a, ["kaustubh@example.com"])
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "CallStatus": "completed",
+                                            "Duration": "40"})
+    assert await _alerts(env, a) == []
+    call_b, _ = await _dial(env, b)  # tenant B set no alert emails
+    await _webhook(env, call_b, "hangup", {"CallUUID": "uuid-2", "CallStatus": "no-answer"},
+                   token=_TOKENS["b"])
+    assert await _alerts(env, b) == []
+
+
+async def test_alert_emails_are_set_by_admins_and_validated(env: dict[str, Any]) -> None:
+    client, a, b = env["client"], env["a"], env["b"]
+    number = f"+1305{int(uuid4().hex[:6], 16) % 10_000_000:07d}"  # not left over from a run
+    body = {"plivo_auth_id": "MAYYYYYYYYYYYYYYYYYY", "from_number": number,
+            "company_name": "Acme Roofing", "missed_call_alert_emails": ["kaustubh@example.com"]}
+    assert (await client.put("/admin/outreach/call-config", json=body,
+                             cookies=_cookie(a, Role.CLIENT_AGENT))).status_code == 403
+    saved = await client.put("/admin/outreach/call-config", json=body, cookies=_cookie(a))
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["missed_call_alert_emails"] == ["kaustubh@example.com"]
+    got = (await client.get("/admin/outreach/call-config", cookies=_cookie(b))).json()
+    assert got["missed_call_alert_emails"] == []  # tenant B's own setting
+    for bad in (["not-an-email"], [f"t{i}@example.com" for i in range(6)]):
+        r = await client.put("/admin/outreach/call-config", cookies=_cookie(a),
+                             json=body | {"missed_call_alert_emails": bad})
+        assert r.status_code == 422

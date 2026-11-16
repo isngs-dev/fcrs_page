@@ -306,3 +306,70 @@ later e-mail said "your dad's roofing business". Now `script.understood_turns` d
 answered with a request to repeat (`script.asked_to_repeat`), together with that request, before the
 after-call step writes the "asked" notes and the summary. A call where the caller never spoke (voicemail)
 saves no summary to the notes.
+
+## Telnyx (T1–T3, 2026-11-16)
+
+Telnyx as the phone network for the **streamed** calls, beside Plivo. Decided 2026-11 (the Indian card was
+refused by Plivo); the user confirmed Step 0 (funded account, number, test call) on 2026-11-16.
+
+**Facts this is built on** (checked 2026-11-16 against Telnyx's OpenAPI spec
+`team-telnyx/openapi/spec3.json`, the media-streaming guide and the SDK's `webhook.py`):
+- Dial: `POST /v2/calls` (Bearer key) with `connection_id`, `to`, `from`, `webhook_url`, `timeout_secs`,
+  `time_limit_secs`, `answering_machine_detection: "detect"`, `stream_url`, `stream_track`,
+  `stream_bidirectional_mode: "rtp"`, `stream_bidirectional_codec: "PCMU"` → `data.call_control_id`.
+- Actions: `POST /v2/calls/{call_control_id}/actions/{hangup|record_start|record_stop|transfer}`;
+  recordings: `GET /v2/recordings?filter[call_control_id]=`, `GET|DELETE /v2/recordings/{id}`.
+- Webhooks: JSON `{data: {event_type, id, payload}}`; headers `telnyx-signature-ed25519` +
+  `telnyx-timestamp`; Ed25519 over `<timestamp>|<raw body>`, base64 key and signature, 300 s window.
+  No guaranteed order; duplicates happen.
+- Stream: in `start` (`stream_id`), `media` (`media.track`, `media.payload`), `mark`, `stop`, `error`;
+  out `{"event":"media","media":{"payload"}}`, `{"event":"mark","mark":{"name"}}`, `{"event":"clear"}`.
+  Audio chunks must be 20 ms or more. The docs don't say that closing the stream ends the call.
+
+**D-T1 — no answer XML.** A Telnyx call is placed with its events URL and its audio stream; there is no
+turn-by-turn version. So a Telnyx tenant must also be a streamed tenant (`telnyx.enabled_for` requires
+`realtime.enabled_for`).
+
+**D-T2 — platform settings first.** `TELNYX_TENANTS`, `TELNYX_API_KEY`, `TELNYX_PUBLIC_KEY`,
+`TELNYX_CONNECTION_ID`, `TELNYX_FROM_NUMBER` (server `.env`), like the speech keys in the speed test.
+Per-client encrypted keys + the provider picker are T4. Until then tenant isolation on the events route rests
+on the per-call HMAC ticket plus the event's `call_control_id` matching that call's — one Telnyx account
+serves every listed tenant.
+
+**D-T3 — one stream logic.** `telnyx.TelnyxSocket` translates Telnyx's stream messages to and from the ones
+`RealtimeCall` already speaks, so turn order, barge-in, the bridge words and the final closing line (R26) are
+shared. It sends her audio in whole 20 ms frames (the remainder is held, and padded with silence at the end
+of a reply; dropped when she is talked over).
+
+**D-T4 — "answered" is idempotent.** The stream and the `call.answered` event race and events repeat:
+`repo.claim_answered` marks the call answered and writes the opening in one transaction, once. The stream
+route calls `service.answered` itself, so the opening never waits for the event.
+
+**D-T5 — we hang up.** When `RealtimeCall` ends, the stream route sends Telnyx's hangup (a failure is logged;
+the call's own time limit still ends it). A `streaming.failed` event hangs up too.
+
+**D-T6 — recordings by id.** Telnyx names a recording only when it is saved (`call.recording.saved`) and its
+download links expire. Until then the session holds `pending:<call_control_id>`; once saved it holds the id and
+`telnyx:<id>` as its "URL", and playback asks Telnyx for a fresh link each time. A recording saved after the
+caller objected (`recording_consent = false`) is deleted, never stored.
+
+**Event mapping** (`telnyx.parse_event` → the existing handlers): `call.answered` → `service.answered`;
+`call.machine.detection.ended` with `machine` → `on_machine` (noted only, as on Plivo); `call.hangup` →
+`on_hangup` (`normal_clearing`/`time_limit` → completed; `timeout`/`no_answer` → no-answer;
+`user_busy`/`call_rejected` → busy; `originator_cancel` → cancel; anything else → failed);
+`call.recording.saved` → `recording_saved`. Everything else is acknowledged and ignored.
+
+**Not in T1–T3:** transfer to a person on a streamed call (the dialer has `transfer()`, the call still says
+the team line and ends), inbound calls to the Telnyx number (T5), per-client settings (T4), the first live
+calls and tuning (T7). Recording purge uses the tenant's current provider: a tenant moved from Plivo to Telnyx
+keeps old Plivo recordings until T4 stores the provider with the call.
+
+**R30 — the team is told to call a lead who didn't pick up (owner, 2026-11-16):** the team holds the
+business phone. Each client sets up to five "Missed-call alert emails" on the AI calling settings page
+(`tenant_call_agent_configs.missed_call_alert_emails`, migration 0078). After every outbound call that ended
+`no_answer` or `voicemail` (not a provider failure), each address gets one email (deduped per call and
+address): who was called, when (business time zone), their phone and email, the attempt number, and when
+Rebecca will try again — or that it was her last try. Rebecca's retries carry on as before (decided:
+"every missed call", not "stop after the first"). The email goes through the tenant's own notification
+sender, like booking confirmations; a failed send is logged and never blocks settling the call. Empty list
+= no emails.

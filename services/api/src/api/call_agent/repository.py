@@ -7,7 +7,7 @@ then decides whose auth token verifies the signature and whose claims are used.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
@@ -37,12 +37,14 @@ class CallConfig:
     recording_enabled: bool
     inbound_enabled: bool = True
     recording_retention_days: int = 90  # A9 H8
+    # Emailed "please call this lead" after a call they didn't pick up (2026-11-16).
+    missed_call_alert_emails: list[str] = field(default_factory=list)
 
 
 _CONFIG_COLUMNS = (
     "SELECT enabled, plivo_auth_id, from_number, transfer_number, company_name, voice, "
     "voice_model, voicemail_policy, voicemail_message, max_call_seconds, max_concurrent_calls, "
-    "recording_enabled, inbound_enabled, recording_retention_days "
+    "recording_enabled, inbound_enabled, recording_retention_days, missed_call_alert_emails "
     "FROM tenant_call_agent_configs WHERE tenant_id = $1"
 )
 
@@ -92,12 +94,12 @@ async def upsert_call_config(db: Database, claims: AuthClaims, *, values: dict[s
         "plivo_auth_token_ciphertext, from_number, transfer_number, company_name, voice, "
         "voice_model, voicemail_policy, voicemail_message, max_call_seconds, "
         "max_concurrent_calls, recording_enabled, updated_by, inbound_enabled, "
-        "recording_retention_days) "
+        "recording_retention_days, missed_call_alert_emails) "
         # Keep the stored token when none is sent (the NOT NULL check runs on the
         # proposed row, before ON CONFLICT -- so coalesce it here, not only below).
         "SELECT $1, $2, $3, coalesce($4, (SELECT plivo_auth_token_ciphertext FROM "
         "tenant_call_agent_configs WHERE tenant_id = $1)), $5, $6, $7, $8, $9, $10, $11, $12, "
-        "$13, $14, $15, $16, $17 "
+        "$13, $14, $15, $16, $17, $18 "
         "WHERE $4::text IS NOT NULL OR EXISTS (SELECT 1 FROM tenant_call_agent_configs "
         "WHERE tenant_id = $1) "
         "ON CONFLICT (tenant_id) DO UPDATE SET enabled = EXCLUDED.enabled, "
@@ -112,13 +114,15 @@ async def upsert_call_config(db: Database, claims: AuthClaims, *, values: dict[s
         "max_concurrent_calls = EXCLUDED.max_concurrent_calls, "
         "recording_enabled = EXCLUDED.recording_enabled, updated_by = EXCLUDED.updated_by, "
         "inbound_enabled = EXCLUDED.inbound_enabled, "
-        "recording_retention_days = EXCLUDED.recording_retention_days, updated_at = now()",
+        "recording_retention_days = EXCLUDED.recording_retention_days, "
+        "missed_call_alert_emails = EXCLUDED.missed_call_alert_emails, updated_at = now()",
         claims.tenant_id, values["enabled"], values["plivo_auth_id"], ciphertext,
         values["from_number"], values["transfer_number"], values["company_name"],
         values["voice"], values["voice_model"], values["voicemail_policy"],
         values["voicemail_message"], values["max_call_seconds"],
         values["max_concurrent_calls"], values["recording_enabled"], claims.subject,
         values.get("inbound_enabled", True), values.get("recording_retention_days", 90),
+        list(values.get("missed_call_alert_emails") or []),
     )
     if str(tag).endswith(" 0"):
         raise ValidationError("The Plivo auth token is required.", code="CALL_CONFIG_INVALID")
@@ -205,6 +209,26 @@ async def update_session(db: Database, claims: AuthClaims, call_id: str, **field
         f"UPDATE call_sessions SET {sets} WHERE tenant_id = $1 AND call_id = $2",  # noqa: S608
         claims.tenant_id, call_id, *fields.values(),
     )
+
+
+async def claim_answered(db: Database, claims: AuthClaims, call_id: str, *,
+                         session: dict[str, Any], opening: str) -> bool:
+    """Mark the call answered and write her opening -- once, whoever gets here first (on
+    Telnyx the audio stream and the "answered" event race). ``False`` = already answered."""
+    _reject_global(claims)
+    async with db.acquire() as conn, conn.transaction():
+        claimed = await conn.fetchval(
+            "UPDATE call_sessions SET status = 'in_progress', answered_at = now(), session = $3 "
+            "WHERE tenant_id = $1 AND call_id = $2 AND answered_at IS NULL "
+            "AND ended_at IS NULL RETURNING call_id", claims.tenant_id, call_id, session)
+        if claimed is None:
+            return False
+        await conn.execute(
+            "INSERT INTO call_transcript_turns (tenant_id, call_id, turn_index, speaker, text) "
+            "SELECT $1, $2, coalesce(max(turn_index), 0) + 1, 'rebecca', $3 "
+            "FROM call_transcript_turns WHERE tenant_id = $1 AND call_id = $2",
+            claims.tenant_id, call_id, opening[:4000])
+    return True
 
 
 async def count_active(db: Database, claims: AuthClaims) -> int:

@@ -274,6 +274,10 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
         recording_enabled: data.get("recording") === "on",
         inbound_enabled: data.get("inbound") === "on",
         recording_retention_days: Number(text(data, "retention_days")),
+        missed_call_alert_emails: text(data, "missed_call_alert_emails")
+          .split(/[,;\s]+/)
+          .map((e) => e.trim())
+          .filter(Boolean),
         // Not editable here; send the stored values back so a save never resets them.
         voice: config.voice ?? "Polly.Joanna",
         voice_model: config.voiceModel ?? null,
@@ -323,6 +327,16 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
             <Input name="retention_days" type="number" min={1} max={3650} defaultValue={config.recordingRetentionDays ?? 90} required />
           </Field>
         </div>
+        <Field label="Missed-call alert emails (who to tell to call a lead who didn't pick up; up to 5, comma-separated)">
+          <Input
+            name="missed_call_alert_emails"
+            type="text"
+            inputMode="email"
+            autoComplete="off"
+            placeholder="name@yourbusiness.com"
+            defaultValue={(config.missedCallAlertEmails ?? []).join(", ")}
+          />
+        </Field>
         <Field label="Voicemail message (must say it's an AI assistant, your business name and a callback number)">
           <Textarea name="voicemail_message" rows={3} maxLength={600} defaultValue={config.voicemailMessage ?? ""} className="text-[13px]" />
         </Field>

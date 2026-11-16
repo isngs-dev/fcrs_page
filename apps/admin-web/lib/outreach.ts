@@ -165,6 +165,7 @@ export interface CallConfig {
   recordingEnabled?: boolean;
   inboundEnabled?: boolean;
   recordingRetentionDays?: number;
+  missedCallAlertEmails?: string[];
   inboundAnswerUrl?: string;
   inboundHangupUrl?: string;
 }

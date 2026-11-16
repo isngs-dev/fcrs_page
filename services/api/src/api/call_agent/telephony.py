@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import quote
 
 import httpx
 from common.errors import ValidationError
@@ -23,6 +24,7 @@ class CallProviderError(ValidationError):
 @dataclass(frozen=True)
 class PlacedCall:
     request_uuid: str
+    call_uuid: str | None = None  # known at once on Telnyx; Plivo sends it on answer
 
 
 @dataclass(frozen=True)
@@ -116,4 +118,126 @@ class PlivoTelephony:
         if response.status_code >= 400:
             raise CallProviderError(f"Plivo refused the recording (HTTP {response.status_code}).",
                                     code=f"PLIVO_{response.status_code}")
+        return response.content
+
+
+TELNYX_API_BASE = "https://api.telnyx.com/v2"
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+_PENDING = "pending:"  # a recording Telnyx hasn't named yet: "this call's recording(s)"
+_TELNYX_URL = "telnyx:"  # how a Telnyx recording is stored: by id (its download links expire)
+
+
+class TelnyxTelephony:
+    """Telnyx's Voice API (T1): a call is placed with its event URL and its two-way audio
+    stream (phone audio, mu-law 8 kHz); the stream starts when the call is answered.
+    The same failure contract as Plivo: a refusal is final, an outage is retried."""
+
+    def __init__(self, api_key: str, connection_id: str, *, timeout: float = 10.0,
+                 transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self._headers = {"Authorization": f"Bearer {api_key}"}
+        self._connection_id = connection_id
+        self._timeout = timeout
+        self._transport = transport
+
+    async def _request(self, method: str, path: str, json: dict[str, Any] | None = None,
+                       params: dict[str, str] | None = None) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as c:
+                response = await c.request(method, f"{TELNYX_API_BASE}{path}", json=json,
+                                           params=params, headers=self._headers)
+        except httpx.HTTPError as exc:
+            raise TransientExecutorError(f"Telnyx unreachable: {type(exc).__name__}") from exc
+        if response.status_code == 429 or response.status_code >= 500:
+            raise TransientExecutorError(f"Telnyx HTTP {response.status_code}")
+        if response.status_code >= 400:
+            raise CallProviderError(
+                f"Telnyx rejected the request (HTTP {response.status_code}).",
+                code=f"TELNYX_{response.status_code}")
+        if not response.content:
+            return {}
+        body = response.json()
+        return body if isinstance(body, dict) else {}
+
+    @staticmethod
+    def _call(call_uuid: str, action: str) -> str:
+        return f"/calls/{quote(call_uuid, safe=':')}/actions/{action}"
+
+    async def dial(self, *, to_e164: str, from_e164: str, webhook_url: str, stream_url: str,
+                   time_limit: int) -> PlacedCall:
+        body = await self._request("POST", "/calls", {
+            "connection_id": self._connection_id, "to": to_e164, "from": from_e164,
+            "webhook_url": webhook_url, "timeout_secs": 30, "time_limit_secs": time_limit,
+            # Asynchronous: Telnyx posts call.machine.detection.ended while the call goes on.
+            "answering_machine_detection": "detect",
+            "stream_url": stream_url, "stream_track": "inbound_track",
+            "stream_bidirectional_mode": "rtp", "stream_bidirectional_codec": "PCMU",
+        })
+        data = _dict(body.get("data"))
+        control_id = data.get("call_control_id")
+        if not control_id:
+            raise CallProviderError("Telnyx did not return a call id.",
+                                    code="TELNYX_NO_CALL_CONTROL_ID")
+        return PlacedCall(request_uuid=str(data.get("call_leg_id") or control_id),
+                          call_uuid=str(control_id))
+
+    async def place_call(self, *, to_e164: str, from_e164: str, answer_url: str, hangup_url: str,
+                         machine_url: str, time_limit: int) -> PlacedCall:
+        raise CallProviderError("Telnyx calls are placed with dial().", code="TELNYX_UNSUPPORTED")
+
+    async def hangup(self, *, call_uuid: str) -> None:
+        await self._request("POST", self._call(call_uuid, "hangup"), {})
+
+    async def transfer(self, *, call_uuid: str, to_e164: str, from_e164: str) -> None:
+        await self._request("POST", self._call(call_uuid, "transfer"),
+                            {"to": to_e164, "from": from_e164})
+
+    async def transfer_to_url(self, *, call_uuid: str, url: str) -> None:
+        raise CallProviderError("Telnyx has no XML transfer; use transfer().",
+                                code="TELNYX_UNSUPPORTED")
+
+    async def start_recording(self, *, call_uuid: str, time_limit: int) -> Recording:
+        await self._request("POST", self._call(call_uuid, "record_start"),
+                            {"format": "mp3", "channels": "single", "max_length": time_limit})
+        return Recording(recording_id=f"{_PENDING}{call_uuid}", url=None)
+
+    async def stop_recording(self, *, call_uuid: str) -> None:
+        await self._request("POST", self._call(call_uuid, "record_stop"), {})
+
+    async def recording_ids(self, *, call_uuid: str) -> list[str]:
+        body = await self._request("GET", "/recordings",
+                                   params={"filter[call_control_id]": call_uuid})
+        found = body.get("data")
+        rows: list[Any] = found if isinstance(found, list) else []
+        return [str(r["id"]) for r in rows if isinstance(r, dict) and r.get("id")]
+
+    async def delete_recording(self, *, recording_id: str) -> None:
+        ids = (await self.recording_ids(call_uuid=recording_id[len(_PENDING):])
+               if recording_id.startswith(_PENDING) else [recording_id])
+        for one in ids:
+            await self._request("DELETE", f"/recordings/{quote(one, safe='')}")
+
+    async def fetch_recording(self, *, url: str) -> bytes:
+        """``telnyx:<recording id>`` -> a fresh download link from Telnyx's API -> the mp3.
+        Only a link Telnyx's own (authenticated) API returned is fetched, without our key."""
+        if not url.startswith(_TELNYX_URL):
+            raise CallProviderError("Not a Telnyx recording.", code="TELNYX_NOT_A_RECORDING")
+        body = await self._request("GET", f"/recordings/{quote(url[len(_TELNYX_URL):], safe='')}")
+        data = _dict(body.get("data"))
+        link = _dict(data.get("download_urls")).get("mp3")
+        if not link or not str(link).startswith("https://"):
+            raise CallProviderError("Telnyx has no file for this recording.",
+                                    code="TELNYX_NO_RECORDING_FILE")
+        try:
+            async with httpx.AsyncClient(timeout=30.0, transport=self._transport,
+                                         follow_redirects=True) as c:
+                response = await c.get(str(link))
+        except httpx.HTTPError as exc:
+            raise TransientExecutorError(f"Telnyx unreachable: {type(exc).__name__}") from exc
+        if response.status_code >= 400:
+            raise CallProviderError(
+                f"Telnyx refused the recording (HTTP {response.status_code}).",
+                code=f"TELNYX_{response.status_code}")
         return response.content

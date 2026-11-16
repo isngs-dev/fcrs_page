@@ -149,7 +149,7 @@ describe("Outreach pages (A8)", () => {
         email_window_start: "08:00", email_window_end: "18:00" },
       "/email-config": { configured: true, provider: "sendgrid", from_address: "a@b.com", has_api_key: true },
       "/call-config": { configured: true, plivo_auth_id: "MA1", from_number: "+18884810711", has_auth_token: true,
-        recording_retention_days: 30 },
+        recording_retention_days: 30, missed_call_alert_emails: ["kaustubh@example.com", "sales@example.com"] },
       "/suppressions": [],
     });
     const html = renderToStaticMarkup(await SettingsPage());
@@ -159,6 +159,8 @@ describe("Outreach pages (A8)", () => {
     expect(html).toMatch(/name="ask_details"[^>]*checked/); // moved from Settings, 2026-10-30
     expect(html).toContain("leave blank to keep");
     expect(html).toMatch(/name="retention_days"[^>]*value="30"/); // A9 H8: shown, so a save keeps it
+    // 2026-11-16: who is emailed to call a lead back -- shown, so a save keeps them
+    expect(html).toMatch(/name="missed_call_alert_emails"[^>]*value="kaustubh@example.com, sales@example.com"/);
     expect(html).not.toMatch(/name="auth_token"[^>]*value=/);
   });
 });

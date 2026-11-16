@@ -39,9 +39,9 @@ from api.agents.outreach_repository import (
     stop_plan_if_empty,
 )
 from api.agents.repository import add_suppression, do_not_contact
-from api.call_agent import realtime, script
+from api.call_agent import realtime, script, telnyx
 from api.call_agent import repository as repo
-from api.call_agent.telephony import PlivoTelephony, TelephonyProvider
+from api.call_agent.telephony import PlivoTelephony, TelephonyProvider, TelnyxTelephony
 from api.config import get_api_settings
 from api.contacts.repository import get_contact, list_identities
 from api.llm.provider import ChatMessage
@@ -68,6 +68,8 @@ from api.scheduling.slots import compute_slots
 from api.voice_agent.agent import BOOK_A_TIME, answer_from_knowledge, opening_lines
 from api.voice_agent.plivo import ANSWER_WAIT, OPENING_WAIT, listen, speak
 
+TELNYX_RECORDING = "telnyx:"  # a Telnyx recording's stored "URL": its id
+
 _log = get_logger(__name__)
 
 RETRY_AFTER = timedelta(days=1)  # no answer / voicemail / callback -> next day, window-adjusted
@@ -90,13 +92,22 @@ def call_url(call_id: str, action: str) -> str:
     return f"{base}/public/call-agent/calls/{call_id}/{action}?ticket={ticket(call_id)}"
 
 
-# Swappable for tests (a fake provider instead of Plivo's API).
+# Swappable for tests (a fake provider instead of Plivo's / Telnyx's API).
 TelephonyFactory = Callable[[str, str], TelephonyProvider]
 telephony_factory: TelephonyFactory = PlivoTelephony
+telnyx_factory: Callable[[str, str], TelnyxTelephony] = TelnyxTelephony
+
+
+def telnyx_for(tenant_id: str) -> TelnyxTelephony:
+    """The tenant's Telnyx connection (only for tenants ``telnyx.enabled_for``)."""
+    s = get_api_settings()
+    return telnyx_factory(str(s.telnyx_api_key), str(s.telnyx_connection_id))
 
 
 async def telephony_for(db: Database, tenant_id: str, config: repo.CallConfig
                         ) -> TelephonyProvider:
+    if telnyx.enabled_for(tenant_id):  # recordings (start/stop/delete/fetch) go there too
+        return telnyx_for(tenant_id)
     token = await repo.get_auth_token(db, tenant_id)
     if not token:
         raise ValidationError("The Plivo auth token is missing.", code="CALL_NOT_READY")
@@ -114,13 +125,16 @@ async def recording_audio(db: Database, claims: AuthClaims, call_id: str) -> byt
     """The call's recording, fetched server-side; 404 when there's none to play."""
     url = await repo.get_recording_url(db, claims, call_id)
     config = await repo.get_call_config(db, claims)
-    if not url or not is_plivo_url(url) or config is None:
+    on_telnyx = bool(url) and str(url).startswith(TELNYX_RECORDING)
+    if on_telnyx and not telnyx.enabled_for(claims.tenant_id):
+        raise NotFoundError("No recording for this call.", code="RECORDING_NOT_FOUND")
+    if not url or not (on_telnyx or is_plivo_url(url)) or config is None:
         raise NotFoundError("No recording for this call.", code="RECORDING_NOT_FOUND")
     provider = await telephony_for(db, str(claims.tenant_id), config)
     try:
         return await provider.fetch_recording(url=url)
     except TransientExecutorError as exc:
-        raise InternalServerError("Plivo didn't return the recording; try again.",
+        raise InternalServerError("The phone provider didn't return the recording; try again.",
                                   code="RECORDING_UNAVAILABLE") from exc
 
 
@@ -187,9 +201,12 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
     if phone is None:
         raise ValidationError("The contact has no dialable phone number.",
                               code="CONTACT_NO_PHONE")
+    on_telnyx = telnyx.enabled_for(claims.tenant_id)
+    from_number = (str(get_api_settings().telnyx_from_number) if on_telnyx
+                   else config.from_number)
     call_id = await repo.create_session(db, claims, task_id=task.task_id, plan_id=task.plan_id,
                                         contact_id=task.contact_id,
-                                        from_e164=config.from_number, to_e164=phone,
+                                        from_e164=from_number, to_e164=phone,
                                         limit=config.max_concurrent_calls)
     if call_id is None:  # another dispatcher took the last slot (A9 H5)
         raise DeferTask("CALL_CONCURRENCY_LIMIT", timedelta(minutes=5))
@@ -208,16 +225,24 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
             "minutes": str(int((upcoming.ends_at - upcoming.starts_at).total_seconds() // 60))}
     await repo.update_session(db, claims, call_id, session=written)
     try:
-        provider = await telephony_for(db, str(claims.tenant_id), config)
-        placed = await provider.place_call(
-            to_e164=phone, from_e164=config.from_number,
-            answer_url=call_url(call_id, "answer"), hangup_url=call_url(call_id, "hangup"),
-            machine_url=call_url(call_id, "machine"), time_limit=config.max_call_seconds)
+        if on_telnyx:  # no answer XML there: the events URL and the audio stream go with the dial
+            placed = await telnyx_for(str(claims.tenant_id)).dial(
+                to_e164=phone, from_e164=from_number, time_limit=config.max_call_seconds,
+                webhook_url=telnyx.events_url(call_id, ticket(call_id)),
+                stream_url=telnyx.stream_url(call_id, ticket(call_id)))
+        else:
+            provider = await telephony_for(db, str(claims.tenant_id), config)
+            placed = await provider.place_call(
+                to_e164=phone, from_e164=config.from_number,
+                answer_url=call_url(call_id, "answer"), hangup_url=call_url(call_id, "hangup"),
+                machine_url=call_url(call_id, "machine"), time_limit=config.max_call_seconds)
     except Exception:
         await repo.update_session(db, claims, call_id, status="failed", outcome="failed",
                                   ended_at=datetime.now(UTC))
         raise
-    await repo.update_session(db, claims, call_id, provider_request_uuid=placed.request_uuid)
+    await repo.update_session(
+        db, claims, call_id, provider_request_uuid=placed.request_uuid,
+        **({"provider_call_uuid": placed.call_uuid} if placed.call_uuid else {}))
     return ExecutorResult(status="pending", result={"call_id": call_id})
 
 
@@ -260,18 +285,56 @@ def _hangup(text: str, voice: str) -> str:
     return speak(text, voice) + "<Hangup/>"
 
 
+async def _opening_line(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
+                        config: repo.CallConfig) -> str:
+    contact = await get_contact(db, claims, session.contact_id) if session.contact_id else None
+    first = (contact.name or "").split(" ")[0] if contact and contact.name else None
+    return script.opening(first_name=first if first and first.isalpha() else None,
+                          company=config.company_name, recording=config.recording_enabled,
+                          hook=(session.session or {}).get("hook"))
+
+
+async def answered(db: Database, claims: AuthClaims, session: repo.CallSessionRow) -> None:
+    """Telnyx: the call was answered. Idempotent -- the audio stream and the "answered" event
+    both land here, in either order, and Telnyx may repeat an event: the opening (with the AI
+    disclosure, L4) and the call's starting state are written exactly once."""
+    config = await repo.get_call_config(db, claims)
+    if config is None or session.answered_at is not None or session.ended_at is not None:
+        return
+    written = session.session or {}
+    await repo.claim_answered(
+        db, claims, session.call_id, opening=await _opening_line(db, claims, session, config),
+        session=script.CallState(question=written.get("question"),
+                                 booked=written.get("booked")).to_json())
+
+
+async def recording_saved(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
+                          recording_id: str | None) -> None:
+    """Telnyx names a recording only once it is saved. Kept by id (its download links
+    expire) -- unless the caller objected to recording meanwhile: then it is deleted."""
+    provider = telnyx_for(str(claims.tenant_id))
+    if not session.recording_consent:
+        await provider.delete_recording(
+            recording_id=recording_id or f"pending:{session.provider_call_uuid}")
+        await repo.update_session(db, claims, session.call_id, recording_id=None,
+                                  recording_url=None)
+        return
+    if recording_id is None and session.provider_call_uuid:
+        found = await provider.recording_ids(call_uuid=session.provider_call_uuid)
+        recording_id = found[0] if found else None
+    if recording_id:
+        await repo.update_session(db, claims, session.call_id, recording_id=recording_id,
+                                  recording_url=f"{TELNYX_RECORDING}{recording_id}")
+
+
 async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
                      call_uuid: str | None) -> str:
     """The call was answered: the opening (with the AI disclosure) is said first (L4)."""
     config = await repo.get_call_config(db, claims)
     if config is None:
         return "<Hangup/>"
-    contact = await get_contact(db, claims, session.contact_id) if session.contact_id else None
-    first = (contact.name or "").split(" ")[0] if contact and contact.name else None
     written = session.session or {}
-    line = script.opening(first_name=first if first and first.isalpha() else None,
-                          company=config.company_name, recording=config.recording_enabled,
-                          hook=written.get("hook"))
+    line = await _opening_line(db, claims, session, config)
     await repo.update_session(db, claims, session.call_id, status="in_progress",
                               answered_at=datetime.now(UTC), provider_call_uuid=call_uuid,
                               session=script.CallState(question=written.get("question"),
@@ -791,6 +854,54 @@ async def voicemail_xml(db: Database, claims: AuthClaims) -> str:
 
 _FINAL_STATUS = {"voicemail": "voicemail", "no_answer": "no_answer", "failed": "failed"}
 _RETRY_OUTCOMES = {"no_answer", "voicemail", "failed"}
+_MISSED_OUTCOMES = {"no_answer", "voicemail"}  # they didn't pick up (not a provider failure)
+
+
+async def _alert_missed_call(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
+                             outcome: str, *, attempt: int, max_attempts: int,
+                             next_try: datetime | None) -> None:
+    """Email the client's team "please call this lead" (owner, 2026-11-16): the team holds
+    the business phone. Once per call and address; never fails the hangup."""
+    config = await repo.get_call_config(db, claims)
+    if config is None or not config.missed_call_alert_emails or session.direction != "outbound":
+        return
+    contact = await get_contact(db, claims, session.contact_id) if session.contact_id else None
+    tz = await _business_tz(db, claims)
+    phone = customer_number(session)
+    who = (contact.name if contact and contact.name else None) or phone
+    called = script.say_time(session.created_at, tz)
+    what = ("the call went to their voicemail" if outcome == "voicemail"
+            else "they didn't pick up")
+    lines = ["Hi,", "", f"Rebecca called {who} on {called} and {what}.",
+             "", "Please give them a call from your team's phone.", "",
+             f"Name: {contact.name if contact and contact.name else 'not given'}",
+             f"Phone: {phone}"]
+    if contact and contact.email:
+        lines.append(f"Email: {contact.email}")
+    lines.append("")
+    if next_try is not None:
+        local = next_try.astimezone(ZoneInfo(tz))
+        lines.append(f"This was Rebecca's attempt {attempt} of {max_attempts}. She will try "
+                     f"again on {local:%A}, {local:%B} {local.day}.")
+    else:
+        lines.append(f"This was Rebecca's last try (attempt {attempt} of {max_attempts}): "
+                     "she won't call them again.")
+    lines += ["", f"— Rebecca, AI assistant for {config.company_name}"]
+    subject = f"Please call {who}: they didn't pick up Rebecca's call"
+    for recipient in config.missed_call_alert_emails:
+        try:
+            job_id = await enqueue_notification(
+                db, claims, channel="email", recipient=recipient, subject=subject,
+                body="\n".join(lines),
+                dedupe_key=f"missed_call_alert:{session.call_id}:{recipient}",
+                payload={"kind": "missed_call_alert", "call_id": session.call_id},
+                lead_id=contact.lead_id if contact else None)
+            if job_id is not None:
+                send_notification.delay(job_id=job_id, tenant_id=claims.tenant_id,
+                                        correlation_id="")
+        except Exception as exc:  # noqa: BLE001 -- the call is settled either way; say so
+            _log.warning("missed-call alert not sent", extra={
+                "event": "missed_call_alert_failed", "reason": type(exc).__name__})
 
 
 async def on_hangup(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
@@ -823,9 +934,14 @@ async def on_hangup(db: Database, claims: AuthClaims, session: repo.CallSessionR
             await reschedule_task(db, claims, session.task_id, at=now + RETRY_AFTER,
                                   reason="CALLBACK_REQUESTED")
         elif task is not None and outcome in _RETRY_OUTCOMES:
-            if task["attempts"] < task["max_attempts"]:
-                await reschedule_task(db, claims, session.task_id,
-                                      at=now + max(RETRY_AFTER, backoff(task["attempts"])),
+            next_try = (now + max(RETRY_AFTER, backoff(task["attempts"]))
+                        if task["attempts"] < task["max_attempts"] else None)
+            if outcome in _MISSED_OUTCOMES:
+                await _alert_missed_call(db, claims, session, outcome,
+                                         attempt=task["attempts"],
+                                         max_attempts=task["max_attempts"], next_try=next_try)
+            if next_try is not None:
+                await reschedule_task(db, claims, session.task_id, at=next_try,
                                       reason=f"CALL_{outcome.upper()}")
             else:
                 await finish_task(db, claims, session.task_id, status="failed",
