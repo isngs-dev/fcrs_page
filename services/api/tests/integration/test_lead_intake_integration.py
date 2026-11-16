@@ -393,6 +393,13 @@ async def test_a_call_booked_on_the_form_is_recorded_and_the_lead_is_rung(
     assert channels == ["call", "email", "email"]  # rung right away, as any call-consent form
     assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1",
                              b) == 0
+    # 2026-11-16: Rebecca sends this call's reminders too (the site's own were broken).
+    reminders = {r["offset"]: (r["status"], r["run_at"]) for r in await db.fetch(
+        'SELECT "offset", status, run_at FROM reminder_jobs WHERE tenant_id = $1', a)}
+    assert set(reminders) == {"3d", "24h", "1h"}
+    assert reminders["24h"] == ("pending", starts - timedelta(hours=24))
+    assert reminders["1h"] == ("pending", starts - timedelta(hours=1))
+    assert await db.fetchval("SELECT count(*) FROM reminder_jobs WHERE tenant_id = $1", b) == 0
 
 
 async def test_a_past_or_clashing_form_booking_is_not_recorded_but_the_lead_still_is(
@@ -416,3 +423,5 @@ async def test_a_past_or_clashing_form_booking_is_not_recorded_but_the_lead_stil
     assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1 "
                              "AND source = 'form'", a) == 0
     assert await db.fetchval("SELECT count(*) FROM leads WHERE tenant_id = $1", a) == 2
+    # nothing recorded -> no reminders for it (the clashing slot's own booking has none either)
+    assert await db.fetchval("SELECT count(*) FROM reminder_jobs WHERE tenant_id = $1", a) == 0

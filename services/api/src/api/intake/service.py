@@ -19,6 +19,7 @@ from api.intake import meta
 from api.intake import repository as repo
 from api.intake.parsers import Normalised, booking_at, infer_timezone, normalise
 from api.leads.repository import add_activity, create_lead
+from api.scheduling.reminder_repository import create_reminder_jobs
 from api.scheduling.repository import get_availability, record_form_booking
 
 _MAX_ANSWERS = 30
@@ -79,12 +80,14 @@ async def _record_booking(db: Database, claims: AuthClaims, lead: Normalised, *,
     starts_at, zone = booked
     availability = await get_availability(db, claims)
     minutes = int((availability.rules if availability else {}).get("slot_minutes", 30))
-    await record_form_booking(
+    event_id = await record_form_booking(
         db, claims, ref=f"form:{intake_id}", starts_at=starts_at,
         ends_at=starts_at + timedelta(minutes=minutes), timezone=zone, lead_id=lead_id,
         email=email, name=name,
         consent={"granted": True, "purpose": "booking", "source": "form",
                  "intake_id": intake_id, "captured_at": now.isoformat()})
+    if event_id is not None:  # Rebecca sends its 3d/24h/1h reminders (owner, 2026-11-16)
+        await create_reminder_jobs(db, claims, event_id=event_id, starts_at=starts_at, now=now)
 
 
 async def ingest(db: Database, claims: AuthClaims, *, source: str, intake_id: str,

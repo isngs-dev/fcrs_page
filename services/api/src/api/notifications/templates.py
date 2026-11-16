@@ -137,20 +137,29 @@ def reminder_message(
     ``business_name``/``visitor_name``: same personal, branded wording as
     ``booking_confirmation_message`` (both optional).
     """
-    when = _local_wall_clock(starts_at, timezone)
+    # Owner, 2026-11-16: the same professional voice as Rebecca's booking e-mails, in place
+    # of the site's own (broken) reminders. Lazy: email_agent imports this package.
+    from api.email_agent.composer import meeting_when  # noqa: PLC0415
+
+    when = meeting_when(starts_at, timezone)
     label = _OFFSET_LABELS.get(offset, offset)
     business = (business_name or "").strip()
     with_business = f" with {business}" if business else ""
     first_name = (visitor_name or "").strip().split(" ")[0]
     subject = f"Reminder: your call{with_business} is in {label}"
-    meet_line = f"\n\nJoin the call: {meet_url}" if meet_url else ""
-    sign_off = f"Thanks,\n{business}" if business else "Thanks!"
+    meet_line = f"\nJoin the call: {meet_url}" if meet_url else ""
+    signature = f"Rebecca\nAI assistant for {business}" if business else "Rebecca"
     body = (
         f"Hi {first_name or 'there'},\n\n"
-        f"This is a reminder that your call{with_business} is coming up in {label}.\n\n"
-        f"When: {when}"
-        f"{meet_line}\n\n"
-        f"{sign_off}"
+        f"This is a friendly reminder that your call{with_business} is coming up in "
+        f"{label}.\n\n"
+        f"When: {when}{meet_line}\n\n"
+        "On the call, our team will walk you through how everything works and answer your "
+        "questions in detail. No preparation is needed.\n\n"
+        "If you need a different time, just reply to this email and we'll find another "
+        "slot.\n\n"
+        "We look forward to speaking with you.\n\n"
+        f"Kind regards,\n{signature}"
     )
     return subject, body
 

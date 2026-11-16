@@ -102,3 +102,9 @@ The e-mails read as too short and generic. This overturns A2's "under 150 words"
   greeting. Now the model is told not to greet; `composer.with_greeting` puts "Hi <first name>," (or
   "Hello,") on its own line and strips any greeting or leading "<name>," the model wrote anyway. Applies to
   outreach, follow-ups and answers to replies.
+- **Reminders (2026-11-16):** a call booked on the client's website form gets Rebecca's 3-day / 24-hour /
+  1-hour reminders too (`intake.service` → `create_reminder_jobs`), so the site's own reminder emails can be
+  switched off (they arrived with unfilled `{{…}}` placeholders). The reminder (`notifications.templates
+  .reminder_message`) now reads like her other booking emails: friendly opener, "When: <day, date, time,
+  zone>", the Meet link when there is one, what the call covers, "reply to this email" for another time, and
+  "Kind regards, Rebecca, AI assistant for <business>".

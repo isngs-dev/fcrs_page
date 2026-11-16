@@ -42,8 +42,7 @@ def test_reminder_message_non_empty_subject_and_body() -> None:
 
 def test_reminder_message_renders_local_time() -> None:
     _subject, body = reminder_message(offset="24h", starts_at=_STARTS_AT_UTC, timezone=_TZ)
-    assert "10:00" in body
-    assert "2026-07-20" in body
+    assert "When: Monday, July 20 at 10:00 AM Eastern time" in body
 
 
 def test_reminder_message_mentions_offset() -> None:
@@ -56,7 +55,7 @@ def test_reminder_message_different_timezone_renders_different_local_time() -> N
     _subject, body_ny = reminder_message(offset="1h", starts_at=_STARTS_AT_UTC, timezone="America/New_York")
     _subject2, body_utc = reminder_message(offset="1h", starts_at=_STARTS_AT_UTC, timezone="UTC")
     assert body_ny != body_utc
-    assert "14:00" in body_utc
+    assert "at 2:00 PM (UTC)" in body_utc
 
 
 def test_password_reset_message_body_contains_reset_url() -> None:
@@ -175,6 +174,20 @@ def test_reminder_is_personal_and_branded() -> None:
     assert "your call with Acme Roofing is coming up in 24 hours" in body
     assert "https://meet.google.com/abc-defg-hij" in body
     assert body.rstrip().endswith("Acme Roofing")
+
+
+def test_the_reminder_reads_like_rebeccas_other_emails() -> None:
+    """Owner, 2026-11-16: reminders should match the agent's professional booking emails."""
+    _subject, body = reminder_message(
+        offset="24h", starts_at=_STARTS_AT_UTC, timezone=_TZ,
+        business_name="Acme Roofing", visitor_name="Jane Smith")
+    paragraphs = body.split("\n\n")
+    assert paragraphs[0] == "Hi Jane,"
+    assert "walk you through how everything works" in body
+    assert "reply to this email" in body
+    assert "We look forward to speaking with you." in body
+    assert body.rstrip().endswith("Kind regards,\nRebecca\nAI assistant for Acme Roofing")
+    assert "{" not in body and "None" not in body  # never an unfilled placeholder
 
 
 def test_reminder_without_names_still_reads_naturally() -> None:
