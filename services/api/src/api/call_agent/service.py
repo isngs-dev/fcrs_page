@@ -516,12 +516,20 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             await repo.update_session(db, claims, call_id, outcome="voicemail")
             return TurnResult(await voicemail_xml(db, claims), "voicemail", True)
         await repo.update_session(db, claims, call_id, amd_result="human")
+    if not speech and state.on_hold:  # they asked her to hold: wait quietly, then check in
+        state.hold_silences += 1
+        if state.hold_silences < script.HOLD_QUIET_TURNS:
+            await repo.update_session(db, claims, call_id, session=state.to_json())
+            return TurnResult(_listen("", call_id, voice))
+        state.on_hold, state.hold_silences = False, 0
+        return await say(script.HOLD_CHECK_LINE)
     if not speech:
         state.silences += 1
         if state.silences >= 2:
             return await bye(script.GOODBYE_LINE, "completed")
         return await say(script.SILENCE_LINE)
     state.silences = 0
+    state.on_hold, state.hold_silences = False, 0  # they're back
     state.history.append(["user", speech])
     opening_question, state.question = state.question, None  # only right after the opening
     kind = script.classify(speech)
@@ -598,6 +606,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         return await bye(script.WRONG_NUMBER_LINE, "wrong_number")
     if kind == "robot":
         return await say(script.ROBOT_LINE)
+    if kind == "hold":  # no follow-up question: they're stepping away for a moment
+        state.on_hold, state.hold_silences = True, 0
+        return await say(script.HOLD_LINE)
     if kind == "who":  # her name and the business, from the code -- never the model's guess
         return await say(script.who_line(config.company_name))
     if kind == "callback":

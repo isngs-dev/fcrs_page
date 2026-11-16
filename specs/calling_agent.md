@@ -396,3 +396,13 @@ about Roof Engine?" got the miss line. Now "who is this / who's calling / who am
 is answered by the code (`script.who_line`: "I'm Rebecca, the AI assistant at <company>. How can I help you
 today?"), every model answer on a call is told who she is (`answer_from_knowledge(assistant=...)`), and the
 voice prompt summarises the most useful points from the context for a broad question instead of missing.
+
+**R32 — "hold on" is a pause, not a question (2026-11-16, Telnyx call):** "Can you hold for a 2nd?" got
+"Sure, take your time… Is there anything else you'd like to know?", and two 8-second silences would have
+hung up on a longer hold. Now a short hold request (`script.classify` → `hold`: "hold on/for", "hang on",
+"one sec", "give me a minute", "just a moment"; never when it also asks something — "hold on, how much is a
+repair?") gets `HOLD_LINE` ("Sure, take your time. I'll be right here.") with no follow-up; she then waits
+quietly through `HOLD_QUIET_TURNS` (6 × ~8 s) silent turns, checks in once (`HOLD_CHECK_LINE`), and only then
+the usual "are you still there?" → goodbye applies. Anything the caller says ends the hold. The streamed call
+keeps its silence clock running after a turn with nothing to say (`RealtimeCall._answer`), so the check-in
+comes.

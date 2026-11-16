@@ -1891,3 +1891,31 @@ async def test_the_model_is_told_her_name_on_every_answer(
     call_id = await _answered(env, env["a"])  # asks one question first
     await _say(env, call_id, "How much is a roof inspection?")
     assert seen == ["Rebecca, the AI assistant at Acme Roofing"] * 2  # every answer
+
+
+
+async def test_a_hold_request_gets_a_quiet_wait_then_one_gentle_check_in(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-16: "Can you hold for a 2nd?" -> "...Is there anything else you'd like to
+    know?", and two 8-second silences would have hung up on a longer hold."""
+    call_id = await _answered(env, env["a"])
+    held = await _say(env, call_id, "Can you hold for a 2nd?")
+    assert service.spoken_text(held) == script.HOLD_LINE
+    for _ in range(script.HOLD_QUIET_TURNS - 1):  # quiet while they're away -- no hang-up
+        quiet = await _say(env, call_id, "")
+        assert service.spoken_text(quiet) == "" and "<Hangup/>" not in quiet
+    check = await _say(env, call_id, "")
+    assert service.spoken_text(check) == script.HOLD_CHECK_LINE
+    # after the check-in, the usual rule: "are you still there?", then goodbye
+    assert service.spoken_text(await _say(env, call_id, "")) == script.SILENCE_LINE
+    assert (await _say(env, call_id, "")).endswith("<Hangup/></Response>")
+
+
+async def test_speaking_after_a_hold_carries_on_normally(env: dict[str, Any]) -> None:
+    call_id = await _answered(env, env["a"])
+    await _say(env, call_id, "hold on")
+    await _say(env, call_id, "")  # a quiet turn while they're away
+    back = service.spoken_text(await _say(env, call_id, "Sorry, how much is a repair?"))
+    assert back.startswith("We charge two hundred dollars for that.")
+    # back to the usual silence rule (no long quiet wait any more)
+    assert service.spoken_text(await _say(env, call_id, "")) == script.SILENCE_LINE

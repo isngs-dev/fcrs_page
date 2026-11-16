@@ -483,3 +483,25 @@ async def test_calls_use_claude_from_the_server_setting_and_keep_the_tenants_emb
     assert await realtime.calls_llm(object(), claims_b) is None  # not on the streamed calls
     settings.calls_llm_model = None
     assert await realtime.calls_llm(object(), claims_a) is None  # no model chosen: unchanged
+
+
+
+async def test_a_turn_with_nothing_to_say_keeps_the_silence_clock_running() -> None:
+    """2026-11-16: on hold she says nothing to a silent turn -- the next silent turn must
+    still come (so she can check in later), not wait forever."""
+    heard: list[str] = []
+
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        heard.append(speech)
+        return "", False  # quiet: the caller asked her to hold
+
+    call, plivo, flux, voice = _call(brain, silence_seconds=0.05)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    opening = len(plivo.events("playAudio"))
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
+    await _until(lambda: heard == ["", "", ""])
+    assert len(plivo.events("playAudio")) == opening  # nothing spoken after the opening
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)

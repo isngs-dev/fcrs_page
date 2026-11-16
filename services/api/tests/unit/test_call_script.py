@@ -506,3 +506,29 @@ def test_she_says_her_name_and_the_business() -> None:
     line = script.who_line("Acme Roofing")
     assert line.startswith("I'm Rebecca, the AI assistant at Acme Roofing.")
     assert line.endswith("?")
+
+
+
+@pytest.mark.parametrize(("text", "hold"), [
+    # Live 2026-11-16 (Flux wrote "1 2nd"): got a follow-up question; a long hold would hang up.
+    ("1 2nd. Can you hold for a 2nd?", True),
+    ("Can you hold for a second?", True),
+    ("hold on", True),
+    ("Hang on a minute.", True),
+    ("One sec.", True),
+    ("Give me a minute please", True),
+    ("just a moment", True),
+    # a question that only starts with "wait" is a question, not a hold
+    ("Okay. So what does ... like, wait a minute. Do I need to change my CRM?", False),
+    ("Hold on, how much is a repair?", False),
+    ("I was on hold with my bank all morning", False),
+])
+def test_a_request_to_hold_is_recognised(text: str, hold: bool) -> None:
+    assert (script.classify(text) == "hold") is hold
+
+
+def test_hold_state_survives_between_turns() -> None:
+    state = script.CallState(on_hold=True, hold_silences=3)
+    back = script.CallState.from_json(state.to_json())
+    assert (back.on_hold, back.hold_silences) == (True, 3)
+    assert script.CallState.from_json({}).on_hold is False

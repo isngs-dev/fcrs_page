@@ -16,7 +16,8 @@ from email_validator import EmailNotValidError, validate_email
 
 from api.voice_agent.agent import _GOODBYE_RE, _PERSON_RE
 
-Kind = Literal["recording_objection", "opt_out", "wrong_number", "robot", "who", "callback",
+Kind = Literal["recording_objection", "opt_out", "wrong_number", "robot", "who", "hold",
+               "callback",
                "person",
                "goodbye", "not_interested", "book", "yes", "no", "other"]
 
@@ -33,6 +34,12 @@ _ROBOT = re.compile(r"\b(?:are you|is this|am i (?:talking|speaking) (?:to|with)
 # and the business (live 2026-11-16: the model said "I don't have a personal name").
 _WHO = re.compile(r"\bwho(?:'s| is| am i| are you)\b.{0,20}\b(?:this|calling|speaking|talking)\b"
                   r"|\byour name\b", re.I)
+# "Can you hold for a 2nd?" / "hang on" / "one sec" -- they step away for a moment
+# (live 2026-11-16: two 8-second silences would have hung up on a longer hold).
+_HOLD = re.compile(r"\b(?:hold|hang) on\b|\bhold for\b"
+                   r"|\b(?:one|1|just a|wait a|give me a) (?:sec|second|2nd|minute|moment)\b"
+                   r"|^\W*(?:one|1) (?:sec|second|2nd)\b", re.I)
+_ASKS_SOMETHING = re.compile(r"\b(?:what|how|why|when|where|which|much|price|cost|need)\b", re.I)
 _CALLBACK = re.compile(
     r"\bcall (?:me )?(?:back|later|another time|tomorrow|next week)\b"
     r"|\b(?:not a good time|bad time|busy right now|i'?m busy|in a meeting|can'?t talk"
@@ -197,6 +204,9 @@ def classify(text: str) -> Kind:
         return "robot"
     if _WHO.search(text):
         return "who"
+    # "Hold on, how much is a repair?" asks something: that's a question, not a hold.
+    if _HOLD.search(text) and not _ASKS_SOMETHING.search(text) and len(text.split()) <= 9:
+        return "hold"
     if _CALLBACK.search(text):
         return "callback"
     if _PERSON_RE.search(text):
@@ -264,6 +274,9 @@ CALLBACK_LINE = "No problem, I'll call back another time. Have a good day, goodb
 GOODBYE_LINE = "Thanks for your time. Have a great day, goodbye."
 NOT_INTERESTED_LINE = "Understood, thanks for letting me know. Have a great day, goodbye."
 SILENCE_LINE = "Sorry, I didn't catch that. Are you still there?"
+HOLD_LINE = "Sure, take your time. I'll be right here."
+HOLD_CHECK_LINE = "I'm still here whenever you're ready. Take your time."
+HOLD_QUIET_TURNS = 6  # silent turns (about 8 s each) she waits quietly before checking in
 INBOUND_OFF_LINE = ("Thanks for calling. We can't take calls right now, please call back later "
                     "or visit our website. Goodbye.")
 TRANSFER_MISSED_LINE = ("Sorry, our team couldn't pick up right now. Someone will call you back "
@@ -603,6 +616,8 @@ class CallState:
     booked: dict[str, str] | None = None  # their upcoming booking: event_id, at (ISO), tz
     rescheduling: bool = False
     close_offered: bool = False  # the one "before you go, shall I book a call?" was asked
+    on_hold: bool = False  # they asked her to hold: silence is waited out quietly
+    hold_silences: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "day": self.day, "at": self.at, "zone": self.zone,
@@ -610,7 +625,8 @@ class CallState:
                 "silences": self.silences, "misses": self.misses,
                 "recording_started": self.recording_started, "question": self.question,
                 "history": self.history[-12:], "booked": self.booked,
-                "rescheduling": self.rescheduling, "close_offered": self.close_offered}
+                "rescheduling": self.rescheduling, "close_offered": self.close_offered,
+                "on_hold": self.on_hold, "hold_silences": self.hold_silences}
 
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
@@ -625,4 +641,6 @@ class CallState:
                    history=[list(h) for h in data.get("history", [])],
                    booked=data.get("booked"),
                    rescheduling=bool(data.get("rescheduling", False)),
-                   close_offered=bool(data.get("close_offered", False)))
+                   close_offered=bool(data.get("close_offered", False)),
+                   on_hold=bool(data.get("on_hold", False)),
+                   hold_silences=int(data.get("hold_silences", 0)))

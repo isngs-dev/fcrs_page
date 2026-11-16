@@ -339,6 +339,10 @@ class RealtimeCall:
                 await self._plivo.close()
                 self._done.set()
                 return False
+            if not speech and self._turns.empty() and not self._cut_off:
+                # nothing to say to a silence (they asked her to hold): keep the silence
+                # clock running, or the next check-in would never come
+                self._silence = asyncio.create_task(self._wait_silence())
             return True
         lines.put_nowait(None)
         if self._speech is not None:
