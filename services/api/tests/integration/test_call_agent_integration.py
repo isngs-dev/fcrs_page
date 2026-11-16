@@ -1381,6 +1381,18 @@ class _Telnyx:
     async def hangup(self, **kw: Any) -> None:
         self.calls.append(("hangup", kw))
 
+    async def answer(self, **kw: Any) -> None:
+        self.calls.append(("answer", kw))
+
+    async def reject(self, **kw: Any) -> None:
+        self.calls.append(("reject", kw))
+
+    async def gather_using_speak(self, **kw: Any) -> None:
+        self.calls.append(("gather_using_speak", kw))
+
+    async def speak(self, **kw: Any) -> None:
+        self.calls.append(("speak", kw))
+
     async def fetch_recording(self, **kw: Any) -> bytes:
         self.calls.append(("fetch_recording", kw))
         return b"ID3-telnyx-audio"
@@ -1402,8 +1414,8 @@ def _on_telnyx(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, *tenants: s
     for key, value in {"REALTIME_VOICE_TENANTS": listed, "DEEPGRAM_API_KEY": uuid4().hex,
                        "ELEVENLABS_API_KEY": uuid4().hex, "ELEVENLABS_VOICE_ID": "voice-1",
                        "TELNYX_TENANTS": listed, "TELNYX_API_KEY": uuid4().hex,
-                       "TELNYX_PUBLIC_KEY": public.decode(), "TELNYX_CONNECTION_ID": "conn-1",
-                       "TELNYX_FROM_NUMBER": "+13055550199"}.items():
+                       "TELNYX_PUBLIC_KEY": public.decode(),
+                       "TELNYX_CONNECTION_ID": "conn-1"}.items():
         monkeypatch.setenv(key, value)
     get_api_settings.cache_clear()
     fake = _Telnyx()
@@ -1442,14 +1454,14 @@ async def test_a_listed_tenant_is_dialled_through_telnyx_and_others_stay_on_pliv
     [(name, sent)] = fake.calls
     assert name == "dial" and env["plivo"].calls == []
     assert (sent["to_e164"], sent["from_e164"], sent["time_limit"]) == (
-        "+12025550123", "+13055550199", 300)
+        "+12025550123", "+17865550000", 300)  # tenant A's own number
     assert sent["webhook_url"] == (f"{_BASE}/public/call-agent/telnyx/calls/{call_a}/events"
                                    f"?ticket={service.ticket(call_a)}")
     assert sent["stream_url"] == (f"wss://api.example.com/public/call-agent/calls/{call_a}/stream"
                                   f"?ticket={service.ticket(call_a)}")
     row = await _row(env, call_a)
     assert (row["provider_call_uuid"], row["provider_request_uuid"], row["from_e164"]) == (
-        "v2:call-1", "leg-1", "+13055550199")
+        "v2:call-1", "leg-1", "+17865550000")
 
     await _dial(env, b)  # not listed: Plivo, as before
     assert env["plivo"].names() == ["place_call"] and fake.dialled == 1
@@ -1694,3 +1706,141 @@ async def test_alert_emails_are_set_by_admins_and_validated(env: dict[str, Any])
         r = await client.put("/admin/outreach/call-config", cookies=_cookie(a),
                              json=body | {"missed_call_alert_emails": bad})
         assert r.status_code == 422
+
+
+
+async def test_each_telnyx_tenant_calls_from_its_own_number(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """2026-11-16: one Telnyx account, one number per tenant (spam reputation, callbacks)."""
+    a, b = env["a"], env["b"]
+    fake, _ = _on_telnyx(env, monkeypatch, a, b)
+    claims_b = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=b)
+    config_b = await repo.get_call_config(env["db"], claims_b)
+    assert config_b is not None
+    await repo.upsert_call_config(env["db"], claims_b, auth_token=None,
+                                  values={**config_b.__dict__, "from_number": "+13055550188"})
+    await _dial(env, a)
+    await _dial(env, b)
+    assert [kw["from_e164"] for name, kw in fake.calls if name == "dial"] == [
+        "+17865550000", "+13055550188"]
+
+
+# -- Callbacks to a tenant's Telnyx number (2026-11-16) ------------------------------------------
+
+
+async def _numbers(env: dict[str, Any]) -> dict[str, str]:
+    """Register distinct numbers for tenants A and B (inbound routing is by called number)."""
+    out = {}
+    for label in ("a", "b"):
+        number = f"+1305{int(uuid4().hex[:6], 16) % 10_000_000:07d}"
+        claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=env[label])
+        await repo.register_number(env["db"], claims, number)
+        out[label] = number
+    return out
+
+
+async def _callback_event(env: dict[str, Any], private: Any, event_type: str, *,
+                          state: str | None = None, sign_with: Any = None,
+                          **payload: Any) -> Any:
+    import base64
+    import json
+    import time
+
+    if state is not None:
+        payload["client_state"] = base64.b64encode(state.encode()).decode()
+    body = json.dumps({"data": {"record_type": "event", "event_type": event_type,
+                                "id": uuid4().hex,
+                                "payload": {"call_control_id": "v2:cb-1", **payload}}}).encode()
+    stamp = str(int(time.time()))
+    signature = base64.b64encode((sign_with or private).sign(stamp.encode() + b"|" + body))
+    return await env["client"].post(
+        "/public/call-agent/telnyx/callbacks", content=body,
+        headers={"telnyx-signature-ed25519": signature.decode(), "telnyx-timestamp": stamp,
+                 "content-type": "application/json"})
+
+
+async def test_a_callback_hears_the_business_and_pressing_1_stops_its_calls(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a, b, db = env["a"], env["b"], env["db"]
+    fake, key = _on_telnyx(env, monkeypatch, a, b)
+    numbers = await _numbers(env)
+    contact_id, _ = await _contact_with_call_task(env, a)  # Jane, +12025550123, in tenant A
+    caller = {"from": "+12025550123", "to": numbers["a"]}
+
+    await _callback_event(env, key, "call.initiated", direction="incoming", **caller)
+    assert fake.calls[-1] == ("answer", {"call_uuid": "v2:cb-1", "client_state": "callback:answered"})
+    await _callback_event(env, key, "call.answered", state="callback:answered", **caller)
+    name, sent = fake.calls[-1]
+    assert name == "gather_using_speak" and sent["client_state"] == "callback:menu"
+    assert "Acme Roofing" in sent["text"] and "press 1" in sent["text"].lower()
+
+    await _callback_event(env, key, "call.gather.ended", state="callback:menu", digits="1",
+                          status="valid", **caller)
+    name, sent = fake.calls[-1]
+    assert name == "speak" and sent["client_state"] == "callback:bye"
+    assert "won't call you again" in sent["text"]
+    rows = await db.fetch("SELECT tenant_id, channel, value_normalised, reason, source "
+                          "FROM suppression_list WHERE value_normalised = '+12025550123'")
+    assert [tuple(r) for r in rows] == [(a, "call", "+12025550123", "dnc_request", "callback")]
+    assert await db.fetchval("SELECT count(*) FROM agent_events WHERE tenant_id = $1 "
+                             "AND kind = 'opt_out_received' AND payload->>'contact_id' = $2",
+                             a, contact_id) == 1
+
+    await _callback_event(env, key, "call.speak.ended", state="callback:bye", status="completed")
+    assert fake.calls[-1] == ("hangup", {"call_uuid": "v2:cb-1"})
+
+
+async def test_a_callback_without_pressing_1_changes_nothing(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a, db = env["a"], env["db"]
+    fake, key = _on_telnyx(env, monkeypatch, a)
+    numbers = await _numbers(env)
+    caller = {"from": "+12025550123", "to": numbers["a"]}
+    await _callback_event(env, key, "call.gather.ended", state="callback:menu", digits="",
+                          status="timeout", **caller)
+    name, sent = fake.calls[-1]
+    assert (name, sent["text"], sent["client_state"]) == (
+        "speak", telnyx_module().CALLBACK_BYE, "callback:bye")
+    assert await db.fetchval("SELECT count(*) FROM suppression_list WHERE tenant_id = $1", a) == 0
+
+
+async def test_callbacks_to_unknown_or_non_telnyx_numbers_are_rejected(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a = env["a"]
+    fake, key = _on_telnyx(env, monkeypatch, a)  # tenant B stays on Plivo
+    numbers = await _numbers(env)
+    for to in ("+13055559999", numbers["b"]):  # nobody's number / a Plivo tenant's number
+        await _callback_event(env, key, "call.initiated", direction="incoming",
+                              **{"from": "+12025550123", "to": to})
+        assert fake.calls[-1] == ("reject", {"call_uuid": "v2:cb-1"})
+    # ... and a later step for such a number does nothing (no opt-out recorded anywhere)
+    await _callback_event(env, key, "call.gather.ended", state="callback:menu", digits="1",
+                          status="valid", **{"from": "+12025550123", "to": numbers["b"]})
+    assert await env["db"].fetchval("SELECT count(*) FROM suppression_list "
+                                    "WHERE tenant_id = ANY($1)", [a, env["b"]]) == 0
+
+
+async def test_forged_callbacks_and_our_own_outbound_events_are_never_acted_on(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    a = env["a"]
+    fake, key = _on_telnyx(env, monkeypatch, a)
+    numbers = await _numbers(env)
+    forged = await _callback_event(env, key, "call.gather.ended", state="callback:menu",
+                                   digits="1", status="valid",
+                                   sign_with=Ed25519PrivateKey.generate(),
+                                   **{"from": "+12025550123", "to": numbers["a"]})
+    assert forged.status_code == 401
+    assert forged.json()["error_code"] == "TELNYX_SIGNATURE_INVALID"
+    ours = await _callback_event(env, key, "call.answered", to="+12025550123")  # outbound leg
+    assert ours.status_code == 200
+    assert fake.calls == []
+    assert await env["db"].fetchval("SELECT count(*) FROM suppression_list WHERE tenant_id = $1",
+                                    a) == 0
+
+
+def telnyx_module() -> Any:
+    from api.call_agent import telnyx
+
+    return telnyx

@@ -330,8 +330,11 @@ refused by Plivo); the user confirmed Step 0 (funded account, number, test call)
 turn-by-turn version. So a Telnyx tenant must also be a streamed tenant (`telnyx.enabled_for` requires
 `realtime.enabled_for`).
 
-**D-T2 — platform settings first.** `TELNYX_TENANTS`, `TELNYX_API_KEY`, `TELNYX_PUBLIC_KEY`,
-`TELNYX_CONNECTION_ID`, `TELNYX_FROM_NUMBER` (server `.env`), like the speech keys in the speed test.
+**D-T2 — one platform account, one number per tenant.** `TELNYX_TENANTS`, `TELNYX_API_KEY`,
+`TELNYX_PUBLIC_KEY`, `TELNYX_CONNECTION_ID` (server `.env`), like the speech keys in the speed test. Each
+tenant calls from its OWN number — the `from_number` in its call settings, unique per tenant
+(`register_number`) — bought on that account (2026-11-16, replacing the first `TELNYX_FROM_NUMBER`):
+carriers judge spam reputation per number, and a callback must reach the business that called.
 Per-client encrypted keys + the provider picker are T4. Until then tenant isolation on the events route rests
 on the per-call HMAC ticket plus the event's `call_control_id` matching that call's — one Telnyx account
 serves every listed tenant.
@@ -373,3 +376,16 @@ Rebecca will try again — or that it was her last try. Rebecca's retries carry 
 "every missed call", not "stop after the first"). The email goes through the tenant's own notification
 sender, like booking confirmations; a failed send is logged and never blocks settling the call. Empty list
 = no emails.
+
+**D-T7 — callbacks (2026-11-16).** Rebecca takes no incoming calls, but people return missed calls and the
+number shown must let them ask that business to stop calling (47 CFR 64.1601(e)). The Telnyx application's
+webhook URL is `/public/call-agent/telnyx/callbacks` (set once in the Telnyx portal). A call to a Telnyx
+tenant's number is answered with one message in a stock Telnyx voice (`AWS.Polly.Joanna-Neural`): "Hi,
+you've reached <company>. Thanks for calling us back. We called you recently about your enquiry, and someone
+from our team will follow up with you. If you'd like <company> to stop calling you, press 1 now." Pressing 1
+adds the caller to THAT tenant's call do-not-call list (`source = callback`), emits `opt_out_received` for
+a matching contact (its plans stop), and says "Done. <company> won't call you again. Goodbye."; otherwise
+"Thanks for calling. Goodbye." — then hang-up. The tenant is looked up from the number called at every step;
+a number that isn't a Telnyx tenant's is rejected. Steps are marked in `client_state` (set by our own
+commands, echoed in Telnyx's signed events), so our outbound calls' events are never treated as callbacks.
+Every request's Ed25519 signature is checked first.

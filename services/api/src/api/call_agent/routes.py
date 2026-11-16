@@ -297,6 +297,21 @@ async def telnyx_events(call_id: str, request: Request) -> Response:
     return Response(status_code=200)
 
 
+@public_router.post("/telnyx/callbacks")
+async def telnyx_callbacks(request: Request) -> Response:
+    """The Telnyx application's webhook (2026-11-16): calls TO a tenant's number -- people
+    calling back. Telnyx's signature is checked first; everything else is acknowledged."""
+    body = await request.body()
+    telnyx.verify_signature(public_key=str(get_api_settings().telnyx_public_key or ""),
+                            body=body,
+                            signature=request.headers.get(telnyx.SIGNATURE_HEADER),
+                            timestamp=request.headers.get(telnyx.TIMESTAMP_HEADER))
+    event = telnyx.parse_callback(body)
+    if event.kind != "other":
+        await service.handle_callback(request.app.state.db, event)
+    return Response(status_code=200)
+
+
 @public_router.post("/calls/{call_id}/answer")
 async def answer(call_id: str, request: Request) -> Response:
     session, params, claims = await _verified(request, call_id)

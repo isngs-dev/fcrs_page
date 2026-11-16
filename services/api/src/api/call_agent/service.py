@@ -43,7 +43,7 @@ from api.call_agent import realtime, script, telnyx
 from api.call_agent import repository as repo
 from api.call_agent.telephony import PlivoTelephony, TelephonyProvider, TelnyxTelephony
 from api.config import get_api_settings
-from api.contacts.repository import get_contact, list_identities
+from api.contacts.repository import get_contact, get_contact_id_by_identity, list_identities
 from api.llm.provider import ChatMessage
 from api.notifications.emit import emit_event_safe
 from api.notifications.repository import enqueue_notification
@@ -202,8 +202,7 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
         raise ValidationError("The contact has no dialable phone number.",
                               code="CONTACT_NO_PHONE")
     on_telnyx = telnyx.enabled_for(claims.tenant_id)
-    from_number = (str(get_api_settings().telnyx_from_number) if on_telnyx
-                   else config.from_number)
+    from_number = config.from_number  # each tenant's own number (Plivo or Telnyx)
     call_id = await repo.create_session(db, claims, task_id=task.task_id, plan_id=task.plan_id,
                                         contact_id=task.contact_id,
                                         from_e164=from_number, to_e164=phone,
@@ -325,6 +324,48 @@ async def recording_saved(db: Database, claims: AuthClaims, session: repo.CallSe
     if recording_id:
         await repo.update_session(db, claims, session.call_id, recording_id=recording_id,
                                   recording_url=f"{TELNYX_RECORDING}{recording_id}")
+
+
+async def handle_callback(db: Database, event: telnyx.Callback) -> None:
+    """Someone called a tenant's Telnyx number back (2026-11-16): one message naming the
+    business; "press 1" -> that tenant's do-not-call list (and its plans stop). The tenant is
+    looked up from the number called at every step; numbers that aren't a Telnyx tenant's are
+    rejected, and later steps for them do nothing."""
+    tenant_id = await repo.tenant_for_number_system(db, event.called) if event.called else None
+    known = tenant_id is not None and telnyx.enabled_for(tenant_id)
+    if event.kind == "goodbye_said":
+        await telnyx_for(tenant_id or "").hangup(call_uuid=event.call_control_id)
+        return
+    if not known or tenant_id is None:
+        if event.kind == "incoming":
+            await telnyx_for("").reject(call_uuid=event.call_control_id)
+        return
+    provider = telnyx_for(tenant_id)
+    claims = system_claims(tenant_id)
+    if event.kind == "incoming":
+        await provider.answer(call_uuid=event.call_control_id, client_state="callback:answered")
+        return
+    config = await repo.get_call_config(db, claims)
+    company = config.company_name if config else "our team"
+    if event.kind == "answered":
+        await provider.gather_using_speak(call_uuid=event.call_control_id,
+                                          text=telnyx.callback_menu_line(company),
+                                          client_state="callback:menu")
+        return
+    if event.kind == "menu_answered":
+        line = telnyx.CALLBACK_BYE
+        caller = to_e164(event.caller)
+        if event.digits == "1" and caller:
+            await add_suppression(db, claims, channel="call", value=caller,
+                                  reason="dnc_request", source="callback")
+            contact_id = await get_contact_id_by_identity(db, claims, identity_type="phone",
+                                                          identity_value=caller)
+            if contact_id:
+                await emit(db, claims, "opt_out_received",
+                           {"contact_id": contact_id, "channel": "call"})
+            line = telnyx.callback_removed_line(company)
+        await provider.speak(call_uuid=event.call_control_id, text=line,
+                             client_state="callback:bye")
 
 
 async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSessionRow,

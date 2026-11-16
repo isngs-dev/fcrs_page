@@ -6,6 +6,7 @@ Deterministic failures (bad credentials, rejected number) raise
 """
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote
@@ -189,6 +190,32 @@ class TelnyxTelephony:
 
     async def hangup(self, *, call_uuid: str) -> None:
         await self._request("POST", self._call(call_uuid, "hangup"), {})
+
+    @staticmethod
+    def _state(value: str) -> str:
+        return base64.b64encode(value.encode()).decode()
+
+    async def answer(self, *, call_uuid: str, client_state: str) -> None:
+        await self._request("POST", self._call(call_uuid, "answer"),
+                            {"client_state": self._state(client_state)})
+
+    async def reject(self, *, call_uuid: str) -> None:
+        await self._request("POST", self._call(call_uuid, "reject"), {"cause": "CALL_REJECTED"})
+
+    async def speak(self, *, call_uuid: str, text: str, client_state: str) -> None:
+        from api.call_agent.telnyx import CALLBACK_VOICE  # noqa: PLC0415 -- telnyx imports us
+
+        await self._request("POST", self._call(call_uuid, "speak"), {
+            "payload": text, "voice": CALLBACK_VOICE, "client_state": self._state(client_state)})
+
+    async def gather_using_speak(self, *, call_uuid: str, text: str, client_state: str) -> None:
+        """Say ``text`` and wait up to 8 s for one key: only "1" counts."""
+        from api.call_agent.telnyx import CALLBACK_VOICE  # noqa: PLC0415
+
+        await self._request("POST", self._call(call_uuid, "gather_using_speak"), {
+            "payload": text, "voice": CALLBACK_VOICE, "valid_digits": "1", "minimum_digits": 1,
+            "maximum_digits": 1, "timeout_millis": 8000, "maximum_tries": 1,
+            "client_state": self._state(client_state)})
 
     async def transfer(self, *, call_uuid: str, to_e164: str, from_e164: str) -> None:
         await self._request("POST", self._call(call_uuid, "transfer"),

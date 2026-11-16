@@ -385,7 +385,7 @@ async def test_a_whole_streamed_call_runs_on_telnyx_unchanged() -> None:
 
 def _settings(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
     for key in ("TELNYX_TENANTS", "TELNYX_API_KEY", "TELNYX_PUBLIC_KEY", "TELNYX_CONNECTION_ID",
-                "TELNYX_FROM_NUMBER", "REALTIME_VOICE_TENANTS", "DEEPGRAM_API_KEY",
+                "REALTIME_VOICE_TENANTS", "DEEPGRAM_API_KEY",
                 "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"):
         monkeypatch.delenv(key, raising=False)
     base = {"DEPLOYMENT_MODE": "saas", "DATABASE_URL": "postgres://stub-host:5432/appdb",
@@ -405,14 +405,15 @@ def test_only_listed_tenants_with_every_key_and_the_stream_get_telnyx(
     _, public = _keys()
     full = {"TELNYX_TENANTS": "t-1, t-2", "TELNYX_API_KEY": _fake_key(),
             "TELNYX_PUBLIC_KEY": public, "TELNYX_CONNECTION_ID": "conn-1",
-            "TELNYX_FROM_NUMBER": "+17865550000", "REALTIME_VOICE_TENANTS": "t-1,t-2",
+            "REALTIME_VOICE_TENANTS": "t-1,t-2",
             "DEEPGRAM_API_KEY": _fake_key(), "ELEVENLABS_API_KEY": _fake_key(),
             "ELEVENLABS_VOICE_ID": "voice-1"}
     _settings(monkeypatch, **full)
     assert telnyx.enabled_for("t-1") and telnyx.enabled_for("t-2")
     assert not telnyx.enabled_for("t-3") and not telnyx.enabled_for(None)
     for missing in ("TELNYX_API_KEY", "TELNYX_PUBLIC_KEY", "TELNYX_CONNECTION_ID",
-                    "TELNYX_FROM_NUMBER", "DEEPGRAM_API_KEY"):  # Telnyx calls are streamed calls
+                    "DEEPGRAM_API_KEY"):  # Telnyx calls are streamed calls
+        # (no platform number: each tenant calls from its own, 2026-11-16)
         _settings(monkeypatch, **{k: v for k, v in full.items() if k != missing})
         assert not telnyx.enabled_for("t-1"), missing
     get_api_settings.cache_clear()
@@ -426,3 +427,69 @@ def test_the_stream_and_event_urls_carry_the_calls_ticket(
     assert telnyx.events_url("c-1", "tick") == (
         "https://api.example.com/public/call-agent/telnyx/calls/c-1/events?ticket=tick")
     get_api_settings.cache_clear()
+
+
+# -- callbacks: someone calls a tenant's Telnyx number back (2026-11-16) ------------------------
+
+
+def _state(value: str) -> str:
+    return base64.b64encode(value.encode()).decode()
+
+
+def test_a_call_to_our_number_and_the_steps_of_the_callback_message_are_read() -> None:
+    incoming = telnyx.parse_callback(_event(
+        "call.initiated", direction="incoming", to="+17865550000", **{"from": "+12025550123"}))
+    assert (incoming.kind, incoming.call_control_id, incoming.called, incoming.caller) == (
+        "incoming", "v2:abc", "+17865550000", "+12025550123")
+    answered = telnyx.parse_callback(_event(
+        "call.answered", to="+17865550000", client_state=_state("callback:answered"),
+        **{"from": "+12025550123"}))
+    assert (answered.kind, answered.called) == ("answered", "+17865550000")
+    pressed = telnyx.parse_callback(_event(
+        "call.gather.ended", to="+17865550000", digits="1", status="valid",
+        client_state=_state("callback:menu"), **{"from": "+12025550123"}))
+    assert (pressed.kind, pressed.digits, pressed.caller) == ("menu_answered", "1", "+12025550123")
+    done = telnyx.parse_callback(_event("call.speak.ended", status="completed",
+                                        client_state=_state("callback:bye")))
+    assert done.kind == "goodbye_said"
+
+
+@pytest.mark.parametrize("body", [
+    # one of OUR outbound calls: never touched by the callback handler
+    _event("call.initiated", direction="outgoing", to="+12025550123"),
+    _event("call.answered", to="+12025550123"),
+    _event("call.answered", to="+12025550123", client_state=_state("something-else")),
+    _event("call.gather.ended", digits="1", client_state="!!not base64!!"),
+    _event("call.hangup", hangup_cause="normal_clearing", client_state=_state("callback:menu")),
+    b"not json",
+])
+def test_anything_that_is_not_a_callback_step_is_ignored(body: bytes) -> None:
+    assert telnyx.parse_callback(body).kind == "other"
+
+
+def test_the_callback_message_names_the_business_and_offers_the_opt_out() -> None:
+    menu = telnyx.callback_menu_line("Acme Roofing")
+    assert "Acme Roofing" in menu and "press 1" in menu.lower()
+    assert "Acme Roofing" in telnyx.callback_removed_line("Acme Roofing")
+    assert "won't call you again" in telnyx.callback_removed_line("Acme Roofing")
+    assert "Goodbye" in telnyx.CALLBACK_BYE
+
+
+async def test_answering_speaking_gathering_and_rejecting_on_telnyx() -> None:
+    api = _Api()
+    provider = _provider(api, _fake_key())
+    await provider.answer(call_uuid="v2:abc", client_state="callback:answered")
+    await provider.gather_using_speak(call_uuid="v2:abc", text="Press 1.",
+                                      client_state="callback:menu")
+    await provider.speak(call_uuid="v2:abc", text="Goodbye.", client_state="callback:bye")
+    await provider.reject(call_uuid="v2:xyz")
+    assert [(m, p, b) for m, p, b, _ in api.requests] == [
+        ("POST", "/v2/calls/v2:abc/actions/answer", {"client_state": _state("callback:answered")}),
+        ("POST", "/v2/calls/v2:abc/actions/gather_using_speak", {
+            "payload": "Press 1.", "voice": telnyx.CALLBACK_VOICE, "valid_digits": "1",
+            "minimum_digits": 1, "maximum_digits": 1, "timeout_millis": 8000,
+            "maximum_tries": 1, "client_state": _state("callback:menu")}),
+        ("POST", "/v2/calls/v2:abc/actions/speak", {
+            "payload": "Goodbye.", "voice": telnyx.CALLBACK_VOICE,
+            "client_state": _state("callback:bye")}),
+        ("POST", "/v2/calls/v2:xyz/actions/reject", {"cause": "CALL_REJECTED"})]

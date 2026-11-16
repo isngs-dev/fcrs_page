@@ -54,8 +54,7 @@ def enabled_for(tenant_id: str | None) -> bool:
     s = get_api_settings()
     tenants = {t.strip() for t in (s.telnyx_tenants or "").split(",") if t.strip()}
     return bool(tenant_id and tenant_id in tenants and s.telnyx_api_key and s.telnyx_public_key
-                and s.telnyx_connection_id and s.telnyx_from_number
-                and realtime.enabled_for(tenant_id))
+                and s.telnyx_connection_id and realtime.enabled_for(tenant_id))
 
 
 def _base() -> str:
@@ -138,6 +137,68 @@ def parse_event(body: bytes) -> Event:
         return Event(kind="stream_failed", **common,
                      reason=str(payload.get("failure_reason") or ""))
     return Event(kind="other", **common)
+
+
+# -- callbacks: someone calls a tenant's number back (2026-11-16) ------------------------------
+#
+# Rebecca takes no incoming calls, but people return missed calls, and the number they see
+# must let them ask that business to stop calling (47 CFR 64.1601(e)). So a call to a
+# tenant's Telnyx number gets one short message naming the business, and "press 1" puts the
+# caller on THAT tenant's do-not-call list. The tenant comes from the number called; each
+# step is marked in ``client_state`` (set by our own commands, echoed in Telnyx's signed
+# events), so an outbound call's events are never mistaken for a callback.
+
+CALLBACK_VOICE = "AWS.Polly.Joanna-Neural"
+CALLBACK_BYE = "Thanks for calling. Goodbye."
+_CALLBACK_STEPS = {"call.answered": ("callback:answered", "answered"),
+                   "call.gather.ended": ("callback:menu", "menu_answered"),
+                   "call.speak.ended": ("callback:bye", "goodbye_said")}
+
+
+def callback_menu_line(company: str) -> str:
+    return (f"Hi, you've reached {company}. Thanks for calling us back. We called you recently "
+            "about your enquiry, and someone from our team will follow up with you. If you'd "
+            f"like {company} to stop calling you, press 1 now.")
+
+
+def callback_removed_line(company: str) -> str:
+    return f"Done. {company} won't call you again. Goodbye."
+
+
+@dataclass(frozen=True)
+class Callback:
+    kind: str  # incoming | answered | menu_answered | goodbye_said | other
+    call_control_id: str = ""
+    called: str = ""  # our number
+    caller: str = ""
+    digits: str = ""
+
+
+def _state(payload: dict[str, Any]) -> str | None:
+    try:
+        return base64.b64decode(str(payload.get("client_state") or ""), validate=True).decode()
+    except (ValueError, binascii.Error):
+        return None
+
+
+def parse_callback(body: bytes) -> Callback:
+    """One event on the application's webhook -> a step of the callback message, else
+    ``other`` (our own outbound calls, unknown events, malformed bodies)."""
+    try:
+        data = json.loads(body)["data"]
+        event_type, payload = str(data["event_type"]), data["payload"]
+        control_id = str(payload["call_control_id"])
+    except (ValueError, KeyError, TypeError):
+        return Callback(kind="other")
+    parts: dict[str, Any] = {"call_control_id": control_id, "called": str(payload.get("to") or ""),
+                             "caller": str(payload.get("from") or "")}
+    if event_type == "call.initiated":
+        return Callback(kind="incoming" if payload.get("direction") == "incoming" else "other",
+                        **parts)
+    step = _CALLBACK_STEPS.get(event_type)
+    if step is None or _state(payload) != step[0]:
+        return Callback(kind="other")
+    return Callback(kind=step[1], digits=str(payload.get("digits") or ""), **parts)
 
 
 # -- the stream dialect -----------------------------------------------------------------------

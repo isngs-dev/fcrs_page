@@ -369,13 +369,13 @@ class ApiSettings(Settings):
     anthropic_api_key: str | None = None
     calls_llm_model: str | None = None
     # Telnyx instead of Plivo for the tenants listed (comma-separated ids); they must also be
-    # in REALTIME_VOICE_TENANTS -- Telnyx calls are streamed calls. All five set -> on.
+    # in REALTIME_VOICE_TENANTS -- Telnyx calls are streamed calls. All four set -> on. Each
+    # tenant calls from its own number (its call settings' from_number), bought on this account.
     # ponytail: platform settings for the first live calls; per-client keys come with T4.
     telnyx_tenants: str | None = None
     telnyx_api_key: str | None = None
     telnyx_public_key: str | None = None  # base64 Ed25519, verifies their webhooks
     telnyx_connection_id: str | None = None  # the Call Control application's id
-    telnyx_from_number: str | None = None  # the Telnyx number calls are placed from (E.164)
     # Plivo <Speak> voice: WOMAN or MAN.
     voice_agent_tts_voice: str = "WOMAN"
     # Max "Call Us" calls per visitor, and per IP, per hour -- each call costs
