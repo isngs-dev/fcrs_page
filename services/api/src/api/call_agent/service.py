@@ -556,6 +556,11 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     state.zone = script.parse_zone(speech) or state.zone
     tz = state.zone or await _business_tz(db, claims)
     when = script.parse_when(speech, _today(tz))
+    if (state.booked and when[1] is None and script.means_same_time(speech)
+            and (state.rescheduling or script.wants_reschedule(speech))):
+        # "the 20th, same time": the booked call's time of day, in the zone times are heard in
+        kept = datetime.fromisoformat(state.booked["at"]).astimezone(ZoneInfo(tz))
+        when = (when[0], (kept.hour, kept.minute))
     named_time = when != (None, None)
     if kind == "callback" and state.stage in ("asking_time", "confirming") and named_time:
         kind = "other"  # "I'm busy Monday, how about Tuesday at 3" is a time, not a callback

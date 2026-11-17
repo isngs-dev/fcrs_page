@@ -571,3 +571,19 @@ def test_why_she_is_calling_names_the_real_reason() -> None:
                              "November 17 at 10 AM Eastern time")
     plain = script.why_line("Acme Roofing", None, None)
     assert "Acme Roofing" in plain and "enquiry" in plain and "{" not in plain
+
+
+@pytest.mark.parametrize(("text", "same"), [
+    # Live 2026-11-16: "Same time." x3 -> "Sorry, I didn't catch the time." -> hand-off.
+    ("Same time.", True),
+    ("Same.", True),
+    ("same time.", True),
+    ("the same time please", True),
+    ("Can you reschedule it to maybe the 20th of November same time?", True),
+    ("same as before", True),
+    ("at the same time as my other call", True),
+    ("Is it the same price?", False),
+    ("4 pm", False),
+])
+def test_same_time_is_recognised(text: str, same: bool) -> None:
+    assert script.means_same_time(text) is same

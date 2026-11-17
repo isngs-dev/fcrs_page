@@ -279,3 +279,13 @@ def test_task_routing_table() -> None:
     assert router.route({}, "call_agent.dial")["queue"].name == "calls"
     assert router.route({}, "scheduling.dispatch_due_reminders")["queue"].name == "celery"
     assert "api.agents.tasks" in celery_app.conf.include
+
+
+def test_a_chat_call_waits_only_30_seconds_of_quiet() -> None:
+    """Owner, 2026-11-17: the call must not depend on the visitor saying goodbye -- a
+    visitor who shares their number and goes quiet for 30 seconds gets the call."""
+    from datetime import timedelta
+
+    from api.agents import planner
+
+    assert planner.CHAT_IDLE == timedelta(seconds=30)

@@ -1991,3 +1991,34 @@ async def test_you_called_me_gets_the_real_reason_for_the_call(
     assert turn.status_code == 200, turn.text
     said_b = service.spoken_text(str(turn.text))
     assert said_b == script.why_line("Acme Roofing", booked_at, "America/New_York")
+
+
+async def test_rescheduling_to_the_same_time_on_another_day(env: dict[str, Any]) -> None:
+    """Live 2026-11-16, replayed: "reschedule it to the 20th of November same time" ->
+    "What time...?", then "Same time." three times -> "didn't catch the time" -> hand-off."""
+    a = env["a"]
+    day = (datetime.now(_NY) + timedelta(days=2)).date()
+    await _form_booking(env, a, datetime.combine(day, dtime(10), tzinfo=_NY))
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    new_day = day + timedelta(days=3)
+    new = datetime.combine(new_day, dtime(10), tzinfo=_NY)
+    final = service.spoken_text(await _say(
+        env, call_id, f"Can you reschedule it to the {new_day.day}th of {new_day:%B} same time?"))
+    assert final == script.final_check_line(new, "America/New_York", "jane@example.com")
+
+
+async def test_same_time_answers_the_what_time_question(env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    day = (datetime.now(_NY) + timedelta(days=2)).date()
+    await _form_booking(env, a, datetime.combine(day, dtime(10), tzinfo=_NY))
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    new_day = day + timedelta(days=3)
+    ask = service.spoken_text(await _say(env, call_id, f"move it to {new_day:%B} {new_day.day}"))
+    assert ask == script.ask_hour_line(new_day)
+    final = service.spoken_text(await _say(env, call_id, "Same time."))
+    new = datetime.combine(new_day, dtime(10), tzinfo=_NY)
+    assert final == script.final_check_line(new, "America/New_York", "jane@example.com")
+    assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
+                             call_id) != "escalated"

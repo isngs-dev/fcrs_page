@@ -404,6 +404,16 @@ def wants_reschedule(text: str) -> bool:
     return bool(_RESCHEDULE.search(text))
 
 
+# "Same time." / "the 20th, same time" -- while moving a booked call: its time of day
+# (live 2026-11-16: asked "what time?" three times, then handed off).
+_SAME_TIME = re.compile(r"\b(?:the )?same time\b|^\W*(?:the )?same\W*$"
+                        r"|\bsame as (?:before|now|it was|the other|my other)\b", re.I)
+
+
+def means_same_time(text: str) -> bool:
+    return bool(_SAME_TIME.search(text))
+
+
 def keeps_booking(text: str) -> bool:
     return bool(_KEEP.search(text))
 

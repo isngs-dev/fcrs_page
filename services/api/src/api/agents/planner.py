@@ -48,7 +48,8 @@ CHAT_CALL_INTENT = ("They were just chatting with us on our website and shared t
                     "thank them, pick up where the chat left off, answer questions and offer to "
                     "book a meeting.")
 # A chat call waits until the visitor has gone this quiet (or said goodbye) -- dispatch.
-CHAT_IDLE = timedelta(minutes=2)
+# Owner, 2026-11-17: 30 s (was 2 min) -- the call must not depend on a goodbye being typed.
+CHAT_IDLE = timedelta(seconds=30)
 
 
 def call_first_steps(settings: AgentSettings, intent: str = FORM_CALL_INTENT

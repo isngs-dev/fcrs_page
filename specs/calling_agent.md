@@ -447,3 +447,9 @@ that moved from Plivo to Telnyx sent its old Plivo recordings to Telnyx, which c
 (all-or-nothing) erased nothing. `service.recording_provider` now picks the provider from the recording
 itself — `telnyx:<id>` / `pending:<call>` → Telnyx, anything else → Plivo with the tenant's stored Plivo login
 — for both the contact erase and the retention purge. No longer a known limitation.
+
+**R37 — "same time" while moving a booked call (2026-11-16, Telnyx call):** "reschedule it to the 20th of
+November same time" got "What time would you like…?", and "Same time." three times got "Sorry, I didn't catch
+the time." and then the team hand-off. Now, while a booked call is being moved (or in the same sentence that
+asks to move it), "same time" / "the same" / "same as before" (`script.means_same_time`) means the booked call's
+time of day, in the zone times are heard in — so "the 20th, same time" goes straight to the final check.
