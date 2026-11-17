@@ -1,12 +1,13 @@
 /**
  * Outreach settings (A8 U10, CLIENT_ADMIN): kill switch, agent settings, the
- * email sender, AI calling, and the do-not-contact list.
+ * email sender, AI calling, lead qualification (plan 1.2), and the do-not-contact list.
  */
 import { requireRole } from "@/lib/auth";
 import {
   getAgentSettings,
   getCallAgentConfig,
   getEmailConfig,
+  getQualification,
   listSuppressions,
   setOutreachPaused,
 } from "@/lib/outreach";
@@ -17,16 +18,18 @@ import {
   AgentSettingsForm,
   CallConfigForm,
   EmailConfigForm,
+  QualificationForm,
   SuppressionsCard,
 } from "@/app/(protected)/outreach/settings/settings-forms";
 
 export default async function OutreachSettingsPage() {
   await requireRole("CLIENT_ADMIN");
-  const [settings, email, call, suppressions] = await Promise.all([
+  const [settings, email, call, suppressions, qualification] = await Promise.all([
     getAgentSettings(),
     getEmailConfig(),
     getCallAgentConfig(),
     listSuppressions(),
+    getQualification(),
   ]);
 
   return (
@@ -64,6 +67,11 @@ export default async function OutreachSettingsPage() {
         <ErrorCard message={call.message} correlationId={call.correlationId} />
       ) : (
         <CallConfigForm config={call.config} />
+      )}
+      {qualification.status === "error" ? (
+        <ErrorCard message={qualification.message} correlationId={qualification.correlationId} />
+      ) : (
+        <QualificationForm config={qualification.config} />
       )}
       {suppressions.status === "error" ? (
         <ErrorCard message={suppressions.message} correlationId={suppressions.correlationId} />

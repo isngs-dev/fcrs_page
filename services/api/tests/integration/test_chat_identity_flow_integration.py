@@ -537,6 +537,87 @@ async def test_the_first_answered_question_asks_for_the_email_and_chitchat_does_
     assert ack.reply == ic.email_ack_reply("Aastha", "aastha@example.com", ask_phone=True)
 
 
+# -- Qualification in the chat (plan 1.2, owner 2026-11-17) ----------------------------------
+
+
+async def _chatted_and_known(chat: dict[str, Any]) -> Any:
+    """Name, email and number given; the agents have made their contact."""
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "Jane", "jane@example.com", "786 823 3553"):
+        await say(text)
+    await dispatch.dispatch_events(db, limit=10)
+    return say
+
+
+async def test_the_chat_asks_two_missing_questions_one_at_a_time_after_an_answer(
+    chat: dict[str, Any],
+) -> None:
+    from api.contacts.repository import get_contact_id_by_identity
+    from api.qualification import repository as qrepo
+
+    db, visitor, tenant, provider = chat["db"], chat["visitor"], chat["tenant"], chat["provider"]
+    claims = dispatch.system_claims(tenant)
+    say = await _chatted_and_known(chat)
+    cid = await get_contact_id_by_identity(db, claims, identity_type="visitor_id",
+                                           identity_value=visitor.subject)
+    assert cid is not None
+    # Scored as soon as the agents have them: chatted 20 + asked for a call 10, x 10%.
+    assert (await qrepo.get_record(db, claims, cid)).score == 3
+
+    first = await say("Do you do gutters too?")
+    assert first.reply == ("A grounded answer.\n\nIf you don't mind me asking, roughly how many "
+                           "roofing jobs do you do a month?")
+    provider.label = "5 to 20"  # the model maps their answer to a choice
+    thanks = await say("about 15 a month")
+    assert thanks.reply == ic.QUAL_THANKS_REPLY
+    record = await qrepo.get_record(db, claims, cid)
+    assert record.chosen == {"jobs_per_month": "5 to 20"}
+    assert record.answers["jobs_per_month"]["channel"] == "chat"
+
+    provider.label = "question"
+    second = await say("Do you cover Miami?")
+    assert second.reply.endswith("If you don't mind me asking, what do you spend on marketing "
+                                 "a month?")
+    provider.label = "$1k to $5k"
+    await say("around 3k")
+    provider.label = "question"
+    third = await say("And how long does a campaign take?")
+    assert third.reply == "A grounded answer."  # two a conversation, never more
+    assert (await qrepo.get_record(db, claims, cid)).chosen == {
+        "jobs_per_month": "5 to 20", "marketing_spend": "$1k to $5k"}
+
+
+async def test_a_question_back_instead_of_an_answer_is_answered_and_not_saved(
+    chat: dict[str, Any],
+) -> None:
+    from api.contacts.repository import get_contact_id_by_identity
+    from api.qualification import repository as qrepo
+
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    claims = dispatch.system_claims(tenant)
+    say = await _chatted_and_known(chat)
+    await say("Do you do gutters too?")
+    back = await say("Why do you need to know that?")
+    assert back.reply == "A grounded answer."
+    cid = await get_contact_id_by_identity(db, claims, identity_type="visitor_id",
+                                           identity_value=visitor.subject)
+    assert (await qrepo.get_record(db, claims, str(cid))).answers == {}
+
+
+async def test_no_question_is_asked_before_there_is_a_contact_to_keep_the_answer(
+    chat: dict[str, Any],
+) -> None:
+    """Agents off: no contact is made, so nothing could be saved -- nothing is asked."""
+    db, visitor = chat["db"], chat["visitor"]
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "Jane", "jane@example.com", "786 823 3553"):
+        await say(text)
+    reply = await say("Do you do gutters too?")
+    assert reply.reply == "A grounded answer."
+
+
 # -- One person per phone number (plan 1.1, owner 2026-11-17: "same person") -----------------
 
 

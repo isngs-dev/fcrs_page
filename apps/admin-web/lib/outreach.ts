@@ -194,6 +194,22 @@ export interface LeadActivity {
   emails: EmailMessage[];
   calls: CallSummary[];
   memory?: { at: string; channel: string; kind: string; text: string }[];
+  qualification?: LeadQualification;
+}
+
+/** Plan 1.2/1.3: the lead score, each answer beside its question, what's still unknown. */
+export interface LeadQualification {
+  score: number | null;
+  band: "high" | "medium" | "low" | null;
+  answers: { key: string; question: string; choice: string; heard: string; channel: string; at: string }[];
+  unanswered: string[];
+}
+
+export type QualCategory = "fit" | "intent" | "urgency";
+
+export interface QualificationConfig {
+  weights: { fit: number; intent: number; urgency: number; engagement: number };
+  questions: { key: string; ask: string; category: QualCategory; choices: { label: string; points: number }[] }[];
 }
 
 // -- Plumbing --------------------------------------------------------------------
@@ -333,6 +349,15 @@ export async function getAgentSettings() {
 
 export async function saveAgentSettings(values: Record<string, unknown>) {
   return call<AgentSettings, "settings">("settings", "/settings", json("PUT", values));
+}
+
+export async function getQualification() {
+  return call<QualificationConfig, "config">("config", "/qualification");
+}
+
+/** Every key in the body is one word, so camelCase and snake_case agree: sent as is. */
+export async function saveQualification(config: QualificationConfig) {
+  return call<QualificationConfig, "config">("config", "/qualification", json("PUT", config));
 }
 
 export async function setOutreachPaused(paused: boolean) {

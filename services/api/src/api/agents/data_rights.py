@@ -1,6 +1,7 @@
 """A contact's agent data -- export and erasure (A9 H9, compliance §6).
 
-Erasure deletes plans + tasks, email threads + messages, calls + transcripts, and
+Erasure deletes plans + tasks, email threads + messages, calls + transcripts, memory,
+qualification answers + score, and
 the call recordings at Plivo FIRST (any Plivo failure aborts before a row is
 touched). Consent and suppression records are kept: they are the proof of what
 the person agreed to and the blocklist that keeps them from being contacted again.
@@ -21,6 +22,7 @@ from api.call_agent import repository as call_repo
 from api.call_agent.service import recording_provider
 from api.contacts.repository import get_contact, list_identities
 from api.email_agent import repository as email_repo
+from api.qualification import repository as qualification
 
 
 class RecordingDeleteFailedError(AppException):
@@ -65,6 +67,8 @@ async def export_agent_data(db: Database, claims: AuthClaims, contact_id: str) -
                           "created_at": _iso(s.created_at)}
                          for s in await suppressions_for_values(db, claims, sorted(values))],
         "memory": await memory.items(db, claims, contact_id),
+        "qualification": {k: _iso(v) for k, v in (await qualification.get_record(
+            db, claims, contact_id)).__dict__.items()},  # plan 1.2: their answers + score
         "emails": [{k: _iso(v) for k, v in m.__dict__.items()} for m in emails],
         "calls": [{k: ([{kk: _iso(vv) for kk, vv in t.items()} for t in v]
                        if k == "transcript" else _iso(v)) for k, v in c.items()} for c in calls],
@@ -92,5 +96,6 @@ async def erase_agent_data(db: Database, claims: AuthClaims, contact_id: str) ->
         calls = await call_repo.delete_for_contact(conn, claims, contact_id)
         await conn.execute("DELETE FROM contact_memory WHERE tenant_id = $1 AND contact_id = $2",
                            claims.tenant_id, contact_id)  # A11 M7
+        await qualification.delete_for_contact(conn, claims, contact_id)  # plan 1.2
     return {"contact_id": contact_id, "plans": plans, "email_threads": threads, "calls": calls,
             "recordings_deleted": len(recordings)}

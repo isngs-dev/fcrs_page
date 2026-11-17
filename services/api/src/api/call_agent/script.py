@@ -344,6 +344,19 @@ def discovery_thanks_line(first_name: str | None) -> str:
 # "Other" on the form and nothing in the message: ask, never guess (owner, 2026-11-17).
 OTHER_SERVICE_QUESTION = "I saw you picked Other on our form. What can we help you with?"
 NOTED_LINE = "Thanks, I've noted that."
+def qualify_line(first_name: str | None, ask: str) -> str:
+    """After they've said what they need: thanks, then one question she still needs (plan 1.2)."""
+    return f"Thanks{f', {first_name}' if first_name else ''}, that's really helpful. {ask}"
+
+
+def pause_question(ask: str) -> str:
+    """The one follow-up after a pause (R33), spent on a question she still needs (plan 1.2)."""
+    return f"If you don't mind me asking, {ask[:1].lower()}{ask[1:]}"
+
+
+QUALIFY_DONE_LINE = f"Got it, thanks. {ANYTHING_ELSE_AFTER_PAUSE}"
+QUALIFY_PER_CALL = 2  # at most this many qualification questions in one call
+
 DISCOVERY_NO_LINE = ("No problem. Would you like me to find a time with our team, or is there "
                      "anything I can answer for you?")
 WHICH_TIME = "What day and time works best for you?"
@@ -728,7 +741,8 @@ def say_email(email: str) -> str:
 
 # -- Per-call memory ------------------------------------------------------------------------
 
-Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask", "booked_check"]
+Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask", "booked_check",
+                "qualifying"]
 
 
 @dataclass
@@ -753,6 +767,13 @@ class CallState:
     hold_silences: int = 0
     first_name: str | None = None  # used now and then, never in every line
     who: str | None = None  # "Jane Doe from Lee Roofing" for the final check
+    # Plan 1.2: questions she may still ask ([key, wording], at most QUALIFY_PER_CALL), the one
+    # awaiting an answer, and what was heard -- mapped to a choice after the call, not during.
+    qual_todo: list[list[str]] = field(default_factory=list)
+    qual_key: str | None = None
+    qual_heard: dict[str, str] = field(default_factory=dict)
+    qual_named: bool = False  # her question line already used their first name
+    qual_offer: bool = False  # asked after their need: offer a booking once done
 
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "day": self.day, "at": self.at, "zone": self.zone,
@@ -762,7 +783,10 @@ class CallState:
                 "history": self.history[-12:], "booked": self.booked,
                 "rescheduling": self.rescheduling, "close_offered": self.close_offered,
                 "on_hold": self.on_hold, "hold_silences": self.hold_silences,
-                "answered": self.answered, "first_name": self.first_name, "who": self.who}
+                "answered": self.answered, "first_name": self.first_name, "who": self.who,
+                "qual_todo": self.qual_todo, "qual_key": self.qual_key,
+                "qual_heard": self.qual_heard, "qual_named": self.qual_named,
+                "qual_offer": self.qual_offer}
 
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
@@ -781,4 +805,9 @@ class CallState:
                    on_hold=bool(data.get("on_hold", False)),
                    hold_silences=int(data.get("hold_silences", 0)),
                    answered=bool(data.get("answered", False)),
-                   first_name=data.get("first_name"), who=data.get("who"))
+                   first_name=data.get("first_name"), who=data.get("who"),
+                   qual_todo=[list(q) for q in data.get("qual_todo", [])],
+                   qual_key=data.get("qual_key"),
+                   qual_heard=dict(data.get("qual_heard") or {}),
+                   qual_named=bool(data.get("qual_named", False)),
+                   qual_offer=bool(data.get("qual_offer", False)))

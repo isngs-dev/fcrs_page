@@ -303,7 +303,7 @@ async def test_question_gets_a_grounded_reply_in_thread_and_stops_the_plan(
     env: dict[str, Any],
 ) -> None:
     db, mailer = env["db"], env["mailer"]
-    _, sent = await _outreach(env)
+    contact_id, sent = await _outreach(env)
     await _post(env, _raw(body="Do you fix flat roofs?", in_reply_to=sent.message_id,
                           msg_id="<q-1@example.com>"))
     assert await _handle(env) == ["question:answered"]
@@ -314,6 +314,10 @@ async def test_question_gets_a_grounded_reply_in_thread_and_stops_the_plan(
     assert "yes we repair flat roofs" in reply.body_text and "Unsubscribe:" in reply.body_text
     assert await db.fetchval("SELECT status FROM outreach_plans") == "stopped"
     assert "classify:" in env["llm"].calls[0] and "flat roofs" in env["llm"].calls[0]
+    # Plan 1.3: a reply is engagement -- the lead is rescored (replied 30 x 10%, at least).
+    score = await db.fetchval("SELECT score FROM contact_qualifications WHERE tenant_id = $1 "
+                              "AND contact_id = $2", env["a"], contact_id)
+    assert score is not None and score >= 3
 
 
 async def test_unanswerable_question_goes_to_a_human(env: dict[str, Any]) -> None:

@@ -171,6 +171,37 @@ async def test_rbac_matrix(env: dict[str, Any]) -> None:
         "SELECT count(*) FROM audit_events WHERE tenant_id = '__platform__'") == 2
 
 
+async def test_qualification_settings_rbac_and_isolation(env: dict[str, Any]) -> None:
+    """Plan 1.2: admins set the questions and weights; agents may read them; visitors can't;
+    one client's settings never show for another; a platform admin works per tenant."""
+    c, a, b = env["client"], env["a"], env["b"]
+    admin = _cookie(Role.CLIENT_ADMIN, a)
+    agent = _cookie(Role.CLIENT_AGENT, a, subject="agent-a")
+    visitor = _cookie(Role.VISITOR, a, subject="v-1")
+    admin_b = _cookie(Role.CLIENT_ADMIN, b, subject="admin-b")
+    platform = _cookie(Role.PLATFORM_ADMIN, None, subject="root")
+    url = "/admin/outreach/qualification"
+
+    default = await c.get(url, cookies=agent)
+    assert default.status_code == 200 and default.json()["weights"] == {
+        "fit": 40, "intent": 30, "urgency": 20, "engagement": 10}
+    assert len(default.json()["questions"]) == 5
+    mine = {**default.json(), "weights": {"fit": 50, "intent": 20, "urgency": 20,
+                                          "engagement": 10}}
+    assert (await c.put(url, json=mine, cookies=agent)).status_code == 403
+    assert (await c.get(url, cookies=visitor)).status_code == 403
+    r = await c.put(url, json=mine, cookies=admin)
+    assert r.status_code == 200 and r.json()["weights"]["fit"] == 50
+    assert (await c.get(url, cookies=admin_b)).json()["weights"]["fit"] == 40
+    bad = {**mine, "weights": {"fit": 90, "intent": 20, "urgency": 20, "engagement": 10}}
+    assert (await c.put(url, json=bad, cookies=admin)).status_code == 422
+    r = await c.get(f"/admin/tenants/{a}/outreach/qualification", cookies=platform)
+    assert r.status_code == 200 and r.json()["weights"]["fit"] == 50
+    assert await env["db"].fetchval(
+        "SELECT count(*) FROM audit_events WHERE tenant_id = $1 "
+        "AND action = 'outreach.qualification_saved'", a) == 1
+
+
 async def test_agent_sees_only_own_contacts_and_suppression_delete_is_admin_only(
     env: dict[str, Any],
 ) -> None:

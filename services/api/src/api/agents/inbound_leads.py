@@ -32,6 +32,8 @@ from api.contacts.repository import (
     update_contact,
 )
 from api.leads.repository import get_lead
+from api.qualification import repository as qualification
+from api.qualification import service as qualification_service
 
 
 async def _phone_owner(db: Database, claims: AuthClaims, phone: str | None) -> str | None:
@@ -74,6 +76,7 @@ async def _fold_in(db: Database, claims: AuthClaims, source: str, lead: Any,
                            "WHERE tenant_id = $1 AND contact_id = $2",
                            claims.tenant_id, source, target)
         await memory.move(conn, claims, source, target)
+        await qualification.move(conn, claims, source, target)
         await delete_plans_for_contact(conn, claims, source)
         await absorb_contact(conn, claims, source, target)
     return True
@@ -183,6 +186,7 @@ async def handle_inbound_lead(db: Database, claims: AuthClaims, payload: dict[st
     steps = (planner.call_first_steps(settings) if "call" in channels and payload.get("consents")
              else planner.call_first_steps(settings, planner.CHAT_CALL_INTENT) if chat_call
              else None)
+    await qualification_service.rescore_safely(db, claims, contact_id)  # plan 1.3: engagement
     try:
         outcome = await planner.create_plan(db, claims, contact_id=contact_id, kind="inbound_auto",
                                             goal="follow_up", now=datetime.now(UTC), steps=steps)

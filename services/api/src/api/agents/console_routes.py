@@ -42,6 +42,8 @@ from api.contacts.repository import get_contact, get_contact_by_lead_id
 from api.email_agent import repository as email_repo
 from api.email_agent.routes import _message_out
 from api.leads.repository import get_lead
+from api.qualification import repository as qualification
+from api.qualification.scoring import QualConfig
 
 router = APIRouter(prefix="/admin/outreach", tags=["outreach"])
 tenant_scoped_router = APIRouter(prefix="/admin/tenants/{tenant_id}/outreach", tags=["outreach"])
@@ -147,6 +149,20 @@ async def _activity(db: Any, claims: AuthClaims, cid: str) -> dict[str, Any]:
         "emails": [_message_out(m) for m in emails],
         "calls": [_iso(c) for c in calls],
         "memory": await memory.items(db, claims, cid),  # A11: what Rebecca knows
+        "qualification": await _qualification_out(db, claims, cid),  # plan 1.2/1.3
+    }
+
+
+async def _qualification_out(db: Any, claims: AuthClaims, cid: str) -> dict[str, Any]:
+    """A list, not a map: the console camelizes keys, and question keys must survive."""
+    config = await qualification.get_config(db, claims)
+    record = await qualification.get_record(db, claims, cid)
+    return {
+        "score": record.score, "band": record.band,
+        "answers": [{"key": q.key, "question": q.ask, **{k: record.answers[q.key].get(k)
+                     for k in ("choice", "heard", "channel", "at")}}
+                    for q in config.questions if q.key in record.answers],
+        "unanswered": [q.ask for q in config.questions if q.key not in record.answers],
     }
 
 
@@ -198,6 +214,24 @@ async def _meeting_outcome(request: Request, claims: AuthClaims, event_id: str,
 
 
 def _mount(r: APIRouter, admin: Callable[..., Any], staff: Callable[..., Any]) -> None:
+
+    @r.get("/qualification")
+    async def get_qualification(request: Request,
+                                claims: AuthClaims = Depends(staff)) -> dict[str, Any]:  # noqa: B008
+        """Plan 1.2: the client's questions and weights (the roofing set until saved)."""
+        return (await qualification.get_config(request.app.state.db, claims)).model_dump()
+
+    @r.put("/qualification")
+    async def put_qualification(body: QualConfig, request: Request,
+                                claims: AuthClaims = Depends(admin)) -> dict[str, Any]:  # noqa: B008
+        db = request.app.state.db
+        await qualification.save_config(db, claims, body)
+        await record_audit(db, claims, action="outreach.qualification_saved",
+                           target_type="tenant", target_id=str(claims.tenant_id),
+                           metadata={"questions": [q.key for q in body.questions],
+                                     "weights": body.weights.model_dump()},
+                           actor_context=get_platform_admin_actor(request))
+        return body.model_dump()
 
     @r.get("/statuses")
     async def statuses(request: Request, status: str | None = None, limit: int = 50,

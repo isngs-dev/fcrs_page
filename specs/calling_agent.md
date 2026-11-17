@@ -484,3 +484,12 @@ time of day, in the zone times are heard in — so "the 20th, same time" goes st
   (`discovery_thanks_line`) and in the final check. The answering model also gets `caller_name`, with the
   instruction to use it at most once every three or four replies, never two replies in a row, and never as
   the first word.
+
+**R39 — she asks what the score still needs (plan 1.2, owner 2026-11-17):** `place_call` reads the
+client's qualification questions (`specs/agents.md` §7c) and writes at most `QUALIFY_PER_CALL` (2)
+still-unanswered ones into the call (`CallState.qual_todo`) — never read mid-call. She asks them one at a
+time, in two places only: right after they say what they need (`qualify_line`, then `Got it. …` for the
+second, then the discovery thanks with the booking offer), or as the one follow-up after a pause
+(`pause_question`, then `QUALIFY_DONE_LINE`). During a question, a question back or a booking request is
+handled as usual and the question dropped; a date alone is an answer ("about fifteen a month", "next
+spring"). What she heard (`qual_heard`) is mapped to a choice after the call, then the lead is rescored.

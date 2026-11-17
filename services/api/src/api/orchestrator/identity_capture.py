@@ -85,6 +85,24 @@ _NOT_NAMES = {
 }
 
 
+# Plan 1.2 (owner, 2026-11-17): once the details are in, an answered question may end with
+# one qualification question (at most QUAL_PER_CHAT a conversation). The bot message carries
+# QUAL_INTENT_PREFIX + the question key, so the visitor's next message is read as the answer.
+QUAL_INTENT_PREFIX = "ask_qual:"
+QUAL_PER_CHAT = 2
+QUAL_THANKS_REPLY = "Thanks, that's helpful! What else can I help you with?"
+
+
+def qual_ask(ask: str) -> str:
+    return f"If you don't mind me asking, {ask[:1].lower()}{ask[1:]}"
+
+
+def qual_asked(recent_bot: list[str | None]) -> list[str]:
+    """The question keys already asked in this conversation, newest first."""
+    return [i.removeprefix(QUAL_INTENT_PREFIX) for i in recent_bot
+            if i and i.startswith(QUAL_INTENT_PREFIX)]
+
+
 def name_from_reply(message: str) -> str | None:
     """A first/last name typed in answer to "what's your name?", or ``None``.
 

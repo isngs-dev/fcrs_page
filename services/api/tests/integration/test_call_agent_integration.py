@@ -213,6 +213,16 @@ async def _contact_with_call_task(env: dict[str, Any], tenant: str, *, phone: st
     return cid, str(task_id)
 
 
+async def _no_questions(env: dict[str, Any], tenant: str) -> None:
+    """A client with no qualification questions (plan 1.2): the moments they'd use keep their
+    own lines -- the tests of those lines run this way."""
+    from api.qualification import repository as qrepo
+    from api.qualification.scoring import QualConfig
+
+    await qrepo.save_config(env["db"], AuthClaims(subject="admin", role=Role.CLIENT_ADMIN,
+                                                  tenant_id=tenant), QualConfig(questions=[]))
+
+
 async def _dial(env: dict[str, Any], tenant: str) -> tuple[str, str]:
     cid, task_id = await _contact_with_call_task(env, tenant)
     counts = await dispatch.dispatch_due_tasks(env["db"], limit=10)
@@ -313,6 +323,7 @@ async def test_yes_to_the_opening_gets_a_question_about_what_they_need(
         env: dict[str, Any]) -> None:
     db, a = env["db"], env["a"]
     claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    await _no_questions(env, a)
     call_id, _ = await _dial(env, a)
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
     assert service.spoken_text(await _say(env, call_id, "yes sure")) == f"Great. {_QUESTION}"
@@ -691,9 +702,141 @@ async def test_a_form_that_picked_other_with_no_message_is_asked_what_they_need(
     asked = service.spoken_text(await _say(env, call_id, "yes"))
     assert asked == f"Great. {script.OTHER_SERVICE_QUESTION}"
     thanks = service.spoken_text(await _say(env, call_id, "we need a new website for the business"))
-    assert thanks == script.discovery_thanks_line("Jane")
+    assert thanks == script.qualify_line("Jane", _JOBS)  # plan 1.2: then what she still needs
     notes = await memory.items(db, claims, cid)
     assert notes[-1]["text"] == "we need a new website for the business"
+
+
+# -- Qualification on the call (plan 1.2, owner 2026-11-17) ------------------------------------
+
+_JOBS = "Roughly how many roofing jobs do you do a month?"
+_SPEND = "What do you spend on marketing a month?"
+
+
+class _Picker:
+    """The tenant's model after the call: maps each answer to a choice by keyword."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    async def classify(self, text: str, labels: list[str], **_: Any) -> str:
+        self.seen.append(text)
+        answer = text.rsplit("Answer:", 1)[-1]
+        return {"fifteen": "5 to 20", "thousand": "$1k to $5k"}.get(
+            next((w for w in ("fifteen", "thousand") if w in answer), ""), "unclear")
+
+    async def generate(self, *_: Any, **__: Any) -> Any:
+        from api.llm.provider import Completion
+
+        return Completion(text="They run a roofing firm.\nSentiment: positive", model="m",
+                          input_tokens=1, output_tokens=1)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _model_after_the_call(monkeypatch: pytest.MonkeyPatch) -> _Picker:
+    from api.llm import config_repository, factory
+    from api.llm.config_repository import LLMConfig
+
+    picker = _Picker()
+
+    async def llm(db: Any, claims: Any) -> LLMConfig:
+        return LLMConfig(provider="openai", model="m", api_key="k", embedding_model="e")
+    monkeypatch.setattr(config_repository, "get_llm_config", llm)
+    monkeypatch.setattr(factory, "provider_for", lambda config: picker)
+    return picker
+
+
+async def test_rebecca_asks_two_missing_questions_after_their_need_and_scores_them_after(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """One question at a time, at most two a call, after they've said what they need; the
+    answers are mapped and scored after the call, so the live call never waits on a model."""
+    from api.qualification import repository as qrepo
+    from api.qualification.scoring import DEFAULT_CONFIG, engagement, score
+
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    call_id, cid = await _form_call(env, a, {"service": "SEO"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    assert service.spoken_text(await _say(env, call_id, "yes")) == f"Great. {_QUESTION}"
+    first = service.spoken_text(await _say(env, call_id, "we want more roof replacement jobs"))
+    assert first == script.qualify_line("Jane", _JOBS)
+    second = service.spoken_text(await _say(env, call_id, "about fifteen a month"))
+    assert second == f"Got it. {_SPEND}"
+    done = service.spoken_text(await _say(env, call_id, "around three thousand dollars"))
+    assert done == script.DISCOVERY_THANKS_LINE  # the name is used only once in a while
+    assert await qrepo.get_record(db, claims, cid) == qrepo.Record()  # nothing yet: no waiting
+
+    picker = _model_after_the_call(monkeypatch)
+    await service.after_call(db, claims, {"call_id": call_id, "outcome": "completed"})
+    record = await qrepo.get_record(db, claims, cid)
+    assert record.chosen == {"jobs_per_month": "5 to 20", "marketing_spend": "$1k to $5k"}
+    assert record.answers["jobs_per_month"]["heard"] == "about fifteen a month"
+    assert record.answers["jobs_per_month"]["channel"] == "call"
+    signals = await qrepo.engagement_signals(db, claims, cid)
+    assert record.score == score(DEFAULT_CONFIG, record.chosen, engagement(**signals))
+    assert f"Question: {_JOBS}\nAnswer: about fifteen a month" in picker.seen
+
+
+async def test_a_question_instead_of_an_answer_is_answered_and_nothing_is_saved(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.qualification import repository as qrepo
+
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    call_id, cid = await _form_call(env, a, {"service": "SEO"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    await _say(env, call_id, "we want more roof replacement jobs")
+    reply = service.spoken_text(await _say(env, call_id, "How much does a repair cost?"))
+    assert reply.startswith("We charge two hundred dollars")  # answered, not filed as a count
+    _model_after_the_call(monkeypatch)
+    await service.after_call(db, claims, {"call_id": call_id, "outcome": "completed"})
+    assert (await qrepo.get_record(db, claims, cid)).answers == {}
+
+
+async def test_a_pause_after_an_answer_asks_a_question_she_still_needs(
+        env: dict[str, Any]) -> None:
+    """The one follow-up after a pause (R33) is a question she still needs, when there is one;
+    questions already answered (any channel) are never asked again."""
+    from api.qualification import repository as qrepo
+
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    cid0, _ = await _contact_with_call_task(env, a)
+    for key in ("jobs_per_month", "marketing_spend", "decision_maker", "improve"):
+        await qrepo.save_answer(db, claims, cid0, key, choice="x", heard="x", channel="chat",
+                                at=datetime.now(UTC))
+    await dispatch.dispatch_due_tasks(db, limit=10)
+    call_id = await db.fetchval("SELECT call_id FROM call_sessions WHERE contact_id = $1", cid0)
+    await _webhook(env, str(call_id), "answer", {"CallUUID": "uuid-1"})
+    await _say(env, str(call_id), "How much does a repair cost?")
+    asked = service.spoken_text(await _say(env, str(call_id), ""))
+    assert asked == script.pause_question("When would you like to get started?")
+    thanks = service.spoken_text(await _say(env, str(call_id), "probably in the spring"))
+    assert thanks == f"Got it, thanks. {script.ANYTHING_ELSE_AFTER_PAUSE}"
+    session = await repo.get_session(db, claims, str(call_id))
+    assert session is not None and session.session["qual_heard"] == {
+        "start": "probably in the spring"}
+
+
+async def test_a_client_with_no_questions_keeps_the_plain_discovery_thanks(
+        env: dict[str, Any]) -> None:
+    """Tenant A's empty question list is A's alone: B's calls still ask the roofing set."""
+    from api.qualification import repository as qrepo
+    from api.qualification.scoring import QualConfig
+
+    db, a, b = env["db"], env["a"], env["b"]
+    await qrepo.save_config(db, AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a),
+                            QualConfig(questions=[]))
+    call_id, _ = await _form_call(env, a, {"service": "SEO"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    thanks = service.spoken_text(await _say(env, call_id, "we want more roof replacement jobs"))
+    assert thanks == script.discovery_thanks_line("Jane")
+    assert await qrepo.get_config(db, AuthClaims(subject="admin", role=Role.CLIENT_ADMIN,
+                                                 tenant_id=b)) != QualConfig(questions=[])
 
 
 async def test_a_form_with_a_real_service_keeps_her_own_follow_up_question(
@@ -2010,6 +2153,7 @@ async def test_a_hold_request_gets_a_quiet_wait_then_one_gentle_check_in(
 
 
 async def test_speaking_after_a_hold_carries_on_normally(env: dict[str, Any]) -> None:
+    await _no_questions(env, env["a"])
     call_id = await _answered(env, env["a"])
     await _say(env, call_id, "hold on")
     await _say(env, call_id, "")  # a quiet turn while they're away
@@ -2025,6 +2169,7 @@ async def test_after_an_answer_she_gives_them_space_and_asks_once_after_a_pause(
         env: dict[str, Any]) -> None:
     """Owner, 2026-11-16: "Is there anything else you'd like to know?" after every answer
     left the caller no room to talk. Now: the answer alone; one follow-up only after a pause."""
+    await _no_questions(env, env["a"])
     call_id = await _answered(env, env["a"])
     answer = service.spoken_text(await _say(env, call_id, "How much is a roof inspection?"))
     assert answer == "We charge two hundred dollars for that."

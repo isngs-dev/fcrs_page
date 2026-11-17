@@ -15,11 +15,15 @@ import {
   saveAgentSettings,
   saveCallAgentConfig,
   saveEmailConfig,
+  saveQualification,
   type AgentSettings,
   type CallConfig,
   type EmailConfig,
+  type QualCategory,
+  type QualificationConfig,
   type Suppression,
 } from "@/lib/outreach";
+import { choicesToText, newKey, parseChoices } from "@/lib/qualification-form";
 import { dollarsToMicros, formatWhen, humanize, microsToDollars } from "@/lib/outreach-format";
 
 type Note = { ok: boolean; text: string } | null;
@@ -369,6 +373,123 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
         <Status note={note} />
         <Button type="submit" size="sm" className="self-start" disabled={busy}>
           {busy ? "Saving…" : "Save calling"}
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+// -- Lead qualification (plan 1.2/1.3) -------------------------------------------------
+
+type DraftQuestion = { key: string; ask: string; category: QualCategory; choices: string };
+
+const CATEGORY_LABELS: Record<QualCategory, string> = { fit: "Fit", intent: "Intent", urgency: "Urgency" };
+const WEIGHTS = ["fit", "intent", "urgency", "engagement"] as const;
+
+export function QualificationForm({ config }: { config: QualificationConfig }) {
+  const { busy, note, setNote, save } = useSave();
+  const [weights, setWeights] = useState(config.weights);
+  const [questions, setQuestions] = useState<DraftQuestion[]>(
+    config.questions.map((q) => ({ key: q.key, ask: q.ask, category: q.category, choices: choicesToText(q.choices) }))
+  );
+  const total = WEIGHTS.reduce((sum, w) => sum + (Number(weights[w]) || 0), 0);
+
+  function update(i: number, patch: Partial<DraftQuestion>) {
+    setQuestions((qs) => qs.map((q, j) => (j === i ? { ...q, ...patch } : q)));
+  }
+
+  function submit() {
+    if (total !== 100) return setNote({ ok: false, text: `The weights add up to ${total}; they must add up to 100.` });
+    const built: QualificationConfig["questions"] = [];
+    for (const [i, q] of questions.entries()) {
+      if (q.ask.trim().length < 5) return setNote({ ok: false, text: `Question ${i + 1} needs its wording.` });
+      const parsed = parseChoices(q.choices);
+      if (!parsed.ok) return setNote({ ok: false, text: `Question ${i + 1}: ${parsed.error}` });
+      const key = q.key || newKey(q.ask, [...questions.map((x) => x.key), ...built.map((x) => x.key)].filter(Boolean));
+      built.push({ key, ask: q.ask.trim(), category: q.category, choices: parsed.choices });
+    }
+    void save(() => saveQualification({ weights, questions: built }));
+  }
+
+  return (
+    <Card
+      title="Lead qualification"
+      help="The questions Rebecca and the chatbot ask, one at a time, and how each answer scores. An unanswered question counts as zero. 75+ is a hot lead: the missed-call list is emailed once."
+    >
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="grid gap-3 sm:grid-cols-4">
+          {WEIGHTS.map((w) => (
+            <Field key={w} label={`${w === "engagement" ? "Engagement" : CATEGORY_LABELS[w]} weight (%)`}>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                required
+                value={weights[w]}
+                onChange={(e) => setWeights({ ...weights, [w]: Number(e.target.value) })}
+              />
+            </Field>
+          ))}
+        </div>
+        <p className={total === 100 ? "text-[12px] text-muted-foreground" : "text-[12px] text-destructive"}>
+          Total: {total}% (must be 100). Engagement is scored from what the lead does: spoke with Rebecca, replied to an email, chatted, asked for a call.
+        </p>
+        <ol className="flex flex-col gap-3">
+          {questions.map((q, i) => (
+            <li key={q.key || `new-${i}`} className="flex flex-col gap-2 rounded-[10px] border border-[var(--line)] px-4 py-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_140px]">
+                <Field label={`Question ${i + 1} (as Rebecca asks it)`}>
+                  <Input value={q.ask} maxLength={200} required onChange={(e) => update(i, { ask: e.target.value })} />
+                </Field>
+                <Field label="Counts toward">
+                  <select
+                    value={q.category}
+                    onChange={(e) => update(i, { category: e.target.value as QualCategory })}
+                    className="h-9 rounded-[10px] border border-border bg-background px-2 text-[13px]"
+                  >
+                    {(Object.keys(CATEGORY_LABELS) as QualCategory[]).map((c) => (
+                      <option key={c} value={c}>
+                        {CATEGORY_LABELS[c]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label='Answer choices, one per line: "answer = points (0–100)"'>
+                <Textarea rows={3} value={q.choices} onChange={(e) => update(i, { choices: e.target.value })} className="text-[13px]" />
+              </Field>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="self-start"
+                onClick={() => setQuestions((qs) => qs.filter((_, j) => j !== i))}
+              >
+                Remove question
+              </Button>
+            </li>
+          ))}
+        </ol>
+        {questions.length < 10 ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="self-start"
+            onClick={() => setQuestions((qs) => [...qs, { key: "", ask: "", category: "fit", choices: "yes = 100\nno = 0" }])}
+          >
+            Add question
+          </Button>
+        ) : null}
+        <Status note={note} />
+        <Button type="submit" size="sm" className="self-start" disabled={busy}>
+          {busy ? "Saving…" : "Save qualification"}
         </Button>
       </form>
     </Card>

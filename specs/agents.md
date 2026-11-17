@@ -109,6 +109,34 @@ identities, memory moved; its plans deleted; the row removed) — only while tha
 from this lead and nothing has gone out to it. One with history keeps it (no full merge).
 Found in the 2026-11-17 demo: two contacts on one phone meant two sets of call limits.
 
+## 7c. Qualification and the lead score (plans 1.2/1.3, owner decisions 2026-11-17)
+
+Module `api/qualification` (tables `tenant_qualification_configs`, `contact_qualifications`,
+migration 0079). Each client sets up to 10 questions in the console (Outreach settings →
+Lead qualification); each question counts toward fit, intent or urgency and has 2–6 answer
+choices worth 0–100 points. No saved settings = the owner-approved roofing set
+(`scoring.DEFAULT_CONFIG`). The score is deterministic (`scoring.score`): each category
+averages its questions' points, **an unanswered question counts as zero**, weights default
+40/30/20/10 and must add up to 100; engagement (10%) is what the lead did — spoke with Rebecca
+40, replied to an email 30, chatted 20, asked for a call 10 (cap 100). Bands: 75+ high, 45–74
+medium, under 45 low. The model only maps an answer onto a configured choice
+(`service.record_answer`, "unclear" saves nothing); points always come from the settings.
+
+- **Asking:** Rebecca asks at most 2 per call — after they say what they need (then offers the
+  booking) or in the one follow-up after a pause (R33) — never during booking; answers are
+  mapped after the call (`after_call`), so the live call never waits on a model. The chatbot
+  asks at most 2 per conversation, appended to an answered question once name + email (+
+  number or the number ask) are in, and only once the agents have made the visitor's contact.
+  A question back instead of an answer is answered and the question dropped. Already-answered
+  questions (any channel) are never asked again.
+- **Rescoring:** after an answer, after every call, after an email reply, and when a lead
+  arrives (chat/form). Event handlers use `rescore_safely` (a failure is logged, not retried
+  with the event).
+- **Hot-lead alert:** the first time a contact reaches high, the missed-call alert list is
+  emailed once (`alerted_at`); with nobody on the list the alert waits until there is.
+- **Data rights:** export includes the answers and score; erase deletes them. Folding a chat
+  contact into another (7b) moves its answers (the target's own answers win).
+
 ## 8. Tests (DoD)
 
 Policy: property tests (no output plan ever violates limits). State machine: every legal/illegal

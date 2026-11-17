@@ -52,6 +52,7 @@ from api.email_agent.providers import OutboundEmail
 from api.email_agent.service import _booking_line, provider_for_tenant, send_message
 from api.leads.repository import add_activity
 from api.notifications.emit import emit_event_safe
+from api.qualification import service as qualification_service
 from api.scheduling.booking import (
     CalendarSyncFailed,
     busy_times,
@@ -166,6 +167,8 @@ async def handle_reply(db: Database, claims: AuthClaims, payload: dict[str, Any]
         await _follow_up_if_quiet(db, claims, contact.contact_id)
     await repo.record_handling(db, claims, ctx["message_id"], classification=label,
                                source=source, action=action)
+    if contact is not None:  # plan 1.3: a reply is engagement
+        await qualification_service.rescore_safely(db, claims, contact.contact_id)
     return f"{label}:{action}"
 
 

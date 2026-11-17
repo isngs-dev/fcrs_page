@@ -4,7 +4,7 @@
  * `human_takeover` event). Rendered inside the client `LeadDrawer`.
  */
 import Link from "next/link";
-import { takeOver, type LeadActivity, type Result } from "@/lib/outreach";
+import { takeOver, type LeadActivity, type LeadQualification, type Result } from "@/lib/outreach";
 import { formatDuration, formatWhen, humanize } from "@/lib/outreach-format";
 import { ActionButton } from "@/app/(protected)/outreach/action-button";
 
@@ -25,6 +25,48 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <h3 className="text-[12px] font-semibold tracking-[.04em] text-muted-foreground uppercase">{title}</h3>
       {children}
     </section>
+  );
+}
+
+const BAND_STYLE: Record<string, string> = {
+  high: "bg-[#e3f1e8] text-[#2f6b45]",
+  medium: "bg-[#fbf0dc] text-[#8a5a12]",
+  low: "bg-secondary text-muted-foreground",
+};
+
+/** Plan 1.2/1.3: the lead score, its band, what they told us, what's still unknown. */
+export function ScoreSection({ q }: { q: LeadQualification }) {
+  return (
+    <Section title="Lead score">
+      {q.score === null ? (
+        <p className="text-[12.5px] text-muted-foreground">Not scored yet.</p>
+      ) : (
+        <p className="flex items-center gap-2 text-[13px]">
+          <span className="text-[20px] font-semibold">{q.score}</span>
+          <span className="text-muted-foreground">of 100</span>
+          {q.band ? (
+            <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${BAND_STYLE[q.band]}`}>
+              {humanize(q.band)}
+            </span>
+          ) : null}
+        </p>
+      )}
+      {q.answers.length ? (
+        <ul className="flex flex-col gap-1 text-[12.5px]">
+          {q.answers.map((a) => (
+            <li key={a.key}>
+              <span className="text-muted-foreground">{a.question}</span> <span className="font-semibold">{a.choice}</span>{" "}
+              <span className="text-muted-foreground">
+                (“{a.heard}”, {humanize(a.channel)})
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {q.unanswered.length ? (
+        <p className="text-[12px] text-muted-foreground">Still to learn: {q.unanswered.join(" · ")}</p>
+      ) : null}
+    </Section>
   );
 }
 
@@ -86,6 +128,8 @@ export function AgentsTab({ result, platformView }: { result: LeadActivityResult
           <p className="text-[12.5px] text-muted-foreground">No follow-up plan.</p>
         )}
       </Section>
+
+      {activity.qualification ? <ScoreSection q={activity.qualification} /> : null}
 
       {activity.memory && activity.memory.length ? (
         <Section title="What Rebecca knows">

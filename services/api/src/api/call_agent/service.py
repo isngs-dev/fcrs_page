@@ -55,6 +55,8 @@ from api.notifications.emit import emit_event_safe
 from api.notifications.repository import enqueue_notification
 from api.notifications.tasks import send_notification
 from api.notifications.templates import booking_confirmation_message
+from api.qualification import repository as qualification
+from api.qualification import service as qualification_service
 from api.scheduling.booking import (
     CalendarSyncFailed,
     busy_times,
@@ -240,6 +242,11 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
         written["question"] = script.OTHER_SERVICE_QUESTION
     written["first_name"] = _first_name(contact)
     written["who"] = script.who(contact.name, details.get("company")) if contact else None
+    # Plan 1.2: the questions she may ask on this call -- read now, never mid-call.
+    config_q = await qualification.get_config(db, claims)
+    known = (await qualification.get_record(db, claims, task.contact_id)).answers
+    written["qual"] = [[q.key, q.ask] for q in config_q.questions
+                       if q.key not in known][:script.QUALIFY_PER_CALL]
     upcoming = (await get_upcoming_for_contact(db, claims, lead_id=contact.lead_id,
                                                email=contact.email) if contact else None)
     if upcoming is not None:  # booked already (e.g. on the website form): keep or move it
@@ -319,7 +326,8 @@ def _starting_state(written: dict[str, Any]) -> dict[str, Any]:
     """The call's state on answer, from what ``place_call`` wrote for this contact."""
     return script.CallState(question=written.get("question"), booked=written.get("booked"),
                             first_name=written.get("first_name"),
-                            who=written.get("who")).to_json()
+                            who=written.get("who"),
+                            qual_todo=[list(q) for q in written.get("qual") or []]).to_json()
 
 
 async def _opening_line(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
@@ -540,6 +548,12 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         await repo.update_session(db, claims, call_id, session=state.to_json(), outcome=outcome)
         return TurnResult(_hangup(text, voice), outcome, True)
 
+    def ask_next() -> str:
+        """Plan 1.2: the next question she still needs; its answer is the caller's next turn."""
+        key, ask = state.qual_todo.pop(0)
+        state.qual_key, state.stage = key, "qualifying"
+        return ask
+
     # The first thing "said" is a voicemail greeting ("please leave a message"): a machine,
     # whatever Plivo's detector said -- leave the approved message (live 2026-11-14).
     if (speech and not any(role == "user" for role, _ in state.history)
@@ -564,6 +578,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             return await bye(script.GOODBYE_LINE, "completed")
         if state.answered:  # a pause after an answer: now, once, ask if there's more
             state.answered = False
+            if state.qual_todo and state.stage == "talking":  # or a question she still needs
+                return await say(script.pause_question(ask_next()))
             return await say(script.ANYTHING_ELSE_AFTER_PAUSE)
         return await say(script.SILENCE_LINE)
     state.silences = 0
@@ -754,6 +770,18 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         if state.booked and (kind == "yes" or script.keeps_booking(speech)):
             return await say(script.kept_line(datetime.fromisoformat(state.booked["at"]),
                                               state.booked["tz"]))
+    if state.stage == "qualifying" and state.qual_key:  # plan 1.2: they were asked a question
+        key, state.qual_key, state.stage = state.qual_key, None, "talking"
+        # A question or a booking request isn't the answer: handled below, the question dropped.
+        # A date alone is ("about fifteen a month", "next spring" to "when would you start?").
+        if not (kind == "book" or script.is_question(speech) or script.wants_info(speech)):
+            state.qual_heard[key] = speech  # mapped to a choice after the call
+            if state.qual_todo:
+                return await say(f"Got it. {ask_next()}")
+            if state.qual_offer and not state.booked:
+                return await say(script.DISCOVERY_THANKS_LINE if state.qual_named
+                                 else script.discovery_thanks_line(state.first_name))
+            return await say(script.QUALIFY_DONE_LINE)
     if state.stage == "discovery":  # they were asked what they need
         state.stage = "talking"
         if kind == "no":
@@ -766,6 +794,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             if session.contact_id:  # the team (and later emails) see what they told us
                 await memory.remember(db, claims, session.contact_id, channel="call",
                                       kind="need", text=speech)
+            if state.qual_todo:  # plan 1.2: one question she still needs, then the offer
+                state.qual_offer, state.qual_named = True, bool(state.first_name)
+                return await say(script.qualify_line(state.first_name, ask_next()))
             return await say(script.discovery_thanks_line(state.first_name))
     if kind == "yes" and opening_question:  # "Is now a good time?" -> yes: get them talking
         state.stage = "booked_check" if state.booked else "discovery"
@@ -1093,6 +1124,29 @@ THANK_YOU_INTENT = ("Thank them for the phone call with Rebecca just now; recap 
                     "they said they need and how we can help; give an easy way to book a time.")
 
 
+async def _score_call(db: Database, claims: AuthClaims, contact_id: str,
+                      heard: dict[str, str], llm: Any) -> None:
+    """Plan 1.2/1.3: map what she heard to the configured choices, then rescore (talking to
+    Rebecca is engagement too). A model failure loses only the mapping, loudly."""
+    from api.llm.factory import provider_for  # noqa: PLC0415
+
+    if heard and llm is not None:
+        provider = provider_for(llm)
+
+        async def classify(text: str, labels: list[str]) -> str:
+            return await provider.classify(text, labels, model=llm.model)
+        try:
+            for key, speech in heard.items():
+                await qualification_service.record_answer(db, claims, contact_id, key, speech,
+                                                          channel="call", classify=classify)
+        except Exception as exc:  # noqa: BLE001 -- the call is settled; say what was lost
+            _log.warning("call answers not scored", extra={
+                "event": "qualification_call_failed", "reason": type(exc).__name__})
+        finally:
+            await provider.aclose()
+    await qualification_service.rescore(db, claims, contact_id)
+
+
 async def after_call(db: Database, claims: AuthClaims, payload: dict[str, Any]) -> str:
     from api.agents.outreach_repository import stop_contact_plan  # noqa: PLC0415
     from api.leads.repository import add_activity  # noqa: PLC0415
@@ -1150,6 +1204,8 @@ async def after_call(db: Database, claims: AuthClaims, payload: dict[str, Any]) 
         if summary and spoke:  # a voicemail has nothing to remember
             await memory.remember(db, claims, contact.contact_id, channel="call",
                                   kind="summary", text=summary)
+        await _score_call(db, claims, contact.contact_id,
+                          script.CallState.from_json(session.session).qual_heard, llm)
     if outcome in _STOP_OUTCOMES and session.contact_id:
         await stop_contact_plan(db, claims, session.contact_id, reason=f"call_{outcome}")
     if outcome in _THANK_OUTCOMES and session.task_id:  # after the summary: the email uses it

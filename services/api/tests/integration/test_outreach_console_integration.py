@@ -157,6 +157,32 @@ async def test_contact_activity_for_contacts_without_a_lead(env: dict[str, Any])
                              cookies=_cookie(a))).status_code == 404
 
 
+async def test_the_contact_view_shows_the_score_and_what_they_told_us(
+    env: dict[str, Any],
+) -> None:
+    """Plan 1.2/1.3: score, band, each answer beside its question (a list -- the console
+    camelizes keys, so question keys can't be map keys), and what is still unknown."""
+    from api.qualification import service as qualification
+
+    db, client, a = env["db"], env["client"], env["a"]
+    _, cid = await _lead_with_plan(env, a)
+
+    async def picks(text: str, labels: list[str]) -> str:
+        return labels[0]
+    await qualification.record_answer(db, _claims(a), cid, "start", "right away",
+                                      channel="call", classify=picks)
+    got = (await client.get(f"/admin/outreach/contacts/{cid}/activity",
+                            cookies=_cookie(a))).json()["qualification"]
+    assert got["score"] == 21 and got["band"] == "low"  # urgency 100 x 20% + call consent 1
+    assert got["answers"] == [{"key": "start", "question": "When would you like to get started?",
+                               "choice": "this month", "heard": "right away",
+                               "channel": "call", "at": got["answers"][0]["at"]}]
+    assert got["unanswered"] == [
+        "Roughly how many roofing jobs do you do a month?",
+        "What do you spend on marketing a month?", "Do you make the marketing decisions?",
+        "What would you most like to improve?"]
+
+
 async def test_calls_are_hidden_from_agents_who_cant_see_the_contact(env: dict[str, Any]) -> None:
     db, client, a = env["db"], env["client"], env["a"]
     call_id, _ = await _dial(env, a)

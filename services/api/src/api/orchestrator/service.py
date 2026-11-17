@@ -50,6 +50,7 @@ from common.logging import get_logger
 
 from api.agents import hooks as agent_hooks
 from api.config import get_api_settings
+from api.contacts.repository import get_contact_id_by_identity
 from api.conversation_store.repository import (
     append_message,
     count_messages,
@@ -65,6 +66,8 @@ from api.llm.provider import ChatMessage, LLMError, LLMProvider
 from api.orchestrator import identity_capture
 from api.orchestrator.config_repository import get_orchestrator_config
 from api.orchestrator.guardrails import scan_output, unstated_commitments
+from api.qualification import repository as qualification
+from api.qualification import service as qualification_service
 from api.rag.service import HybridMatch, HybridResult, retrieve_hybrid
 from api.scheduling.repository import ScheduleEvent, get_availability, get_upcoming_booking
 
@@ -617,6 +620,29 @@ def _reschedule_offer(
     )
 
 
+async def _visitor_contact(db: Database, claims: AuthClaims) -> str | None:
+    """The contact the agents made for this visitor (their chat identity), if any yet."""
+    return await get_contact_id_by_identity(db, claims, identity_type="visitor_id",
+                                            identity_value=claims.subject)
+
+
+async def _qualification_ask(db: Database, claims: AuthClaims, recent_bot: list[str | None]
+                             ) -> tuple[str, str] | None:
+    """Plan 1.2: (key, wording) of the next question still unknown and not yet asked here,
+    at most ``QUAL_PER_CHAT`` a conversation; ``None`` without a contact to keep the answer."""
+    asked = identity_capture.qual_asked(recent_bot)
+    if len(asked) >= identity_capture.QUAL_PER_CHAT:
+        return None
+    contact_id = await _visitor_contact(db, claims)
+    if contact_id is None:
+        return None
+    config = await qualification.get_config(db, claims)
+    known = (await qualification.get_record(db, claims, contact_id)).answers
+    question = next((q for q in config.questions if q.key not in known and q.key not in asked),
+                    None)
+    return (question.key, question.ask) if question else None
+
+
 async def _resolve_turn(
     db: Database,
     claims: AuthClaims,
@@ -854,6 +880,30 @@ async def _resolve_turn(
             if closing_intent == identity_capture.GOODBYE_INTENT and lead is not None:
                 await agent_hooks.chat_ended(db, claims, lead_id=lead.lead_id)
             return outcome
+        # Plan 1.2: the reply to our qualification question. A question back isn't an
+        # answer: it is answered below and the question dropped.
+        if (recent_bot[:1] and (recent_bot[0] or "").startswith(
+                identity_capture.QUAL_INTENT_PREFIX) and "?" not in message):
+            key = str(recent_bot[0]).removeprefix(identity_capture.QUAL_INTENT_PREFIX)
+            contact_id = await _visitor_contact(db, claims)
+            if contact_id is not None:
+                async def classify(text: str, labels: list[str]) -> str:
+                    return await provider.classify(text, labels, model=config.model)
+                await qualification_service.record_answer(db, claims, contact_id, key, message,
+                                                          channel="chat", classify=classify)
+            await provider.aclose()
+            return _FixedOutcome(
+                conversation_id=conversation_id,
+                assistant_id=assistant_id,
+                reply=identity_capture.QUAL_THANKS_REPLY,
+                decision="answer",
+                confidence=None,
+                sources=[],
+                intent="qual_answer",
+                action=None,
+                grounded=False,
+                tokens=None,
+            )
 
     # Step 5.55: the visitor's answer to "would you like to reschedule?" --
     # "no" keeps the booking; "yes" or a new day/time opens the booking card in
@@ -1060,6 +1110,20 @@ async def _resolve_turn(
             and identity_capture.ASK_EMAIL_INTENT not in recent_bot):
         suffix, suffix_intent = identity_capture.EMAIL_ASK, identity_capture.ASK_EMAIL_INTENT
         ask_email = False
+
+    # Step 7.6 (plan 1.2): with the details in, an answered question may end with one
+    # qualification question -- only once there is a contact to keep the answer, and never on
+    # the turn they've just given their details.
+    if (cfg.identity_gate_enabled and intent == "question" and suffix is None
+            and lead_has_email and (lead_has_phone or asked_phone)
+            and not (captured_email or captured_phone)
+            # They answered our last question with a question: never a second one straight on.
+            and not (recent_bot[:1] and (recent_bot[0] or "").startswith(
+                identity_capture.QUAL_INTENT_PREFIX))):
+        qual = await _qualification_ask(db, claims, recent_bot)
+        if qual is not None:
+            suffix = identity_capture.qual_ask(qual[1])
+            suffix_intent = identity_capture.QUAL_INTENT_PREFIX + qual[0]
 
     # Step 8: branch on intent -> decision -> plan (decisions 2 + 6).
     if intent == "chitchat":

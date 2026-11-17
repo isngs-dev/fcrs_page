@@ -36,7 +36,7 @@ export default async function ContactAgentsPage({ params }: { params: Promise<{ 
                 action={eraseAgentData.bind(null, contactId)}
                 label="Erase Rebecca's data"
                 variant="destructive"
-                confirmText="Permanently delete Rebecca's plans, emails, calls, recordings and memory for this person? Their contact details and consent records stay."
+                confirmText="Permanently delete Rebecca's plans, emails, calls, recordings, memory and qualification answers for this person? Their contact details and consent records stay."
               />
               <p className="text-[12px] text-muted-foreground">
                 Their contact details and consent records stay, so adding them again matches this contact.
