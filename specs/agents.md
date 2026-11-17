@@ -97,6 +97,18 @@ plan's contact (an LLM can't redirect a send). Each call writes `agent_tool_call
 read **fresh** (no cache) by the gate before every send/dial; pausing does not cancel plans — tasks stay
 `SCHEDULED` and resume when unpaused (unless their window expired → re-planned by policy).
 
+## 7b. One person per phone number (plan 1.1, owner decision 2026-11-17)
+
+A lead whose dialable number is already on a contact **is that contact**, even with a different name
+or email ("same person"). Matching order in `inbound_leads._ensure_contact`: the contact linked to
+the lead → the email's owner → the number's owner → a new contact. On a number match the newest
+name and email win, the old email stays an identity (it still finds them), and the contact's
+`lead_id` points at the newest lead. The chat makes its contact at the email, before the number:
+when the number then belongs to another contact, the chat's contact is folded into it (consents,
+identities, memory moved; its plans deleted; the row removed) — only while that contact was made
+from this lead and nothing has gone out to it. One with history keeps it (no full merge).
+Found in the 2026-11-17 demo: two contacts on one phone meant two sets of call limits.
+
 ## 8. Tests (DoD)
 
 Policy: property tests (no output plan ever violates limits). State machine: every legal/illegal

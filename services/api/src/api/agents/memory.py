@@ -43,6 +43,22 @@ async def remember(db: Database, claims: AuthClaims, contact_id: str, *, channel
         claims.tenant_id, contact_id, [item], MAX_ITEMS)
 
 
+async def move(db: Database, claims: AuthClaims, source: str, target: str) -> None:
+    """Append ``source``'s items after ``target``'s (newest ``MAX_ITEMS`` kept) and drop
+    ``source``'s row -- one row per contact, so it can't just be re-pointed (plan 1.1)."""
+    _reject_global(claims)
+    await db.execute(
+        "INSERT INTO contact_memory (tenant_id, contact_id, items) "
+        "SELECT tenant_id, $3, items FROM contact_memory WHERE tenant_id = $1 AND contact_id = $2 "
+        "ON CONFLICT (tenant_id, contact_id) DO UPDATE SET updated_at = now(), items = ("
+        "  SELECT coalesce(jsonb_agg(e ORDER BY n), '[]'::jsonb) FROM ("
+        "    SELECT e, n FROM jsonb_array_elements(contact_memory.items || EXCLUDED.items) "
+        "    WITH ORDINALITY AS t(e, n) ORDER BY n DESC LIMIT $4) newest)",
+        claims.tenant_id, source, target, MAX_ITEMS)
+    await db.execute("DELETE FROM contact_memory WHERE tenant_id = $1 AND contact_id = $2",
+                     claims.tenant_id, source)
+
+
 async def items(db: Database, claims: AuthClaims, contact_id: str) -> list[dict[str, Any]]:
     _reject_global(claims)
     value = await db.fetchval("SELECT items FROM contact_memory WHERE tenant_id = $1 "

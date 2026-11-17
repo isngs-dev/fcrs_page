@@ -329,6 +329,7 @@ async def update_contact(
     email: str | None = _UNSET,
     phone: str | None = _UNSET,
     account_id: str | None = _UNSET,
+    lead_id: str | None = _UNSET,
 ) -> Contact | None:
     """Partially update a contact, tenant-scoped. Only supplied fields change.
 
@@ -349,6 +350,7 @@ async def update_contact(
         ("email", email),
         ("phone", phone),
         ("account_id", account_id),
+        ("lead_id", lead_id),
     ):
         if value is not _UNSET:
             params.append(value)
@@ -411,6 +413,17 @@ async def add_identity(
             code="IDENTITY_ALREADY_CLAIMED",
         ) from exc
     return new_identity_id
+
+
+async def absorb_contact(db: Database, claims: AuthClaims, source: str, target: str) -> None:
+    """Move ``source``'s identities to ``target``, then delete ``source`` (plan 1.1: one
+    person per phone number). Callers move their own module's rows first, in the same
+    transaction (pass the connection as ``db``)."""
+    _reject_global(claims)
+    await db.execute("UPDATE contact_identities SET contact_id = $3 "
+                     "WHERE tenant_id = $1 AND contact_id = $2", claims.tenant_id, source, target)
+    await db.execute("DELETE FROM contacts WHERE tenant_id = $1 AND contact_id = $2",
+                     claims.tenant_id, source)
 
 
 async def list_identities(

@@ -13,14 +13,18 @@ from api.agents import memory, planner
 from api.agents.consent_wording import consent_record
 from api.agents.outreach_repository import (
     cancel_channel_tasks,
+    delete_plans_for_contact,
     get_active_plan,
     stop_plan,
     stop_plan_if_empty,
+    touch_stats,
 )
 from api.agents.repository import add_consent, do_not_contact, get_agent_settings
 from api.contacts.repository import (
+    absorb_contact,
     add_identity,
     create_contact,
+    get_contact,
     get_contact_by_lead_id,
     get_contact_id_by_identity,
     get_contact_timezone,
@@ -30,8 +34,54 @@ from api.contacts.repository import (
 from api.leads.repository import get_lead
 
 
+async def _phone_owner(db: Database, claims: AuthClaims, phone: str | None) -> str | None:
+    if not phone:
+        return None
+    try:
+        return await get_contact_id_by_identity(db, claims, identity_type="phone",
+                                                identity_value=phone)
+    except ValidationError:  # undialable: nobody owns it
+        return None
+
+
+async def _adopt(db: Database, claims: AuthClaims, contact_id: str, lead: Any) -> str:
+    """Owner, 2026-11-17: a number already on a contact is that person. The newest name and
+    email win (the old email stays an identity, so it still finds them); the lead is theirs."""
+    await update_contact(db, claims, contact_id, lead_id=lead.lead_id,
+                         **({"name": lead.name} if lead.name else {}),
+                         **({"email": lead.email} if lead.email else {}))
+    for identity_type, value in (("email", lead.email), ("visitor_id", lead.visitor_id)):
+        if value:
+            try:
+                await add_identity(db, claims, contact_id, identity_type=identity_type,
+                                   identity_value=value)
+            except ValidationError:
+                pass  # already theirs
+    return contact_id
+
+
+async def _fold_in(db: Database, claims: AuthClaims, source: str, lead: Any,
+                   target: str) -> bool:
+    """The chat makes its contact at the email, before the number: when that number turns
+    out to be ``target``'s, fold ``source`` into ``target`` -- only while ``source`` is this
+    lead's own and nothing has gone out to it (one with history keeps it)."""
+    contact = await get_contact(db, claims, source)
+    stats = await touch_stats(db, claims, source, now=datetime.now(UTC))
+    if contact is None or contact.lead_id != lead.lead_id or stats.touches or stats.call_attempts:
+        return False
+    async with db.acquire() as conn, conn.transaction():
+        await conn.execute("UPDATE contact_consents SET contact_id = $3 "  # evidence kept
+                           "WHERE tenant_id = $1 AND contact_id = $2",
+                           claims.tenant_id, source, target)
+        await memory.move(conn, claims, source, target)
+        await delete_plans_for_contact(conn, claims, source)
+        await absorb_contact(conn, claims, source, target)
+    return True
+
+
 async def _ensure_contact(db: Database, claims: AuthClaims, lead: Any) -> str:
-    """The contact linked to this lead, else the one owning its email, else a new one."""
+    """The contact linked to this lead, else the one owning its email, else the one owning
+    its number (plan 1.1), else a new one."""
     linked = await get_contact_by_lead_id(db, claims, lead.lead_id)
     if linked is not None:
         return linked.contact_id
@@ -40,6 +90,9 @@ async def _ensure_contact(db: Database, claims: AuthClaims, lead: Any) -> str:
                                                     identity_value=lead.email)
         if existing is not None:
             return existing
+    owner = await _phone_owner(db, claims, lead.phone)
+    if owner is not None:
+        return await _adopt(db, claims, owner, lead)
     contact_id = await create_contact(
         db, claims, account_id=None, lead_id=lead.lead_id, name=lead.name, email=lead.email,
         phone=lead.phone, consent=lead.consent, owner_agent_id=lead.assigned_agent_id)
@@ -75,6 +128,10 @@ async def handle_inbound_lead(db: Database, claims: AuthClaims, payload: dict[st
         if not channels:
             return "calls_stopped"
     if "call" in channels and lead.phone:
+        owner = await _phone_owner(db, claims, lead.phone)
+        if owner not in (None, contact_id) and await _fold_in(db, claims, contact_id, lead,
+                                                              str(owner)):
+            contact_id = await _adopt(db, claims, str(owner), lead)
         # The number they just agreed to be called on is the one to ring: the contact may
         # predate it (made at the email, or an earlier visit with another number).
         await update_contact(db, claims, contact_id, phone=lead.phone)

@@ -535,3 +535,127 @@ async def test_the_first_answered_question_asks_for_the_email_and_chitchat_does_
                              "AND intent = $2", answered.conversation_id, ic.ASK_EMAIL_INTENT) == 1
     ack = await say("aastha@example.com")
     assert ack.reply == ic.email_ack_reply("Aastha", "aastha@example.com", ask_phone=True)
+
+
+# -- One person per phone number (plan 1.1, owner 2026-11-17: "same person") -----------------
+
+
+async def _known_by_phone(db: Database, tenant: str) -> str:
+    """A contact from an earlier website form: name, email, number and a note."""
+    from api.agents import memory
+    from api.contacts.repository import add_identity, create_contact
+
+    admin = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=tenant)
+    old = await create_contact(db, admin, account_id=None, lead_id=None, name="Kaustubh",
+                               email="kaustubh@example.com", phone="+17868233553", consent={})
+    await add_identity(db, admin, old, identity_type="email",
+                       identity_value="kaustubh@example.com")
+    await add_identity(db, admin, old, identity_type="phone", identity_value="+17868233553")
+    await memory.remember(db, admin, old, channel="web_form", kind="need",
+                          text="service: meta_ads")
+    return old
+
+
+async def _contact_ids(db: Database, tenant: str) -> list[str]:
+    return [r["contact_id"] for r in await db.fetch(
+        "SELECT contact_id FROM contacts WHERE tenant_id = $1", tenant)]
+
+
+async def test_a_chat_number_already_on_a_contact_joins_that_contact(
+    chat: dict[str, Any],
+) -> None:
+    """Demo 2026-11-17: the chat made a new contact at the email, then the number turned out
+    to be an earlier form contact's -> two contacts on one phone, two sets of call limits.
+    Now the chat's contact folds into the earlier one; the newest name and email win and
+    the old email still finds them."""
+    from datetime import UTC, datetime
+
+    from api.contacts.repository import get_contact_by_lead_id, get_contact_id_by_identity
+
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    claims = dispatch.system_claims(tenant)
+    await _agents_on(db, tenant)
+    old = await _known_by_phone(db, tenant)
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "Vinith", "vinith@example.com"):
+        await say(text)
+    await dispatch.dispatch_events(db, limit=10)  # the chat's own contact, no number yet
+    assert len(await _contact_ids(db, tenant)) == 2
+    from api.agents import memory
+
+    chat_contact = next(c for c in await _contact_ids(db, tenant) if c != old)
+    await memory.remember(db, claims, chat_contact, channel="chat", kind="need",
+                          text="Asked about leak repairs")
+    await say("786 823 3553")
+    await dispatch.dispatch_events(db, limit=10)
+
+    assert await _contact_ids(db, tenant) == [old]
+    task, _ = await _chat_call(db, tenant)
+    assert task.contact_id == old and task.intent == planner.CHAT_CALL_INTENT
+    row = await db.fetchrow("SELECT name, email, phone, lead_id FROM contacts "
+                            "WHERE tenant_id = $1 AND contact_id = $2", tenant, old)
+    lead_id = await db.fetchval("SELECT lead_id FROM leads WHERE visitor_id = $1",
+                                visitor.subject)
+    assert tuple(row) == ("Vinith", "vinith@example.com", "+17868233553", lead_id)
+    for email in ("vinith@example.com", "kaustubh@example.com"):
+        assert await get_contact_id_by_identity(db, claims, identity_type="email",
+                                                identity_value=email) == old
+    assert (await get_contact_by_lead_id(db, claims, lead_id)).contact_id == old  # type: ignore[union-attr]
+    # The chat's consents and the form's note are both on the one contact now.
+    assert await db.fetchval("SELECT wording FROM contact_consents WHERE tenant_id = $1 "
+                             "AND contact_id = $2 AND channel = 'call'", tenant, old) == ic.PHONE_ASK
+    assert [i["text"] for i in await memory.items(db, claims, old)] == [
+        "service: meta_ads", "Asked about leak repairs"]
+    # Still waits for the visitor to go quiet: the chat's visitor id moved with them.
+    assert await dispatch.chat_call_wait(db, claims, task, datetime.now(UTC)) is not None
+
+
+async def test_a_new_lead_on_a_known_number_is_that_contact_and_other_tenants_are_untouched(
+    chat: dict[str, Any],
+) -> None:
+    """Email and number in one message: no new contact; another tenant's contact on the same
+    number is neither joined nor changed."""
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    old = await _known_by_phone(db, tenant)
+    other = f"t-{uuid4().hex[:10]}"
+    await db.execute("INSERT INTO client_accounts (id, name) VALUES ($1, $1)", other)
+    await db.execute("INSERT INTO tenants (id, name, slug, enabled, client_account_id) "
+                     "VALUES ($1, $1, $1, true, $1)", other)
+    elsewhere = await _known_by_phone(db, other)
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "ok thanks, that's all",
+                 "Sam Lee, sam@example.com, 786 823 3553"):
+        await say(text)
+    await dispatch.dispatch_events(db, limit=10)
+
+    assert await _contact_ids(db, tenant) == [old]
+    assert tuple(await db.fetchrow("SELECT name, email FROM contacts WHERE contact_id = $1",
+                                   old)) == ("Sam Lee", "sam@example.com")
+    assert await _contact_ids(db, other) == [elsewhere]
+    assert tuple(await db.fetchrow("SELECT name, email FROM contacts WHERE contact_id = $1",
+                                   elsewhere)) == ("Kaustubh", "kaustubh@example.com")
+
+
+async def test_a_chat_contact_that_was_already_emailed_is_not_folded_in(
+    chat: dict[str, Any],
+) -> None:
+    """Folding is only for a contact made moments ago by this chat with nothing sent yet:
+    one with history keeps it (it is rung on the number they just gave, as before)."""
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    old = await _known_by_phone(db, tenant)
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "Vinith", "vinith@example.com"):
+        await say(text)
+    await dispatch.dispatch_events(db, limit=10)
+    await db.execute("UPDATE outreach_tasks SET status = 'completed', completed_at = now() "
+                     "WHERE tenant_id = $1 AND step_index = 0", tenant)
+    await say("786 823 3553")
+    await dispatch.dispatch_events(db, limit=10)
+
+    ids = await _contact_ids(db, tenant)
+    assert len(ids) == 2 and old in ids
+    task, _ = await _chat_call(db, tenant)
+    assert task.contact_id != old
+    assert await _dialled(db, tenant) == "+17868233553"
