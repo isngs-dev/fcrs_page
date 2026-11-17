@@ -47,7 +47,7 @@ class AgentSettings:
     region_profile: str = "US"
     call_window_start: time = time(9, 0)
     call_window_end: time = time(20, 0)
-    max_touches_per_contact: int = 3
+    max_touches_per_contact: int = 5  # plan 1.4: the day 0/2/4/7 sequence is five touches
     max_call_attempts: int = 2
     min_hours_between_touches: int = 48
     first_inbound_email_delay_minutes: int = 5

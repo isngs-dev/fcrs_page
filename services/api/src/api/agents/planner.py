@@ -23,10 +23,45 @@ from api.contacts.repository import get_contact, get_contact_timezone
 _DAY = timedelta(days=2)
 
 
+ACK_INTENT = ("Acknowledge their enquiry: thank them, give a short, useful overview related to "
+              "what they asked about, and offer a time with our team.")
+HELPFUL_INTENT = ("Day-2 follow-up: share something genuinely helpful related to their need, "
+                  "and offer a short call.")
+SECOND_CALL_INTENT = "Second call: answer questions and offer to book a meeting."
+FINAL_INTENT = "Last friendly check-in; easy way to book or opt out."
+# With a call first, the acknowledgment waits this long: a call that connects turns it into
+# the thank-you (``after_call``), so the lead gets one email, not an acknowledgment AND a
+# thank-you minutes apart; an unanswered call still gets it within 15 minutes.
+ACK_AFTER_CALL = timedelta(minutes=15)
+
+
+def inbound_steps(settings: AgentSettings, call_intent: str | None = None) -> list[AgentTask]:
+    """Plan 1.4 (2026-11-17), the approved new-enquiry sequence: day 0 acknowledgment
+    (alongside a call when they asked for one), day 2 helpful email, day 4 second permitted
+    call, day 7 final email -- then nothing more. Each call is one attempt: the day-4 call
+    is the retry. Consent, window, gap and touch limits still apply (``policy.validate``)."""
+    start = timedelta(minutes=settings.first_inbound_email_delay_minutes)
+    if call_intent:  # a call that connects turns the acknowledgment into its thank-you
+        start = max(start, ACK_AFTER_CALL)
+    first = ([AgentTask(channel="call", offset=timedelta(0), goal="book_meeting",
+                        intent=call_intent, max_attempts=1)] if call_intent else [])
+    return [*first,
+            AgentTask(channel="email", offset=start, goal="acknowledge", intent=ACK_INTENT,
+                      max_attempts=3),
+            AgentTask(channel="email", offset=start + _DAY, goal="follow_up",
+                      intent=HELPFUL_INTENT, max_attempts=3),
+            AgentTask(channel="call", offset=start + 2 * _DAY, goal="book_meeting",
+                      intent=SECOND_CALL_INTENT, max_attempts=1),
+            AgentTask(channel="email", offset=start + timedelta(days=7), goal="re_engage",
+                      intent=FINAL_INTENT, max_attempts=3)]
+
+
 def default_plan(kind: PlanKind, settings: AgentSettings) -> OutreachPlan:
-    """Inbound: email +delay, call +2 d, email +2 d. Outbound: email d0, call d2, email d4."""
-    start = (timedelta(minutes=settings.first_inbound_email_delay_minutes)
-             if kind == "inbound_auto" else timedelta(0))
+    """Inbound: the day 0/2/4/7 sequence (``inbound_steps``). Outbound: email d0, call d2,
+    email d4."""
+    if kind == "inbound_auto":
+        return OutreachPlan(kind=kind, steps=inbound_steps(settings))
+    start = timedelta(0)
     return OutreachPlan(kind=kind, steps=[
         AgentTask(channel="email", offset=start, goal="follow_up",
                   intent="Follow up on their enquiry and offer help or a meeting.",
@@ -56,9 +91,8 @@ CHAT_IDLE = timedelta(seconds=30)
 def call_first_steps(settings: AgentSettings, intent: str = FORM_CALL_INTENT
                      ) -> list[AgentTask]:
     """A website form (or a chat) that asked for a call: ring right away (speed to lead),
-    then the usual inbound emails. The gate still keeps the call inside the contact's window."""
-    email, call, last = default_plan("inbound_auto", settings).steps
-    return [call.model_copy(update={"offset": timedelta(0), "intent": intent}), email, last]
+    then the day 0/2/4/7 sequence. The gate still keeps the call inside the contact's window."""
+    return inbound_steps(settings, call_intent=intent)
 
 
 @dataclass(frozen=True)

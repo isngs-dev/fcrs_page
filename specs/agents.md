@@ -44,6 +44,20 @@ class OutreachPlan(BaseModel):
    with code (e.g. `NO_ALLOWED_CHANNEL`).
 4. Persist plan + tasks in one transaction; `idempotency_key = sha256(plan_id, step_index)`.
 
+**New-enquiry sequence (plan 1.4, 2026-11-17 — the PDF's day 0/2/4/7, `planner.inbound_steps`):**
+day 0 acknowledgment email (goal `acknowledge`; every email already carries the client's booking
+link when one is set) — alongside an immediate call when the form or chat asked for one; day 2 a
+helpful email; day 4 a second permitted call; day 7 a final email; then nothing more. Each call step
+is ONE attempt (no next-day retry): the day-4 call is the retry, and a missed day-0 call's team alert
+says when it is due ("Rebecca will call them again on …"). The acknowledgment is a first response:
+exempt from the minimum gap at planning and at the gate (`dispatch.gate_purpose`). With a call first
+it waits 15 minutes (`ACK_AFTER_CALL`): a call that connects turns it into the thank-you, so the lead
+gets one email, not two minutes apart. Events are handled oldest first within a claimed batch
+(`events.claim_due_events`) — a chat's email event before its number event. The default touch
+budget is 5 so the whole sequence fits; a client's own limits (touches, call attempts, hours between
+touches, calling window, consent) still trim or move it — that is how a client tunes it. Outbound
+plans are unchanged (email d0, call d2, email d4).
+
 LLM failure in step 2 → use step 1 (this is a documented, explicit fallback: the default plan is policy
 data, not fabricated content) and log `plan_llm_refinement_failed`.
 

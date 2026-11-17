@@ -237,6 +237,8 @@ async def test_gate_cadence_touches_and_attempts(db: Database) -> None:
 
     await db.execute("UPDATE outreach_tasks SET status = 'completed', completed_at = $2 "
                      "WHERE tenant_id = $1", a.tenant_id, _NOW - timedelta(days=5))
+    await upsert_agent_settings(db, a, AgentSettings(enabled_channels=("call", "email"),
+                                                      max_touches_per_contact=3))
     assert (await _gate(db, a, contact_id, "email")).code == "MAX_TOUCHES"
 
     await upsert_agent_settings(db, a, AgentSettings(enabled_channels=("call", "email"),
@@ -277,6 +279,22 @@ async def test_concurrent_event_claims_take_each_event_once(db: Database) -> Non
     batches = await asyncio.gather(*(events.claim_due_events(db, limit=7) for _ in range(5)))
     ids = [e.event_id for batch in batches for e in batch]
     assert len(ids) == 20 and len(set(ids)) == 20
+
+
+async def test_a_batch_of_events_is_handled_in_the_order_they_happened(db: Database) -> None:
+    """2026-11-17: a chat's email event and number event, a second apart, were claimed in
+    one batch and handled number-first -- the plan was built before the email consent
+    existed, so its emails were dropped. A batch comes back oldest first."""
+    from datetime import UTC, datetime
+
+    a = _claims()
+    base = datetime.now(UTC) - timedelta(minutes=5)
+    # Written newest first, so storage order and time order disagree.
+    for minutes in range(10, 0, -1):
+        await events.emit(db, a, "human_takeover", {"contact_id": f"c{minutes}"},
+                          available_at=base + timedelta(seconds=minutes))
+    claimed = await events.claim_due_events(db, limit=20)
+    assert [e.payload["contact_id"] for e in claimed] == [f"c{m}" for m in range(1, 11)]
 
 
 async def test_event_retry_backoff_then_dead_letter(db: Database) -> None:

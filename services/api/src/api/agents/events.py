@@ -83,15 +83,21 @@ class ClaimedEvent:
 
 
 async def claim_due_events(db: Database, *, limit: int) -> list[ClaimedEvent]:
-    """System-scoped exactly-once claim: ``pending`` + due -> ``processing``, attempts+1."""
+    """System-scoped exactly-once claim: ``pending`` + due -> ``processing``, attempts+1.
+    Oldest first: an UPDATE's RETURNING order is arbitrary, and a chat's email event must
+    be handled before its number event (2026-11-17), so the batch is sorted after claiming."""
     rows = await db.fetch(
-        "UPDATE agent_events SET status = 'processing', attempts = attempts + 1, "
-        "processed_at = now() "
-        "WHERE (tenant_id, event_id) IN ("
+        "WITH claimed AS ("
+        " UPDATE agent_events SET status = 'processing', attempts = attempts + 1, "
+        " processed_at = now() "
+        " WHERE (tenant_id, event_id) IN ("
         "  SELECT tenant_id, event_id FROM agent_events "
         "  WHERE status = 'pending' AND available_at <= now() "
         "  ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT $1) "
-        "RETURNING tenant_id, event_id, kind, payload, attempts, correlation_id",
+        " RETURNING tenant_id, event_id, kind, payload, attempts, correlation_id, "
+        "  available_at, created_at) "
+        "SELECT tenant_id, event_id, kind, payload, attempts, correlation_id FROM claimed "
+        "ORDER BY available_at, created_at",
         limit,
     )
     return [ClaimedEvent(**dict(r)) for r in rows]

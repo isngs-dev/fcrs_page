@@ -110,7 +110,8 @@ def gate_purpose(task: outreach_repository.ClaimedTask) -> compliance.Purpose:
     chat, answers them (no cadence hold); the thank-you follows a call; the rest is outreach."""
     if task.channel == "call" and task.intent == planner.CHAT_CALL_INTENT:
         return "first_response"
-    if task.channel == "email" and task.step_index == 0 and task.plan_kind == "inbound_auto":
+    if task.channel == "email" and task.plan_kind == "inbound_auto" and (
+            task.step_index == 0 or task.goal == "acknowledge"):
         return "first_response"
     return "after_call" if task.goal == "thank_you" else "outreach"
 

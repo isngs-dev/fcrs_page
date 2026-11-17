@@ -932,9 +932,11 @@ async def test_after_a_real_conversation_a_thank_you_email_goes_right_away(
         else:
             executors.unregister("email")
     assert sent == ["thank_you"]  # straight after the call, despite the usual 48 h gap
-    later = await db.fetchval("SELECT goal FROM outreach_tasks WHERE tenant_id = $1 AND "
-                              "channel = 'email' AND status = 'scheduled'", a)
-    assert later == "re_engage"  # the last friendly check-in stays where it was
+    later = [r["goal"] for r in await db.fetch(
+        "SELECT goal FROM outreach_tasks WHERE tenant_id = $1 AND channel = 'email' "
+        "AND status = 'scheduled' ORDER BY scheduled_at", a)]
+    # Plan 1.4: the acknowledgment became the thank-you (one email, not two); the rest stay.
+    assert later == ["follow_up", "re_engage"]
     assert await db.fetchval("SELECT count(*) FROM outreach_tasks WHERE tenant_id = $1",
                              env["b"]) == 0
 
@@ -1917,6 +1919,27 @@ async def test_the_last_missed_try_says_rebecca_will_not_call_again(env: dict[st
     await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "CallStatus": "no-answer"})
     [alert] = await _alerts(env, a)
     assert "last try" in alert["body"] and "will try again" not in alert["body"]
+
+
+async def test_a_missed_form_call_tells_the_team_the_day_4_call_is_planned(
+        env: dict[str, Any]) -> None:
+    """Plan 1.4: the day-0 call is one attempt and the day-4 call is the retry, so the alert
+    must not say she won't call again -- it says when the next planned call is."""
+    a, db = env["a"], env["db"]
+    await _alert_to(env, a, ["kaustubh@example.com"])
+    call_id, cid = await _form_call(env, a, {"service": "SEO"})
+    await _webhook(env, call_id, "hangup", {"CallUUID": "uuid-1", "CallStatus": "no-answer"})
+    [alert] = await _alerts(env, a)
+    assert "last try" not in alert["body"] and "won't call them again" not in alert["body"]
+    nxt = await db.fetchval(
+        "SELECT min(t.scheduled_at) FROM outreach_tasks t JOIN outreach_plans p "
+        "USING (tenant_id, plan_id) WHERE p.contact_id = $1 AND t.channel = 'call' "
+        "AND t.status = 'scheduled'", cid)
+    day = nxt.astimezone(_NY)
+    assert f"Rebecca will call them again on {day:%A}, {day:%B} {day.day}." in alert["body"]
+    assert await db.fetchval("SELECT status FROM outreach_tasks WHERE task_id = "
+                             "(SELECT task_id FROM call_sessions WHERE call_id = $1)",
+                             call_id) == "failed"  # no next-day retry of the day-0 call
 
 
 async def test_no_alert_for_an_answered_call_or_without_alert_emails(env: dict[str, Any]) -> None:

@@ -178,7 +178,7 @@ async def test_lead_with_consent_becomes_a_planned_contact(env: dict[str, Any]) 
     assert consents["call"]["evidence"]["lead_id"] == lead_id
 
     tasks = await db.fetch("SELECT channel, scheduled_at FROM outreach_tasks ORDER BY step_index")
-    assert [t["channel"] for t in tasks] == ["email", "call", "email"]
+    assert [t["channel"] for t in tasks] == ["email", "email", "call", "email"]  # plan 1.4
     first = tasks[0]["scheduled_at"] - datetime.now(UTC)
     assert timedelta(minutes=3) < first <= timedelta(minutes=5)  # inbound: email +5 min
     assert await db.fetchval("SELECT lead_id FROM leads WHERE lead_id = $1", lead_id)
@@ -285,4 +285,4 @@ async def test_chat_captured_name_then_email_feeds_inbound_automation(env: dict[
     assert consent is not None and consent["channel"] == "email"
     assert consent["wording"] == WORDING["chat-2026-10-a"]["email"]
     assert [r["channel"] for r in await db.fetch("SELECT channel FROM outreach_tasks")] == [
-        "email", "email"]  # no call consent -> no call step
+        "email"] * 3  # no call consent -> no call step (day 0/2/7)

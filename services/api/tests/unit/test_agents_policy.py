@@ -80,12 +80,17 @@ def test_inside_window_is_unchanged() -> None:
 
 
 def test_default_cadences() -> None:
+    """Plan 1.4 (2026-11-17): a new enquiry gets the approved day 0/2/4/7 sequence --
+    acknowledgment (with the booking link every email carries), a helpful email on day 2,
+    a second permitted call on day 4, a final email on day 7. Outbound is unchanged."""
     inbound = default_plan("inbound_auto", _SETTINGS)
-    assert [(s.channel, s.offset) for s in inbound.steps] == [
-        ("email", timedelta(minutes=5)),
-        ("call", timedelta(days=2, minutes=5)),
-        ("email", timedelta(days=4, minutes=5)),
+    assert [(s.channel, s.goal, s.offset) for s in inbound.steps] == [
+        ("email", "acknowledge", timedelta(minutes=5)),
+        ("email", "follow_up", timedelta(days=2, minutes=5)),
+        ("call", "book_meeting", timedelta(days=4, minutes=5)),
+        ("email", "re_engage", timedelta(days=7, minutes=5)),
     ]
+    assert [s.max_attempts for s in inbound.steps if s.channel == "call"] == [1]
     outbound = default_plan("outbound_manual", _SETTINGS)
     assert [(s.channel, s.offset) for s in outbound.steps] == [
         ("email", timedelta(0)), ("call", timedelta(days=2)), ("email", timedelta(days=4)),
@@ -145,7 +150,8 @@ def test_nothing_allowed_returns_none() -> None:
 
 
 def test_touch_budget_counts_previous_touches() -> None:
-    plan, notes = validate(default_plan("outbound_manual", _SETTINGS), _SETTINGS,
+    three = AgentSettings(enabled_channels=("call", "email"), max_touches_per_contact=3)
+    plan, notes = validate(default_plan("outbound_manual", three), three,
                            _inputs(touches=2, last_touch_at=_NOW - timedelta(days=10)), _NOW)
     assert plan is not None and len(plan.steps) == 1
     assert _codes(notes).count("MAX_TOUCHES") == 2
@@ -163,15 +169,38 @@ def test_gap_clamps_after_a_recent_touch_but_inbound_first_email_is_exempt() -> 
 
 def test_a_form_that_asked_for_a_call_is_called_first_and_right_away() -> None:
     form = OutreachPlan(kind="inbound_auto", steps=call_first_steps(_SETTINGS))
-    plan, _ = validate(form, _SETTINGS, _inputs(), _NOW)  # 10:00 in New York
-    assert plan is not None and [s.channel for s in plan.steps] == ["call", "email", "email"]
+    plan, notes = validate(form, _SETTINGS, _inputs(), _NOW)  # 10:00 in New York
+    assert plan is not None
+    assert [(s.channel, s.goal) for s in plan.steps] == [
+        ("call", "book_meeting"), ("email", "acknowledge"), ("email", "follow_up"),
+        ("call", "book_meeting"), ("email", "re_engage")]  # all five fit the default budget
     assert plan.steps[0].offset == timedelta(0) and "just filled in" in plan.steps[0].intent
+    # The acknowledgment goes out alongside the call -- not held two days by the gap -- but
+    # 15 minutes on, so a call that connects turns it into the thank-you (one email, not two).
+    assert plan.steps[1].offset == timedelta(minutes=15)
+    assert not any(n.step_index == 1 and n.code == "GAP_CLAMPED" for n in notes)
+    assert plan.steps[3].offset >= timedelta(days=4)  # the second call, day 4
+    assert [s.max_attempts for s in plan.steps if s.channel == "call"] == [1, 1]
     recent = _inputs(touches=1, last_touch_at=_NOW - timedelta(hours=1))
     plan, _ = validate(form, _SETTINGS, recent, _NOW)  # they just asked: no gap wait
     assert plan is not None and plan.steps[0].offset == timedelta(0)
     night, notes = validate(form, _SETTINGS, _inputs(), _NOW.replace(hour=2))  # 22:00 NY
     assert night is not None and night.steps[0].offset > timedelta(0)  # never at night
     assert "WINDOW_SHIFTED" in _codes(notes)
+
+
+def test_the_default_budget_fits_the_whole_sequence() -> None:
+    assert AgentSettings().max_touches_per_contact == 5  # plan 1.4: two calls + three emails
+
+
+def test_the_acknowledgment_answers_them_and_is_never_held_by_the_cadence() -> None:
+    from api.agents.dispatch import gate_purpose
+    from api.agents.outreach_repository import ClaimedTask
+
+    ack = ClaimedTask(tenant_id="t", task_id="k", plan_id="p", contact_id="c", channel="email",
+                      goal="acknowledge", intent="x", attempts=0, max_attempts=3, step_index=1,
+                      plan_kind="inbound_auto")
+    assert gate_purpose(ack) == "first_response"
 
 
 def test_dispatchers_poll_fast_enough_to_ring_a_form_within_30_seconds() -> None:
@@ -212,7 +241,8 @@ def test_policy_invariants_hold_for_random_plans() -> None:
             at = now + step.offset
             assert step.channel in settings.enabled_channels
             assert inputs.consent_ok[step.channel]
-            exempt = kind == "inbound_auto" and i == 0  # they just reached out
+            # they just reached out (the first step, or an acknowledgment of their enquiry)
+            exempt = kind == "inbound_auto" and (i == 0 or step.goal == "acknowledge")
             if previous is not None and not exempt:
                 assert at >= previous + gap
             if step.channel == "call":

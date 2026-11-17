@@ -216,7 +216,7 @@ async def test_a_form_that_asks_for_a_call_is_rung_right_away(env: dict[str, Any
     await dispatch.dispatch_events(db, limit=10)
     tasks = await db.fetch("SELECT channel, scheduled_at, intent FROM outreach_tasks "
                            "WHERE tenant_id = $1 ORDER BY step_index", a)
-    assert [t["channel"] for t in tasks] == ["call", "email", "email"]
+    assert [t["channel"] for t in tasks] == ["call", "email", "email", "call", "email"]  # plan 1.4
     assert tasks[0]["scheduled_at"] <= datetime.now(UTC)  # due now: the next dispatch dials
     assert "just filled in" in tasks[0]["intent"]
     assert await db.fetchval("SELECT count(*) FROM outreach_tasks WHERE tenant_id = $1",
@@ -390,7 +390,7 @@ async def test_a_call_booked_on_the_form_is_recorded_and_the_lead_is_rung(
                              lead_id) == "America/New_York"
     channels = [t["channel"] for t in await db.fetch(
         "SELECT channel FROM outreach_tasks WHERE tenant_id = $1 ORDER BY step_index", a)]
-    assert channels == ["call", "email", "email"]  # rung right away, as any call-consent form
+    assert channels == ["call", "email", "email", "call", "email"]  # rung right away, as any call-consent form
     assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1",
                              b) == 0
     # 2026-11-16: Rebecca sends this call's reminders too (the site's own were broken).

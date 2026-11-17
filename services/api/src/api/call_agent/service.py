@@ -34,6 +34,7 @@ from api.agents.outreach_repository import (
     cancel_channel_tasks,
     finish_task,
     get_task,
+    next_planned_call,
     refund_attempt,
     reschedule_task,
     stop_plan_if_empty,
@@ -1016,9 +1017,11 @@ _MISSED_OUTCOMES = {"no_answer", "voicemail"}  # they didn't pick up (not a prov
 
 async def _alert_missed_call(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
                              outcome: str, *, attempt: int, max_attempts: int,
-                             next_try: datetime | None) -> None:
+                             next_try: datetime | None,
+                             planned_call: datetime | None = None) -> None:
     """Email the client's team "please call this lead" (owner, 2026-11-16): the team holds
-    the business phone. Once per call and address; never fails the hangup."""
+    the business phone. Once per call and address; never fails the hangup. ``planned_call``:
+    the plan's next call step when this one is spent (plan 1.4: the day-4 call)."""
     config = await repo.get_call_config(db, claims)
     if config is None or not config.missed_call_alert_emails or session.direction != "outbound":
         return
@@ -1040,6 +1043,9 @@ async def _alert_missed_call(db: Database, claims: AuthClaims, session: repo.Cal
         local = next_try.astimezone(ZoneInfo(tz))
         lines.append(f"This was Rebecca's attempt {attempt} of {max_attempts}. She will try "
                      f"again on {local:%A}, {local:%B} {local.day}.")
+    elif planned_call is not None:
+        local = planned_call.astimezone(ZoneInfo(tz))
+        lines.append(f"Rebecca will call them again on {local:%A}, {local:%B} {local.day}.")
     else:
         lines.append(f"This was Rebecca's last try (attempt {attempt} of {max_attempts}): "
                      "she won't call them again.")
@@ -1094,9 +1100,12 @@ async def on_hangup(db: Database, claims: AuthClaims, session: repo.CallSessionR
             next_try = (now + max(RETRY_AFTER, backoff(task["attempts"]))
                         if task["attempts"] < task["max_attempts"] else None)
             if outcome in _MISSED_OUTCOMES:
+                planned = (await next_planned_call(db, claims, task["plan_id"], session.task_id)
+                           if next_try is None else None)  # plan 1.4: the day-4 call
                 await _alert_missed_call(db, claims, session, outcome,
                                          attempt=task["attempts"],
-                                         max_attempts=task["max_attempts"], next_try=next_try)
+                                         max_attempts=task["max_attempts"], next_try=next_try,
+                                         planned_call=planned)
             if next_try is not None:
                 await reschedule_task(db, claims, session.task_id, at=next_try,
                                       reason=f"CALL_{outcome.upper()}")

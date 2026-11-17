@@ -328,6 +328,17 @@ async def get_task(db: Database, claims: AuthClaims, task_id: str) -> dict[str, 
     return dict(row) if row is not None else None
 
 
+async def next_planned_call(db: Database, claims: AuthClaims, plan_id: str,
+                            after_task_id: str) -> datetime | None:
+    """When the plan's next scheduled call step is due (plan 1.4: the day-4 call), if any."""
+    _reject_global(claims)
+    value = await db.fetchval(
+        "SELECT min(scheduled_at) FROM outreach_tasks WHERE tenant_id = $1 AND plan_id = $2 "
+        "AND channel = 'call' AND status = 'scheduled' AND task_id <> $3",
+        claims.tenant_id, plan_id, after_task_id)
+    return value if isinstance(value, datetime) else None
+
+
 async def refund_attempt(db: Database, claims: AuthClaims, task_id: str) -> None:
     """Give back an attempt the contact asked us to retry ("call me later", A6 L8)."""
     _reject_global(claims)

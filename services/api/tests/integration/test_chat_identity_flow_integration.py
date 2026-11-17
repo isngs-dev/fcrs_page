@@ -165,7 +165,7 @@ async def test_email_then_number_in_chat_gives_the_calling_agent_a_consented_num
     await dispatch.dispatch_events(db, limit=10)  # email-only plan
     assert [r["channel"] for r in await db.fetch(
         "SELECT channel FROM outreach_tasks t JOIN outreach_plans p USING (tenant_id, plan_id) "
-        "WHERE p.tenant_id = $1 AND p.status = 'active'", tenant)] == ["email", "email"]
+        "WHERE p.tenant_id = $1 AND p.status = 'active'", tenant)] == ["email"] * 3  # day 0/2/7
 
     ack = await say("(786) 823-3553", conv)
     assert ack.reply == ic.phone_ack_reply("Jane", consented=True)
@@ -186,7 +186,7 @@ async def test_email_then_number_in_chat_gives_the_calling_agent_a_consented_num
         "USING (tenant_id, plan_id) WHERE p.tenant_id = $1 AND p.status = 'active' "
         "ORDER BY step_index", tenant)]
     # Rebecca rings first, once the chat is over (dispatch waits for the visitor to go quiet).
-    assert [c for c, _ in steps] == ["call", "email", "email"]
+    assert [c for c, _ in steps] == ["call", "email", "email", "call", "email"]  # plan 1.4: day 0/2/4/7
     assert steps[0][1] == planner.CHAT_CALL_INTENT
 
 
@@ -472,7 +472,7 @@ async def test_just_email_me_starts_the_email_follow_up_and_stops_asking_for_a_n
         assert reply.decision == "answer"
     assert len(provider.prompts) == spent  # no model reply, so no "I can't email you"
     await dispatch.dispatch_events(db, limit=10)
-    assert await _active_steps(db, tenant) == [("email", "scheduled"), ("email", "scheduled")]
+    assert await _active_steps(db, tenant) == [("email", "scheduled")] * 3  # day 0/2/7
     assert await db.fetchval("SELECT count(*) FROM outreach_plans WHERE tenant_id = $1",
                              tenant) == 1
 
@@ -489,12 +489,13 @@ async def test_dont_call_me_calls_off_a_planned_call_and_keeps_the_emails(
     for text in ("Do you fix leaks?", "Jane", "jane@example.com", "(786) 823-3553"):
         await say(text)
     await dispatch.dispatch_events(db, limit=10)
-    assert [c for c, _ in await _active_steps(db, tenant)] == ["call", "email", "email"]
+    assert [c for c, _ in await _active_steps(db, tenant)] == ["call", "email", "email", "call", "email"]
 
     await say("Please don't call me")
     await dispatch.dispatch_events(db, limit=10)
     assert await _active_steps(db, tenant) == [
-        ("call", "cancelled"), ("email", "scheduled"), ("email", "scheduled")]
+        ("call", "cancelled"), ("email", "scheduled"), ("email", "scheduled"),
+        ("call", "cancelled"), ("email", "scheduled")]  # both calls off, emails kept
     assert await db.fetchval(
         "SELECT count(*) FROM suppression_list WHERE tenant_id = $1 AND channel = 'call' "
         "AND value_normalised = '+17868233553'", tenant) == 1
@@ -512,7 +513,7 @@ async def test_email_only_before_an_email_asks_for_the_email_then_never_for_a_nu
     ack = await say("jane@example.com")
     assert ack.reply == ic.email_ack_reply("Jane", "jane@example.com", ask_phone=False)
     await dispatch.dispatch_events(db, limit=10)
-    assert [c for c, _ in await _active_steps(db, tenant)] == ["email", "email"]
+    assert [c for c, _ in await _active_steps(db, tenant)] == ["email"] * 3
 
 
 # -- The email ask after an answer (2026-11-04) ---------------------------------------------
