@@ -332,6 +332,18 @@ CLOSE_OFFER_LINE = ("Before you go, our team can walk you through this in more d
                     "short call. Would you like me to find a time with them?")
 DISCOVERY_THANKS_LINE = ("Thanks, that's really helpful. Would you like me to find a time with "
                          "our team to talk it through?")
+
+
+def discovery_thanks_line(first_name: str | None) -> str:
+    """Their name now and then, in her own lines too (owner, 2026-11-17)."""
+    if not first_name:
+        return DISCOVERY_THANKS_LINE
+    return DISCOVERY_THANKS_LINE.replace("Thanks,", f"Thanks, {first_name},", 1)
+
+
+# "Other" on the form and nothing in the message: ask, never guess (owner, 2026-11-17).
+OTHER_SERVICE_QUESTION = "I saw you picked Other on our form. What can we help you with?"
+NOTED_LINE = "Thanks, I've noted that."
 DISCOVERY_NO_LINE = ("No problem. Would you like me to find a time with our team, or is there "
                      "anything I can answer for you?")
 WHICH_TIME = "What day and time works best for you?"
@@ -343,10 +355,12 @@ TAKEN_LINE = ("I'm sorry, we already have a meeting scheduled at that time. "
 DAY_FULL = "I'm sorry, we're not available that day. What other day would suit you?"
 DAY_BOOKED = "I'm sorry, that day is already fully booked. What other day would suit you?"
 OTHER_TIME_LINE = "No problem. What day and time would suit you better?"
-CHANGE_LINE = "No problem. What should I change, the day and time, or the email?"
-EMAIL_ASK_LINE = ("What email address should I send the meeting link to? "
-                  "Please say it slowly, like john dot smith at gmail dot com.")
-EMAIL_RETRY_LINE = "Sorry, I didn't catch that. Could you say the email address again, slowly?"
+CHANGE_LINE = "No problem. What should I change, the email, or the day and time?"
+EMAIL_ASK_LINE = ("What email should I send the booking details to? "
+                  "Please say it slowly, or spell it out letter by letter.")
+EMAIL_RETRY_LINE = ("Sorry, I want to get it exactly right. Could you spell the email for me, "
+                    "letter by letter?")
+EMAIL_TRIES = 3  # then it is booked anyway and the team sends the details
 SYNC_FAILED_LINE = ("I couldn't confirm that time in our calendar, so our team will reach out to "
                     "book it with you. Thanks, goodbye.")
 
@@ -434,11 +448,58 @@ def not_open_line(windows: list[list[str]], timezone: str) -> str:
             f"{_ZONE_NAMES.get(timezone, timezone)} time. What other time would suit you?")
 
 
-def final_check_line(slot: datetime, timezone: str, email: str | None) -> str:
-    """The one confirmation: every detail read back together."""
-    details = (f"and I'll send the meeting details to {say_email(email)}" if email
-               else "and our team will send you the meeting details")
-    return f"Just to confirm, that's {say_time(slot, timezone)}, {details}. Shall I book it?"
+def final_check_line(slot: datetime, timezone: str, email: str | None, *,
+                     who: str | None = None) -> str:
+    """The one confirmation: every detail read back together -- the time, who it's for, and
+    the email asked about outright (owner, 2026-11-17: the booking and the follow-ups go there)."""
+    when = f"Just to confirm, that's {say_time(slot, timezone)}{f', for {who}' if who else ''}"
+    if not email:
+        return f"{when}, and our team will send you the booking details. Shall I book it?"
+    return (f"{when}. I'll send the booking details to {say_email(email)}. Is that the right "
+            "email, or would you like me to use a different one?")
+
+
+def who(name: str | None, company: str | None) -> str | None:
+    """ "Jane Doe from Lee Roofing" for the final check; ``None`` without a real name."""
+    if not name or not all(part.replace("-", "").replace("'", "").isalpha()
+                           for part in name.split()):
+        return None
+    return f"{name} from {company}" if company else name
+
+
+_CORRECTS_DETAILS = re.compile(r"\b(?:my name|name is|name's|call me|company|business)\b", re.I)
+
+
+def corrects_details(text: str) -> bool:
+    """ "The company is Lee Roofing and Gutters" at the final check: a correction to note."""
+    return bool(_CORRECTS_DETAILS.search(text))
+
+
+def _form_key(label: str) -> str | None:
+    key = label.strip().lower()
+    for wanted, words in (("service", ("service",)), ("message", ("message", "comment")),
+                          ("company", ("company", "business"))):
+        if any(w in key for w in words):
+            return wanted
+    return None
+
+
+def form_details(notes: list[dict[str, Any]]) -> dict[str, str]:
+    """The website form's service, message and company, from the contact's notes (intake
+    writes each answer as "label: value"); the latest form wins."""
+    found: dict[str, str] = {}
+    for note in notes:
+        label, sep, value = str(note.get("text", "")).partition(":")
+        key = _form_key(label) if sep and note.get("kind") == "need" else None
+        if key and value.strip():
+            found[key] = value.strip()
+    return found
+
+
+def needs_asking(details: dict[str, str]) -> bool:
+    """They picked "Other" and wrote no message: nothing tells Rebecca what they need."""
+    return (bool(re.match(r"\s*(?:other|something else)\b", details.get("service", ""), re.I))
+            and not details.get("message"))
 
 
 def booked_line(slot: datetime, timezone: str, *, emailed: bool = True,
@@ -611,29 +672,58 @@ def parse_when(text: str, today: date) -> tuple[date | None, tuple[int, int] | N
 
 _EMAIL_PREFIX = re.compile(
     r"^(?:(?:yes|yeah|sure|ok(?:ay)?|no|nope|actually)[,.]?\s+)?"
-    r"(?:it'?s|it is|that'?s|my email(?: address)? is"
-    r"|the email(?: address)? is|email is)\s+")
+    r"(?:(?:it'?s|it is|that'?s|my email(?: address)? is|the email(?: address)? is|email is"
+    r"|(?:you can |please )?use|send (?:it|them|the details) to)\s+)?")
+_EMAIL_SUFFIX = re.compile(r"\s+(?:instead|please|thanks|thank you|ok(?:ay)?)\W*$")
+_EMAIL_WORDS = {"dot": ".", "period": ".", "point": ".", "at": "@", "underscore": "_",
+                "dash": "-", "hyphen": "-", "zero": "0", "one": "1", "two": "2", "three": "3",
+                "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"}
+_EMAIL_FILLER = {"capital", "small", "lowercase", "uppercase", "letter"}
 
 
 def parse_spoken_email(text: str) -> str | None:
-    """An email address from what the caller said ("john dot smith at gmail dot com"),
-    or ``None`` when it isn't one. Indian English "at the rate" is understood too."""
-    t = _EMAIL_PREFIX.sub("", text.lower().strip())
-    t = re.sub(r"\bat the rate(?: of)?\b|\bat\b", "@", t)
-    t = re.sub(r"\b(?:dot|period|point)\b", ".", t)
-    t = re.sub(r"\bunderscore\b", "_", t)
-    t = re.sub(r"\b(?:dash|hyphen)\b", "-", t)
-    t = re.sub(r"\s+", "", t).strip(".,")
+    """An email address from what the caller said ("john dot smith at gmail dot com", or spelled
+    "j a n e", "J-A-N-E", "m as in mary", "double t"), or ``None`` when it isn't one. Indian
+    English "at the rate" is understood too. Owner, 2026-11-17: the booking and every follow-up
+    go to it -- the final check reads it back letter by letter before it is used."""
+    t = _EMAIL_SUFFIX.sub("", _EMAIL_PREFIX.sub("", text.lower().strip()))
+    t = re.sub(r"\bat the rate(?: of)?\b", " at ", t)
+    t = re.sub(r"\b([a-z0-9]) as in \w+", r"\1", t)
+    t = re.sub(r"\bdouble ([a-z0-9])\b", r"\1\1", t)
+    parts: list[str] = []
+    for raw in t.split():
+        word = raw.strip(",;:!?")
+        if word in _EMAIL_FILLER:
+            continue
+        if re.fullmatch(r"[a-z0-9]\.", word):  # "J. A. N. E." -- spelled letters
+            word = word[0]
+        elif re.fullmatch(r"[a-z0-9](?:-[a-z0-9])+", word):  # "K-A-U-S"
+            word = word.replace("-", "")
+        parts.append(_EMAIL_WORDS.get(word, word))
     try:
-        return validate_email(t, check_deliverability=False).normalized.lower()
+        return validate_email("".join(parts).strip(".,"),
+                              check_deliverability=False).normalized.lower()
     except EmailNotValidError:
         return None
 
 
+# Said as words; any other domain is spelled out like the rest of the address.
+_SPOKEN_DOMAINS = {d: d.replace(".", " dot ") for d in (
+    "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "aol.com")}
+_SYMBOL_WORDS = {".": "dot", "@": "at", "_": "underscore", "-": "dash"}
+
+
 def say_email(email: str) -> str:
-    for char, word in ((".", " dot "), ("@", " at "), ("_", " underscore "), ("-", " dash ")):
-        email = email.replace(char, word)
-    return " ".join(email.split())
+    """Letter by letter ("J, A, N, E, at, gmail dot com"): a misheard letter is caught at the
+    read-back, not in a bounced booking email."""
+    local, _, domain = email.partition("@")
+    *labels, tld = domain.split(".")
+    spoken = [_SYMBOL_WORDS.get(c, c.upper()) for c in local] + ["at"]
+    if domain in _SPOKEN_DOMAINS:
+        spoken.append(_SPOKEN_DOMAINS[domain])
+    else:
+        spoken += [_SYMBOL_WORDS.get(c, c.upper()) for c in ".".join(labels)] + ["dot", tld]
+    return ", ".join(spoken)
 
 
 # -- Per-call memory ------------------------------------------------------------------------
@@ -661,6 +751,8 @@ class CallState:
     on_hold: bool = False  # they asked her to hold: silence is waited out quietly
     answered: bool = False  # her last turn answered a question (a pause then gets one follow-up)
     hold_silences: int = 0
+    first_name: str | None = None  # used now and then, never in every line
+    who: str | None = None  # "Jane Doe from Lee Roofing" for the final check
 
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "day": self.day, "at": self.at, "zone": self.zone,
@@ -670,7 +762,7 @@ class CallState:
                 "history": self.history[-12:], "booked": self.booked,
                 "rescheduling": self.rescheduling, "close_offered": self.close_offered,
                 "on_hold": self.on_hold, "hold_silences": self.hold_silences,
-                "answered": self.answered}
+                "answered": self.answered, "first_name": self.first_name, "who": self.who}
 
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> CallState:
@@ -688,4 +780,5 @@ class CallState:
                    close_offered=bool(data.get("close_offered", False)),
                    on_hold=bool(data.get("on_hold", False)),
                    hold_silences=int(data.get("hold_silences", 0)),
-                   answered=bool(data.get("answered", False)))
+                   answered=bool(data.get("answered", False)),
+                   first_name=data.get("first_name"), who=data.get("who"))

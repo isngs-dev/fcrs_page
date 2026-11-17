@@ -453,3 +453,34 @@ November same time" got "What time would you like…?", and "Same time." three t
 the time." and then the team hand-off. Now, while a booked call is being moved (or in the same sentence that
 asks to move it), "same time" / "the same" / "same as before" (`script.means_same_time`) means the booked call's
 time of day, in the zone times are heard in — so "the 20th, same time" goes straight to the final check.
+
+**R38 — a form call follows up on the form, confirms the details, and takes the email precisely
+(owner, 2026-11-17):**
+- *Opening.* Intake notes every form answer as `label: value` (A11 M4). The opening prompt now writes LINE
+  from the service they picked and a few words of their message, and QUESTION as a follow-up on that message.
+  `FORM_CALL_INTENT` says the same. If the service is "Other" (or "something else") and the message is empty
+  (`script.needs_asking`), the follow-up question is the fixed `OTHER_SERVICE_QUESTION`, and the prompt tells
+  the model never to name "Other" as their need. Their answer is noted as a need, as before.
+- *Details confirmation (decision: at booking, not at the start of the call).* The form already holds the
+  name, email and company. Confirming them at the start would delay the conversation, and they matter for
+  the booking. So the final check reads them back with the time: "…for Jane Doe from Lee Roofing. I'll send
+  the booking details to J, A, N, E, at, gmail dot com. Is that the right email, or would you like me to use a
+  different one?" The company comes from the form (`script.form_details`), and the name only when it is a
+  real name (`script.who`). A correction ("the company is…") is noted for the team, Rebecca says "Thanks, I've
+  noted that", and she re-reads the check without the old name or company. A missing company or name is not
+  asked for.
+- *Email precision.* `say_email` reads the address letter by letter. Only gmail, yahoo, outlook, hotmail,
+  icloud and aol are said as words. `parse_spoken_email` understands:
+  - spelled letters ("j a n e", "J-A-N-E", "J. A. N. E.");
+  - "m as in mary" and "double t";
+  - number words;
+  - "capital" and "small";
+  - "use … instead" and "send it to … please".
+
+  Every new address is read back and confirmed before booking. The caller gets three tries (`EMAIL_TRIES`,
+  was two) before the team sends the details. A confirmed address that differs from the one on file becomes
+  the contact's email, and an email identity is added, so the follow-ups go there too (`service._keep_email`).
+- *Their name.* The first name is used occasionally: in the opening, in the discovery thanks
+  (`discovery_thanks_line`) and in the final check. The answering model also gets `caller_name`, with the
+  instruction to use it at most once every three or four replies, never two replies in a row, and never as
+  the first word.

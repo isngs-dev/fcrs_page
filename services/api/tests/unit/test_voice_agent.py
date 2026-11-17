@@ -160,6 +160,7 @@ def test_the_time_limit_hands_over_after_answering() -> None:
 
 async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_book: bool = False,
                        assistant: str | None = None, handoff: bool = False,
+                       caller_name: str | None = None,
                        ) -> tuple[str | None, AsyncMock]:
     from api.llm.provider import Completion
 
@@ -178,7 +179,7 @@ async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_b
     ):
         reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [],  # type: ignore[arg-type]
                                             can_book=can_book, assistant=assistant,
-                                            handoff=handoff)
+                                            handoff=handoff, caller_name=caller_name)
     return reply, generate
 
 
@@ -245,6 +246,24 @@ async def test_opening_lines_come_from_the_landing_page_and_why_we_call(env: Non
     assert "gutter guards" in system  # the person's chat on that site's chatbot
     assert "We repair storm-damaged roofs" in system  # that site's knowledge base
     assert "just filled in the contact form" in system  # why this call is happening
+
+
+async def test_the_opening_follows_up_on_the_form_they_filled_in(env: None) -> None:
+    """Owner, 2026-11-17: the call starts from the service they picked and their message."""
+    _, generate = await _lines_with("LINE: Thanks for your message.\nQUESTION: " + _Q,
+                                    about="2026-11-17 form: They told us: service: SEO")
+    system = generate.await_args.args[0][0].content
+    assert "service they picked" in system and "message" in system
+    assert "Other" in system  # a vague "Other" is never named as their need
+
+
+async def test_the_callers_first_name_is_offered_for_occasional_use(env: None) -> None:
+    """Owner, 2026-11-17: her name for them now and then, not in every reply."""
+    _, generate = await _answer_with("Yes, we repair roofs.", caller_name="Jane")
+    system = generate.await_args.args[0][0].content
+    assert "Jane" in system and "now and then" in system
+    _, generate = await _answer_with("Yes, we repair roofs.")
+    assert "now and then" not in generate.await_args.args[0][0].content
 
 
 async def test_the_spoken_answer_gets_the_same_token_budget_as_the_chat(env: None) -> None:

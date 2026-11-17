@@ -41,7 +41,8 @@ def default_plan(kind: PlanKind, settings: AgentSettings) -> OutreachPlan:
 
 
 FORM_CALL_INTENT = ("They just filled in the contact form on our website a moment ago: thank "
-                    "them, ask what they need, answer questions and offer to book a meeting.")
+                    "them, follow up on the service they picked and the message they wrote, "
+                    "answer questions and offer to book a meeting.")
 
 
 CHAT_CALL_INTENT = ("They were just chatting with us on our website and shared their number: "

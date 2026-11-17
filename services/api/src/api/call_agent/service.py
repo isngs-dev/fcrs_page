@@ -43,7 +43,13 @@ from api.call_agent import realtime, script, telnyx
 from api.call_agent import repository as repo
 from api.call_agent.telephony import PlivoTelephony, TelephonyProvider, TelnyxTelephony
 from api.config import get_api_settings
-from api.contacts.repository import get_contact, get_contact_id_by_identity, list_identities
+from api.contacts.repository import (
+    add_identity,
+    get_contact,
+    get_contact_id_by_identity,
+    list_identities,
+    update_contact,
+)
 from api.llm.provider import ChatMessage
 from api.notifications.emit import emit_event_safe
 from api.notifications.repository import enqueue_notification
@@ -229,6 +235,11 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
                                           config.voice_model)
     written: dict[str, Any] = {"hook": hook, "question": question}
     contact = await get_contact(db, claims, task.contact_id)
+    details = script.form_details(await memory.items(db, claims, task.contact_id))
+    if script.needs_asking(details):  # "Other" and no message: ask what they need
+        written["question"] = script.OTHER_SERVICE_QUESTION
+    written["first_name"] = _first_name(contact)
+    written["who"] = script.who(contact.name, details.get("company")) if contact else None
     upcoming = (await get_upcoming_for_contact(db, claims, lead_id=contact.lead_id,
                                                email=contact.email) if contact else None)
     if upcoming is not None:  # booked already (e.g. on the website form): keep or move it
@@ -299,11 +310,22 @@ def _hangup(text: str, voice: str) -> str:
     return speak(text, voice) + "<Hangup/>"
 
 
+def _first_name(contact: Any) -> str | None:
+    first = (contact.name or "").split(" ")[0] if contact and contact.name else None
+    return first if first and first.isalpha() else None
+
+
+def _starting_state(written: dict[str, Any]) -> dict[str, Any]:
+    """The call's state on answer, from what ``place_call`` wrote for this contact."""
+    return script.CallState(question=written.get("question"), booked=written.get("booked"),
+                            first_name=written.get("first_name"),
+                            who=written.get("who")).to_json()
+
+
 async def _opening_line(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
                         config: repo.CallConfig) -> str:
     contact = await get_contact(db, claims, session.contact_id) if session.contact_id else None
-    first = (contact.name or "").split(" ")[0] if contact and contact.name else None
-    return script.opening(first_name=first if first and first.isalpha() else None,
+    return script.opening(first_name=_first_name(contact),
                           company=config.company_name, recording=config.recording_enabled,
                           hook=(session.session or {}).get("hook"))
 
@@ -318,8 +340,7 @@ async def answered(db: Database, claims: AuthClaims, session: repo.CallSessionRo
     written = session.session or {}
     await repo.claim_answered(
         db, claims, session.call_id, opening=await _opening_line(db, claims, session, config),
-        session=script.CallState(question=written.get("question"),
-                                 booked=written.get("booked")).to_json())
+        session=_starting_state(written))
 
 
 async def recording_saved(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
@@ -393,8 +414,7 @@ async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSession
     line = await _opening_line(db, claims, session, config)
     await repo.update_session(db, claims, session.call_id, status="in_progress",
                               answered_at=datetime.now(UTC), provider_call_uuid=call_uuid,
-                              session=script.CallState(question=written.get("question"),
-                                                       booked=written.get("booked")).to_json())
+                              session=_starting_state(written))
     await repo.add_turn(db, claims, session.call_id, speaker="rebecca", text=line)
     if realtime.enabled_for(claims.tenant_id):  # speed test: the stream says the opening
         return realtime.stream_xml(session.call_id, ticket(session.call_id))
@@ -677,7 +697,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         return await bye(script.NOT_INTERESTED_LINE, "not_interested")
 
     def final_check() -> str:
-        return script.final_check_line(datetime.fromisoformat(state.chosen or ""), tz, state.email)
+        return script.final_check_line(datetime.fromisoformat(state.chosen or ""), tz,
+                                       state.email, who=state.who)
 
     async def confirm() -> TurnResult:
         state.stage = "confirming"
@@ -685,10 +706,10 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
 
     async def ready() -> TurnResult:
         """The slot is open: the email it goes to is the last detail, then one final check."""
-        if state.email is None and state.email_tries < 2 and session.contact_id:
+        if state.email is None and state.email_tries < script.EMAIL_TRIES and session.contact_id:
             contact = await get_contact(db, claims, session.contact_id)
             state.email = contact.email if contact else None
-        if state.email or state.email_tries >= 2:
+        if state.email or state.email_tries >= script.EMAIL_TRIES:
             return await confirm()
         state.stage = "email_ask"
         return await say(script.EMAIL_ASK_LINE)
@@ -707,6 +728,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             return await say(script.TAKEN_LINE)
         if not email:
             await _handoff(db, claims, session, "email_needed")
+        elif session.contact_id:
+            await _keep_email(db, claims, session.contact_id, email)
         if state.rescheduling and state.booked:  # their old invite came from elsewhere
             await cancel_event(db, claims, state.booked["event_id"])
             await _handoff(db, claims, session, "booking_rescheduled",
@@ -743,7 +766,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             if session.contact_id:  # the team (and later emails) see what they told us
                 await memory.remember(db, claims, session.contact_id, channel="call",
                                       kind="need", text=speech)
-            return await say(script.DISCOVERY_THANKS_LINE)
+            return await say(script.discovery_thanks_line(state.first_name))
     if kind == "yes" and opening_question:  # "Is now a good time?" -> yes: get them talking
         state.stage = "booked_check" if state.booked else "discovery"
         return await say(f"Great. {opening_question}")
@@ -756,7 +779,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             state.email = heard
             return await confirm()
         state.email_tries += 1
-        if state.email_tries >= 2:  # book anyway; the team sends the details
+        if state.email_tries >= script.EMAIL_TRIES:  # book anyway; the team sends the details
             return await confirm()
         return await say(script.EMAIL_RETRY_LINE)
     if state.stage == "confirming" and state.chosen:
@@ -771,6 +794,12 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         if re.search(r"\be-?mail\b", speech, re.I):
             state.stage, state.email, state.email_tries = "email_ask", None, 0
             return await say(script.EMAIL_ASK_LINE)
+        if script.corrects_details(speech):  # a corrected name / company: never read back wrong
+            if session.contact_id:  # the team sees the right details
+                await memory.remember(db, claims, session.contact_id, channel="call", kind="need",
+                                      text=f"Their details, corrected on the call: {speech}")
+            state.who = None
+            return await say(f"{script.NOTED_LINE} {final_check()}")
         if re.search(r"\b(?:day|date|time)\b", speech, re.I):
             state.stage, state.at = "asking_time", None
             return await say(script.OTHER_TIME_LINE)
@@ -822,7 +851,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         reply = await answer_from_knowledge(db, claims, query, history,
                                             assistant=f"Rebecca, the AI assistant at "
                                                       f"{config.company_name}",
-                                            handoff=True,
+                                            handoff=True, caller_name=state.first_name,
                                             model=None if calls else config.voice_model,
                                             about_caller=about, can_book=not held,
                                             **({"llm_config": calls} if calls else {}))
@@ -847,6 +876,18 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     else:  # the answer alone: they speak when ready; a pause gets one follow-up
         state.answered = back is None and not reply.rstrip().endswith("?")
     return await say(f"{reply} {back}" if back else reply)
+
+
+async def _keep_email(db: Database, claims: AuthClaims, contact_id: str, email: str) -> None:
+    """The email they confirmed on the call is where the follow-ups go too (owner, 2026-11-17)."""
+    contact = await get_contact(db, claims, contact_id)
+    if contact is None or (contact.email or "").lower() == email:
+        return
+    await update_contact(db, claims, contact_id, email=email)
+    try:
+        await add_identity(db, claims, contact_id, identity_type="email", identity_value=email)
+    except ValidationError:
+        pass  # already theirs, or another contact's: contacts.email still sends to it
 
 
 def _last_said_offer(state: script.CallState) -> bool:

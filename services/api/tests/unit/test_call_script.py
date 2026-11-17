@@ -227,13 +227,49 @@ def test_parse_when_reads_the_day_and_time_the_caller_asks_for(
     ("john dash smith at yahoo dot co dot in", "john-smith@yahoo.co.in"),
     ("I don't remember", None),
     ("david at gmail", None),
+    # Owner, 2026-11-17: the booking and every follow-up go to it -- spelled letters count.
+    ("k a u s t u b h dot b one at i s n g s dot com", "kaustubh.b1@isngs.com"),
+    ("K-A-U-S-T-U-B-H dot B 1 at isngs dot com", "kaustubh.b1@isngs.com"),
+    ("J. A. N. E. at gmail dot com", "jane@gmail.com"),
+    ("m as in mary a t t at gmail dot com", "matt@gmail.com"),
+    ("double t o m at gmail dot com", "ttom@gmail.com"),
+    ("no, use jane at gmail dot com instead", "jane@gmail.com"),
+    ("send it to capital J ane at outlook dot com please", "jane@outlook.com"),
 ])
 def test_spoken_email_is_turned_into_an_address(speech: str, email: str | None) -> None:
     assert script.parse_spoken_email(speech) == email
 
 
-def test_email_is_read_back_the_way_people_say_it() -> None:
-    assert script.say_email("david.r@isngs.com") == "david dot r at isngs dot com"
+def test_email_is_read_back_letter_by_letter() -> None:
+    """Owner, 2026-11-17: be precise -- every letter of the address is read back, only a
+    well-known provider is said as a word."""
+    assert script.say_email("david.r@isngs.com") == (
+        "D, A, V, I, D, dot, R, at, I, S, N, G, S, dot, com")
+    assert script.say_email("jane_doe-1@gmail.com") == (
+        "J, A, N, E, underscore, D, O, E, dash, 1, at, gmail dot com")
+
+
+def test_the_form_answers_are_read_from_the_contacts_notes() -> None:
+    notes = [{"kind": "need", "text": "service: Google Ads"},
+             {"kind": "asked", "text": "company: not a form answer"},
+             {"kind": "need", "text": "Company: Lee Roofing"},
+             {"kind": "need", "text": "message: We need more leads in Tampa"},
+             {"kind": "need", "text": "service: SEO"}]  # the latest form wins
+    assert script.form_details(notes) == {"service": "SEO", "company": "Lee Roofing",
+                                          "message": "We need more leads in Tampa"}
+    assert script.form_details([]) == {}
+
+
+@pytest.mark.parametrize(("details", "ask"), [
+    ({"service": "Other"}, True),
+    ({"service": "other (please specify)", "company": "Lee Roofing"}, True),
+    ({"service": "Other", "message": "Can you redo our logo?"}, False),
+    ({"service": "SEO"}, False),
+    ({}, False),
+])
+def test_other_with_no_message_means_asking_what_they_need(
+        details: dict[str, str], ask: bool) -> None:
+    assert script.needs_asking(details) is ask
 
 
 def test_booked_line_mentions_the_meeting_link_only_when_there_is_one() -> None:
@@ -268,11 +304,33 @@ def test_the_one_closing_offer_survives_the_saved_state() -> None:
 
 
 def test_the_final_check_reads_back_everything_once() -> None:
+    """Owner, 2026-11-17: their name and company are confirmed, and the email is asked about
+    outright -- the right one, or another one for the booking details."""
     slot = datetime(2026, 11, 3, 23, 30, tzinfo=UTC)
-    assert script.final_check_line(slot, "America/New_York", "jane@example.com") == (
-        "Just to confirm, that's Tuesday, November 3 at 6:30 PM Eastern time, and I'll send the "
-        "meeting details to jane at example dot com. Shall I book it?")
-    assert "our team will send" in script.final_check_line(slot, "America/New_York", None)
+    assert script.final_check_line(slot, "America/New_York", "jane@gmail.com",
+                                   who="Jane Doe from Lee Roofing") == (
+        "Just to confirm, that's Tuesday, November 3 at 6:30 PM Eastern time, for Jane Doe from "
+        "Lee Roofing. I'll send the booking details to J, A, N, E, at, gmail dot com. Is that the "
+        "right email, or would you like me to use a different one?")
+    assert script.final_check_line(slot, "America/New_York", "jane@gmail.com").startswith(
+        "Just to confirm, that's Tuesday, November 3 at 6:30 PM Eastern time. I'll send")
+    no_email = script.final_check_line(slot, "America/New_York", None, who="Jane Doe")
+    assert "for Jane Doe" in no_email and "our team will send" in no_email
+    assert no_email.endswith("Shall I book it?")
+
+
+def test_who_names_the_person_and_their_company_when_known() -> None:
+    assert script.who("Jane Doe", "Lee Roofing") == "Jane Doe from Lee Roofing"
+    assert script.who("Jane Doe", None) == "Jane Doe"
+    assert script.who(None, "Lee Roofing") is None  # never "for Lee Roofing" alone
+    assert script.who("jane@example.com", None) is None  # an email typed as a name
+
+
+def test_the_first_name_is_used_now_and_then_in_her_own_lines() -> None:
+    assert script.discovery_thanks_line("Jane").startswith("Thanks, Jane,")
+    assert script.discovery_thanks_line(None) == script.DISCOVERY_THANKS_LINE
+    state = script.CallState(first_name="Jane", who="Jane Doe")
+    assert script.CallState.from_json(state.to_json()) == state
 
 
 def test_rebecca_never_proposes_a_time_when_she_declines_one() -> None:

@@ -101,14 +101,18 @@ _CAN_BOOK_PROMPT = (
 _OPENING_PROMPT = (
     "You are Rebecca, calling someone back for this business. Write the opening of a phone "
     "call to a busy US business owner who will hang up on anything that sounds scripted. "
-    "LINE: one sentence that comes right after you have said hi and your name. First what "
-    "they reached out about, from the notes about the person (for example: You reached out "
-    "about Google Ads for Lee Roofing), then the result we help businesses like theirs get, "
+    "LINE: one warm sentence that comes right after you have said hi and your name. First what "
+    "they reached out about, from the notes about the person: when they filled in a form, the "
+    "service they picked and, in a few words, what their message said (for example: Thanks for "
+    "your message about Google Ads and getting more leads in Tampa). If the service they picked "
+    "is Other (or vague) and they wrote no message, never name it as their need: just thank "
+    "them for getting in touch. Then the result we help businesses like theirs get, "
     "confident and specific, using ONLY the context below (for example: and I'd love to show "
     "you how we turn ad clicks into booked inspections). No notes: just that result. Sound "
     "like a sharp, upbeat professional, never like a sales script. At most 18 words, no "
-    "question. QUESTION: one short, friendly question about what they need, tied to "
-    "what they asked about or what we offer, to get them talking (at most 15 words). Neither "
+    "question. QUESTION: one short, friendly question about what they need that follows up on "
+    "what their message or chat said (else what we offer), to get them talking (at most 15 "
+    "words). Neither "
     "line has a greeting, a name, prices, dates, discounts, promises, lists or emoji. Reply "
     "with exactly two lines:\nLINE: <sentence>\nQUESTION: <question>"
 )
@@ -281,6 +285,15 @@ def _who_prompt(assistant: str | None) -> str:
             "never say you have no name. ")
 
 
+def _name_prompt(first_name: str | None) -> str:
+    """Their first name, used now and then like a friendly professional (owner, 2026-11-17)."""
+    if not first_name:
+        return ""
+    return (f" The caller's first name is {first_name}. Use it now and then, the way a friendly "
+            "professional would: at most once every three or four replies, never if one of your "
+            "last two replies used it, and never as the first word.")
+
+
 class MissReply(str):
     """Her own hand-off for a question the knowledge base can't answer ("That's a great
     question about X -- our marketing expert will be more precise on that"), owner 2026-11-16.
@@ -311,7 +324,7 @@ async def answer_from_knowledge(
     db: Database, claims: AuthClaims, question: str, history: list[ChatMessage],
     *, model: str | None = None, about_caller: str | None = None, can_book: bool = False,
     llm_config: LLMConfig | None = None, assistant: str | None = None,
-    handoff: bool = False,
+    handoff: bool = False, caller_name: str | None = None,
 ) -> str | None:
     """A short spoken answer grounded in the tenant's knowledge base, or ``None``
     when the knowledge base doesn't hold it (or the reply fails the output
@@ -337,7 +350,8 @@ async def answer_from_knowledge(
         ChatMessage(role="system", content=(
             # ``assistant``: who she is (the calling agent's "Rebecca, the AI assistant at X")
             f"{_who_prompt(assistant)}"
-            f"{_VOICE_SYSTEM_PROMPT}{f' {_CAN_BOOK_PROMPT}' if can_book else ''}\n\n"
+            f"{_VOICE_SYSTEM_PROMPT}{f' {_CAN_BOOK_PROMPT}' if can_book else ''}"
+            f"{_name_prompt(caller_name)}\n\n"
             f"Context:\n{context}\n\n{frame_memory(about_caller)}"
         ).strip()),  # A11: the caller's story, as data
         *history[-_HISTORY_TURNS:],
