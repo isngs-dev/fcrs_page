@@ -33,8 +33,16 @@ def booking_confirmation_message(
     rescheduled_from: datetime | None = None,
     business_name: str | None = None,
     visitor_name: str | None = None,
+    agenda: list[str] | None = None,
+    prepare: str | None = None,
+    manage_url: str | None = None,
 ) -> tuple[str, str]:
     """Build the ``(subject, body)`` for a booking-confirmation email.
+
+    Plan 1.6: ``agenda`` (what they told us, in their words) becomes "What we'll cover";
+    ``prepare`` is one question the team still needs; ``manage_url`` (the signed page to move
+    or cancel a booking made through Rebecca or the chat) is preferred over a Calendly link.
+    Each is left out entirely when absent.
 
     ``business_name`` (the chatbot's client) and ``visitor_name`` make it a
     personal, branded transactional email -- the bare unbranded version from a
@@ -66,10 +74,16 @@ def booking_confirmation_message(
         else ""
     )
     reschedule_line = (
-        f"Need to reschedule? Manage your booking here: {calendly_link}"
+        f"Need to move or cancel it? Manage your booking here: {manage_url}"
+        if manage_url
+        else f"Need to reschedule? Manage your booking here: {calendly_link}"
         if calendly_link
         else "If you need to reschedule, please contact us."
     )
+    topics = [t for t in (agenda or []) if t.strip()]
+    agenda_block = ("\n\nWhat we'll cover:\n" + "\n".join(f"- {t}" for t in topics)
+                    if topics else "")
+    prepare_line = f"\n\nTo help us prepare, could you reply with: {prepare}" if prepare else ""
     meet_line = f"\n\nJoin the call: {meet_url}" if meet_url else ""
     sign_off = f"Thanks,\n{business}" if business else "Thanks!"
     body = (
@@ -77,7 +91,9 @@ def booking_confirmation_message(
         f"Your call{with_business} is confirmed.\n\n"
         f"When: {when}"
         f"{moved_line}"
-        f"{meet_line}\n\n"
+        f"{meet_line}"
+        f"{agenda_block}"
+        f"{prepare_line}\n\n"
         f"{reschedule_line}\n\n"
         f"{sign_off}"
     )

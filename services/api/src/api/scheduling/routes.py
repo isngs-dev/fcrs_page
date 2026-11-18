@@ -40,9 +40,11 @@ from api.notifications.templates import (
     booking_confirmation_message,
     rep_booking_notification_message,
 )
+from api.scheduling.booking import confirmation_extras
 from api.scheduling.calendar import CalendarEvent, CalendarRef, calendar_provider_for_async
 from api.scheduling.calendar_config_repository import get_calendar_config
 from api.scheduling.handoff_intent_repository import create_handoff_intent
+from api.scheduling.manage import manage_url
 from api.scheduling.reminder_repository import create_reminder_jobs, skip_pending_reminders
 from api.scheduling.repository import (
     Availability,
@@ -640,6 +642,9 @@ async def book_slot(
             # unbranded one from the shared "Bookings" sender landed in spam.
             tenant = await TenantRepository(db).get(claims, str(claims.tenant_id))
             business_name = tenant.get("name") if tenant is not None else None
+            # Plan 1.6: agenda, prep question and the manage link, like every channel.
+            agenda, prepare = await confirmation_extras(
+                db, claims, contact_id=None, lead_id=lead_id, email=recipient)
             confirm_subject, confirm_body = booking_confirmation_message(
                 starts_at=event.starts_at,
                 timezone=event.timezone,
@@ -648,6 +653,9 @@ async def book_slot(
                 rescheduled_from=previous.starts_at if previous is not None else None,
                 business_name=business_name,
                 visitor_name=body.name,
+                agenda=agenda,
+                prepare=prepare,
+                manage_url=manage_url(str(claims.tenant_id), event.event_id),
             )
             confirm_payload: dict[str, Any] = {
                 "kind": "booking_confirm", "event_id": event.event_id,

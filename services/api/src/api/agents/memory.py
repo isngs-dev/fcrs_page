@@ -7,6 +7,7 @@ next planned step. Agents receive it framed as DATA, never as instructions.
 """
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -57,6 +58,37 @@ async def move(db: Database, claims: AuthClaims, source: str, target: str) -> No
         claims.tenant_id, source, target, MAX_ITEMS)
     await db.execute("DELETE FROM contact_memory WHERE tenant_id = $1 AND contact_id = $2",
                      claims.tenant_id, source)
+
+
+_LABELLED = re.compile(r"^([A-Za-z][A-Za-z _]{0,30}):\s+(.+)$")
+
+
+def _topic(text: str) -> str | None:
+    """A form answer's service or message, or something they said on a call or in the chat.
+    Other form fields (company, budget, ...) and corrected details aren't topics."""
+    labelled = _LABELLED.match(text)
+    if labelled is None:
+        return None if text.startswith("Their details") else text
+    label, value = labelled.group(1).lower(), labelled.group(2).strip()
+    if "service" in label:
+        words = value.replace("_", " ")
+        return words.upper() if len(words) <= 3 else words[:1].upper() + words[1:]
+    if any(w in label for w in ("message", "comment", "note")):
+        return value
+    return None
+
+
+def agenda(entries: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
+    """Plan 1.6: "What we'll cover" for a booking confirmation, in their own words -- the
+    form's service and message and what they said they need, newest last, no repeats."""
+    topics: list[str] = []
+    for entry in entries:
+        if entry.get("kind") != "need" or not (topic := _topic(str(entry.get("text", "")))):
+            continue
+        topic = topic if len(topic) <= 140 else topic[:139].rstrip() + "…"
+        if topic.lower() not in (t.lower() for t in topics):
+            topics.append(topic)
+    return topics[-limit:]
 
 
 async def items(db: Database, claims: AuthClaims, contact_id: str) -> list[dict[str, Any]]:

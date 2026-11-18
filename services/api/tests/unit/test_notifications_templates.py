@@ -196,3 +196,32 @@ def test_reminder_without_names_still_reads_naturally() -> None:
     assert subject == "Reminder: your call is in 24 hours"
     assert body.startswith("Hi there,\n")
     assert "None" not in subject + body
+
+
+# -- Fuller confirmations (plan 1.6, 2026-11-18) ------------------------------------------
+
+
+def test_the_confirmation_carries_an_agenda_a_prep_question_and_a_manage_link() -> None:
+    """What we'll cover (their own words), one question so the team can prepare, and a
+    link to move or cancel -- for bookings made through Rebecca or the chat."""
+    _subject, body = booking_confirmation_message(
+        starts_at=_STARTS_AT_UTC, timezone=_TZ, business_name="Acme Roofing",
+        visitor_name="Jane Smith",
+        agenda=["SEO", "We want more roof replacement jobs"],
+        prepare="What do you spend on marketing a month?",
+        manage_url="https://api.example.com/public/bookings/tok")
+    assert "What we'll cover:\n- SEO\n- We want more roof replacement jobs" in body
+    assert ("To help us prepare, could you reply with: What do you spend on marketing "
+            "a month?") in body
+    assert ("Need to move or cancel it? Manage your booking here: "
+            "https://api.example.com/public/bookings/tok") in body
+    assert "please contact us" not in body
+
+
+def test_a_manage_link_is_preferred_over_calendly_and_nothing_empty_is_shown() -> None:
+    _s, body = booking_confirmation_message(
+        starts_at=_STARTS_AT_UTC, timezone=_TZ, calendly_link="https://calendly.com/acme",
+        manage_url="https://api.example.com/public/bookings/tok", agenda=[], prepare=None)
+    assert "https://api.example.com/public/bookings/tok" in body
+    assert "calendly.com" not in body
+    assert "What we'll cover" not in body and "help us prepare" not in body

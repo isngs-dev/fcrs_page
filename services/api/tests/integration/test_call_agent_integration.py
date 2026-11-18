@@ -874,6 +874,35 @@ async def test_the_final_check_confirms_name_company_and_email_and_a_new_email_s
                              cid) == "kaustubh.b1@gmail.com"  # the follow-ups use it too
 
 
+async def test_a_call_booking_confirms_with_their_agenda_a_prep_question_and_a_manage_link(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan 1.6: the confirmation for a call booked on the phone carries what they asked about
+    (the form), one question the team still needs, and the link to move or cancel it."""
+    import re
+
+    from api.scheduling import manage
+
+    db, a = env["db"], env["a"]
+    monkeypatch.setenv("EMAIL_LINK_SECRET", "l" * 40)
+    get_api_settings.cache_clear()
+    call_id, _ = await _form_call(env, a, {"service": "SEO", "message": "We need more leads"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "Sure, how much is a repair?")
+    await _say(env, call_id, "I'd like to book a time")
+    await _say(env, call_id, "tomorrow at 3 pm")
+    assert service.spoken_text(await _say(env, call_id, "yes that's right")).startswith(
+        "You're booked for")
+    body = await db.fetchval("SELECT body FROM notification_jobs WHERE tenant_id = $1 AND "
+                             "payload->>'kind' = 'booking_confirm'", a)
+    assert "What we'll cover:\n- SEO\n- We need more leads" in body
+    assert ("To help us prepare, could you reply with: Roughly how many roofing jobs do you do "
+            "a month?") in body
+    token = re.search(r"/public/bookings/(\S+)", body)
+    assert token is not None
+    event_id = await db.fetchval("SELECT event_id FROM schedule_events WHERE tenant_id = $1", a)
+    assert manage.verify(token.group(1)) == (a, event_id)
+
+
 async def test_a_corrected_name_or_company_is_noted_and_never_read_back_wrong(
         env: dict[str, Any]) -> None:
     db, a = env["db"], env["a"]

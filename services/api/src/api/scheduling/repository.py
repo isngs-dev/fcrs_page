@@ -510,6 +510,23 @@ def _row_to_availability(row: Any) -> Availability:
     )
 
 
+async def get_event(db: Database, claims: AuthClaims, event_id: str) -> ScheduleEvent | None:
+    """One event by id, tenant-scoped (plan 1.6: the manage page and booking retirement)."""
+    _reject_global(claims)
+    row = await db.fetchrow(
+        "SELECT event_id, lead_id, visitor_id, email, name, starts_at, ends_at, timezone, "
+        "status, calendar_ref, consent, created_at, source, meet_url FROM schedule_events "
+        "WHERE tenant_id = $1 AND event_id = $2", claims.tenant_id, event_id)
+    if row is None:
+        return None
+    return ScheduleEvent(
+        event_id=str(row["event_id"]), lead_id=row["lead_id"], visitor_id=row["visitor_id"],
+        email=row["email"], name=row["name"], starts_at=row["starts_at"], ends_at=row["ends_at"],
+        timezone=str(row["timezone"]), status=str(row["status"]), calendar_ref=row["calendar_ref"],
+        consent=row["consent"], created_at=row["created_at"], source=str(row["source"]),
+        meet_url=row["meet_url"])
+
+
 async def cancel_event(db: Database, claims: AuthClaims, event_id: str) -> bool:
     """Mark a still-``booked`` event ``cancelled`` (a reschedule's old slot).
 

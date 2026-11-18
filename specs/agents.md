@@ -151,6 +151,33 @@ medium, under 45 low. The model only maps an answer onto a configured choice
 - **Data rights:** export includes the answers and score; erase deletes them. Folding a chat
   contact into another (7b) moves its answers (the target's own answers win).
 
+## 7d. Booking confirmations and the manage link (plan 1.6, owner decision 2026-11-18)
+
+Every native booking's confirmation (Rebecca on a call, the chat's booking card, the manage page)
+carries, when there is something to say:
+- **What we'll cover** — their own words, newest last, at most 3 (`memory.agenda`): the form's
+  service and message, and what they said they need on a call or in the chat. Other form fields
+  (company, …) and corrected details are not topics.
+- **To help us prepare** — the first qualification question (§7c) still unanswered.
+- **Manage your booking** — a signed link (`scheduling/manage.py`, purpose `booking.v1`, names one
+  booking of one tenant; preferred over a Calendly link). Without `EMAIL_LINK_SECRET` +
+  `PUBLIC_API_BASE_URL` it is left out and the old "contact us" line stays.
+
+`scheduling/booking.py` is shared: `next_open_slots`, `book_slot` (Rebecca's calls and the page),
+`retire_booking` (cancel + skip reminders + delete the calendar event; Rebecca's reschedule and the
+page), `send_confirmation` and `confirmation_extras` (the chat route builds its own email but uses
+the extras + link; a lookup failure only drops the extras, logged). Calendly bookings keep
+Calendly's own link.
+
+**The manage page** (`/public/bookings/{token}`, `scheduling/manage_routes.py`): the token is the
+only credential — forged, or a booking not in that tenant → 404. GET shows the booking, up to 12
+open times and a cancel button, and changes nothing. *Move* books the new time FIRST, then retires
+the old booking (a failed new booking leaves the old one standing), sends the "rescheduled"
+confirmation with a new link, tells the rep when the calendar names one, audits
+`scheduling.booking_moved`. *Cancel* retires it (the calendar event's removal shows on the rep's
+calendar), audits `scheduling.booking_cancelled`, and puts `booking_cancelled_by_attendee` in the
+console feed. A booking that is no longer upcoming shows "no longer booked".
+
 ## 8. Tests (DoD)
 
 Policy: property tests (no output plan ever violates limits). State machine: every legal/illegal

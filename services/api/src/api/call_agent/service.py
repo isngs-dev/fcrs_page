@@ -55,25 +55,19 @@ from api.llm.provider import ChatMessage
 from api.notifications.emit import emit_event_safe
 from api.notifications.repository import enqueue_notification
 from api.notifications.tasks import send_notification
-from api.notifications.templates import booking_confirmation_message
 from api.qualification import repository as qualification
 from api.qualification import service as qualification_service
 from api.scheduling.booking import (
-    CalendarSyncFailed,
-    busy_times,
+    book_slot,
+    next_open_slots,
     notify_organizer,
-    sync_to_calendar,
+    retire_booking,
+    send_confirmation,
 )
-from api.scheduling.calendar_config_repository import get_calendar_config
-from api.scheduling.reminder_repository import create_reminder_jobs
 from api.scheduling.repository import (
-    cancel_event,
-    create_event,
     get_availability,
     get_upcoming_for_contact,
-    list_booked,
 )
-from api.scheduling.slots import compute_slots
 from api.voice_agent.agent import BOOK_A_TIME, MissReply, answer_from_knowledge, opening_lines
 from api.voice_agent.plivo import ANSWER_WAIT, OPENING_WAIT, listen, speak
 
@@ -430,87 +424,32 @@ async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSession
     return _listen(line, session.call_id, config.voice, OPENING_WAIT)
 
 
-async def next_open_slots(db: Database, claims: AuthClaims, now: datetime,
-                          count: int | None = 2, ignore_bookings: bool = False,
-                          on: datetime | None = None) -> tuple[list[datetime], str] | None:
-    """The next open native slots (>= 2 h ahead, within 7 days, or on the day of ``on``;
-    ``count=None`` = all), or ``None`` when the tenant books through Calendly or has no
-    availability. A connected calendar (Google) only removes its busy times, like the widget
-    (S8.2 decision 3). ``ignore_bookings`` = business hours only (tells "already booked" from
-    "closed")."""
-    calendar = await get_calendar_config(db, claims)
-    if calendar is not None and calendar.enabled and calendar.provider == "calendly":
-        return None
-    availability = await get_availability(db, claims)
-    if availability is None:
-        return None
-    zone = ZoneInfo(availability.timezone)
-    start_day: date = (on or now).astimezone(zone).date()
-    end_day = start_day if on else start_day + timedelta(days=7)
-    window_start = datetime.combine(start_day, dtime(0), tzinfo=zone).astimezone(UTC)
-    window_end = window_start + timedelta(days=8)
-    booked = ([] if ignore_bookings else
-              await list_booked(db, claims, window_start=window_start, window_end=window_end))
-    if not ignore_bookings:
-        booked += await busy_times(db, claims, window_start, window_end)
-    slots = compute_slots(availability.rules, availability.timezone, start_day, end_day, booked,
-                          now=now + timedelta(hours=2), window_max_days=8)
-    return [s.starts_at for s in slots[:count]], availability.timezone
-
-
 async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, start: datetime,
                 timezone: str, email: str | None) -> tuple[str, str | None, str | None]:
     """Book the agreed slot (L6) -> ``("booked", meet_url, event_id)``, ``("taken", ...)`` when
     it went meanwhile, ``("failed", ...)`` when the connected calendar refused it (the booking
     is undone, like the widget: never a booked row without its calendar event)."""
     contact = await get_contact(db, claims, session.contact_id) if session.contact_id else None
-    slots = await next_open_slots(db, claims, datetime.now(UTC), count=None, on=start)
-    slot_list = slots[0] if slots else []
-    if start not in slot_list:
-        return "taken", None, None
-    availability = await get_availability(db, claims)
-    rules = availability.rules if availability else {}
-    minutes = int(rules.get("slot_minutes", 30))
     name = contact.name if contact else None
-    try:
-        event = await create_event(
-            db, claims, starts_at=start, ends_at=start + timedelta(minutes=minutes),
-            timezone=timezone, visitor_id=None, lead_id=contact.lead_id if contact else None,
-            email=email, name=name,
-            consent={"granted": True, "purpose": "booking", "text": "Agreed on a phone call",
-                     "call_id": session.call_id, "captured_at": datetime.now(UTC).isoformat()})
-    except AppException:  # SLOT_UNAVAILABLE race
-        return "taken", None, None
-    await create_reminder_jobs(db, claims, event_id=event.event_id, starts_at=event.starts_at,
-                               now=datetime.now(UTC))
-    try:  # the caller hands a refusal to the team
-        meet_url, organizer = await sync_to_calendar(
-            db, claims, event, attendee_email=email, attendee_name=name,
-            attendee_phone=customer_number(session))
-    except CalendarSyncFailed:
-        return "failed", None, None
+    status, event, meet_url, organizer = await book_slot(
+        db, claims, start=start, timezone=timezone, email=email, name=name,
+        lead_id=contact.lead_id if contact else None, visitor_id=None,
+        attendee_phone=customer_number(session),
+        consent={"granted": True, "purpose": "booking", "text": "Agreed on a phone call",
+                 "call_id": session.call_id})
+    if event is None:  # "taken" (it went meanwhile) or "failed" (the calendar refused it)
+        return status, None, None
     if contact is not None:  # A11 M4
         await memory.remember(db, claims, contact.contact_id, channel="call", kind="booked",
                               text=f"Booked a call for {event.starts_at:%Y-%m-%d %H:%M} UTC")
     if email:
-        try:
+        try:  # plan 1.6: agenda, prep question and the manage link, like every channel
             config = await repo.get_call_config(db, claims)
-            business = config.company_name if config else None
-            subject, body = booking_confirmation_message(
-                starts_at=event.starts_at, timezone=timezone, meet_url=meet_url,
-                business_name=business, visitor_name=name)
-            payload: dict[str, Any] = {"kind": "booking_confirm", "event_id": event.event_id}
-            if business:
-                payload["from_name"] = business
-            if organizer:
-                payload["reply_to"] = organizer
-            job_id = await enqueue_notification(
-                db, claims, channel="email", recipient=email, subject=subject, body=body,
-                dedupe_key=f"booking_confirm:{event.event_id}", payload=payload,
-                lead_id=contact.lead_id if contact else None)
-            if job_id is not None:
-                send_notification.delay(job_id=job_id, tenant_id=claims.tenant_id,
-                                        correlation_id="")
+            await send_confirmation(
+                db, claims, event, recipient=email, name=name,
+                business=config.company_name if config else None, meet_url=meet_url,
+                organizer=organizer, lead_id=contact.lead_id if contact else None,
+                contact_id=session.contact_id)
         except Exception as exc:  # noqa: BLE001 -- reminders backstop the confirmation
             _log.warning("call booking confirmation not sent", extra={
                 "event": "call_booking_confirm_failed", "reason": type(exc).__name__})
@@ -748,7 +687,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         elif session.contact_id:
             await _keep_email(db, claims, session.contact_id, email)
         if state.rescheduling and state.booked:  # their old invite came from elsewhere
-            await cancel_event(db, claims, state.booked["event_id"])
+            await retire_booking(db, claims, state.booked["event_id"])  # 1.6: calendar too
             await _handoff(db, claims, session, "booking_rescheduled",
                            old_starts_at=state.booked["at"], new_starts_at=chosen.isoformat())
         # Booked: the call stays open for their questions (owner, 2026-11-14) -- the new

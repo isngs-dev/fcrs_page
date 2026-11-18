@@ -205,6 +205,8 @@ async def env(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[dict[str, Any]]:
     monkeypatch.setattr(call_service, "telephony_factory", lambda auth_id, token: plivo)
     notify = MagicMock()
     monkeypatch.setattr(call_service, "send_notification", notify)
+    # Plan 1.6: booking confirmations and owner notices go out from the shared booking module.
+    monkeypatch.setattr("api.scheduling.booking.send_notification", notify)
     monkeypatch.setattr("api.leads.routes.sync_lead", MagicMock())
     monkeypatch.setattr("api.leads.routes.classify_lead_email", MagicMock())
     executors.register("email", email_executor)
