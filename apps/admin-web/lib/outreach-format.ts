@@ -123,6 +123,24 @@ export const OUTREACH_STATUSES: { value: string; label: string }[] = [
   { value: "opted_out", label: "Opted out" },
 ];
 
+/** Plan 2.5: lead sources in plain words (an unknown one is made readable, never hidden). */
+const SOURCE_LABELS: Record<string, string> = {
+  web_form: "Website form",
+  chat_identity: "Chat",
+  widget: "Chat",
+  booking: "Booking",
+  meta_api: "Facebook",
+  meta_email: "Facebook",
+  manual: "Added by hand / CSV",
+};
+
+export function sourceLabel(key: string): string {
+  const known = SOURCE_LABELS[key];
+  if (known) return known;
+  const words = key.replace(/_/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : key;
+}
+
 /** 0.4567 -> "45.7%"; null -> "—" (no data to divide by). */
 export function percent(rate: number | null | undefined): string {
   return rate === null || rate === undefined ? "—" : `${(rate * 100).toFixed(rate < 0.1 && rate > 0 ? 1 : 0)}%`;

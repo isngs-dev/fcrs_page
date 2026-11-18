@@ -269,8 +269,14 @@ describe("Status, performance, exceptions (A13)", () => {
     days: 30, leads: 4, contacted: 2, median_response_minutes: 7, emails_sent: 2, reply_rate: 0.5,
     meetings: 1, lead_to_meeting: 0.25, attended: 1, no_show: 0, show_rate: 1, bounce_rate: 0.5,
     complaint_rate: 0, opt_out_rate: null, calls_placed: 0, call_connection_rate: null,
-    costs: { total_micros: 8000000, per_lead_micros: 2000000, per_meeting_micros: 8000000 },
+    costs: { total_micros: 8000000, per_lead_micros: 2000000, per_meeting_micros: 8000000, per_attended_meeting_micros: 8000000 },
     meetings_to_mark: [{ event_id: "e1", name: "Jane", email: "j@x.com", starts_at: "2026-10-19T10:00:00Z" }],
+    // Plan 2.5
+    qualified: 2, qualification_rate: 0.5, hot_leads: 1, handed_off: 1, handoff_rate: 0.25,
+    opportunities: 1, meeting_to_opportunity: 1,
+    by_source: [{ key: "web_form", leads: 4, contacted: 2, meetings: 1, lead_to_meeting: 0.25, qualified: 2,
+                  qualification_rate: 0.5, handed_off: 1, handoff_rate: 0.25 }],
+    by_campaign: [],
   };
 
   it("status shows every state with its count and links to the lead", async () => {
@@ -341,6 +347,14 @@ describe("Status, performance, exceptions (A13)", () => {
     expect(html).toContain("$2.00");
     expect(html).toContain("Did these meetings happen?");
     expect(html).toContain(">Attended<");
+    // Plan 2.5: the new numbers and the split by source / campaign.
+    expect(html).toContain("Qualified");
+    expect(html).toContain("2 scored 45+ · 1 hot");
+    expect(html).toContain("Meeting → opportunity");
+    expect(html).toContain("Cost per attended meeting");
+    expect(html).toContain("By source");
+    expect(html).toContain("Website form");
+    expect(html).toContain("By campaign");
   });
 
   it("agents get performance without cost; status and exceptions stay admin-only", async () => {
@@ -348,6 +362,8 @@ describe("Status, performance, exceptions (A13)", () => {
     backend({ "/performance": { ...perf, costs: null } });
     const html = renderToStaticMarkup(await PerformancePage(params({})));
     expect(html).not.toContain("Cost per lead");
+    expect(html).not.toContain("Cost per attended meeting");
+    expect(html).toContain("By source"); // the split is for agents too
     await expect(StatusPage(params({}))).rejects.toThrow("REDIRECT:/");
     await expect(ExceptionsPage()).rejects.toThrow("REDIRECT:/");
   });

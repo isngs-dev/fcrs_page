@@ -4,8 +4,9 @@
  */
 import { requireAnyRole } from "@/lib/auth";
 import { getPerformance, setMeetingOutcome } from "@/lib/outreach";
-import { formatMoney, formatWhen, percent } from "@/lib/outreach-format";
+import { formatMoney, formatWhen, percent, sourceLabel } from "@/lib/outreach-format";
 import { SoftCard } from "@/components/admin/soft-card";
+import { SegmentTable } from "@/app/(protected)/outreach/performance/segment-table";
 import { ErrorCard, FilterPills, OutreachHeader } from "@/app/(protected)/outreach/outreach-ui";
 import { ActionButton } from "@/app/(protected)/outreach/action-button";
 
@@ -61,9 +62,24 @@ export default async function PerformancePage({ searchParams }: { searchParams: 
               value={percent(result.performance.optOutRate)}
               hint={`complaints ${percent(result.performance.complaintRate)}`}
             />
+            <Metric
+              label="Qualified"
+              value={percent(result.performance.qualificationRate)}
+              hint={`${result.performance.qualified} scored 45+ · ${result.performance.hotLeads} hot`}
+            />
+            <Metric
+              label="Handed to your team"
+              value={percent(result.performance.handoffRate)}
+              hint={`${result.performance.handedOff} leads`}
+            />
+            <Metric
+              label="Meeting → opportunity"
+              value={percent(result.performance.meetingToOpportunity)}
+              hint={`${result.performance.opportunities} opportunities`}
+            />
           </div>
           {result.performance.costs ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <Metric label="Spend" value={formatMoney(result.performance.costs.totalMicros)} />
               <Metric
                 label="Cost per lead"
@@ -73,8 +89,20 @@ export default async function PerformancePage({ searchParams }: { searchParams: 
                 label="Cost per meeting"
                 value={result.performance.costs.perMeetingMicros === null ? "—" : formatMoney(result.performance.costs.perMeetingMicros)}
               />
+              <Metric
+                label="Cost per attended meeting"
+                value={
+                  result.performance.costs.perAttendedMeetingMicros === null
+                    ? "—"
+                    : formatMoney(result.performance.costs.perAttendedMeetingMicros)
+                }
+              />
             </div>
           ) : null}
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <SegmentTable title="By source" rows={result.performance.bySource} label={sourceLabel} />
+            <SegmentTable title="By campaign" rows={result.performance.byCampaign} />
+          </div>
           <SoftCard className="px-5 py-4">
             <h2 className="pb-1 text-[16px] font-semibold">Did these meetings happen?</h2>
             <p className="pb-2 text-[12.5px] text-muted-foreground">Marking them keeps the show rate honest.</p>

@@ -235,6 +235,16 @@ deal is open) → disqualified → opportunity (open deal) → meeting_booked (s
 is booked) → attended → no_show → human_handoff → nurture (active nurture plan) → invalid_contact
 → qualified → engaged → contacted → new.
 
+**Dashboard numbers (plan 2.5).** `GET /admin/outreach/performance` (and the console's Performance
+page) adds, for leads whose first plan started in the period: `qualified` / `qualification_rate`
+(scored 45+, medium or high) and `hot_leads` (75+); `handed_off` / `handoff_rate` (human takeover,
+an email escalated to the team, or a call transferred); `opportunities` (created in the period) and
+`meeting_to_opportunity` (÷ attended meetings); and, for admins only, `costs.per_attended_meeting_micros`
+(a "qualified meeting" is one that happened). `by_source` (lead source, `manual` without a lead
+record) and `by_campaign` give leads, contacted, meetings, qualified and hand-offs per segment,
+biggest first. Agents get everything but costs. Time to first response was already there
+(`median_response_minutes`).
+
 Migration 0080 adds the Phase 2 plan kinds (`no_show_recovery`, `after_meeting`, `nurture`) to
 `outreach_campaigns.kind` in one step.
 

@@ -489,8 +489,36 @@ export interface Performance {
   optOutRate: number | null;
   callsPlaced: number;
   callConnectionRate: number | null;
-  costs: { totalMicros: number; perLeadMicros: number | null; perMeetingMicros: number | null } | null;
+  costs: {
+    totalMicros: number;
+    perLeadMicros: number | null;
+    perMeetingMicros: number | null;
+    perAttendedMeetingMicros: number | null;
+  } | null;
   meetingsToMark: { eventId: string; name: string | null; email: string | null; startsAt: string }[];
+  // Plan 2.5
+  qualified: number;
+  qualificationRate: number | null;
+  hotLeads: number;
+  handedOff: number;
+  handoffRate: number | null;
+  opportunities: number;
+  meetingToOpportunity: number | null;
+  bySource: PerformanceSegment[];
+  byCampaign: PerformanceSegment[];
+}
+
+/** Plan 2.5: the lead numbers for one lead source or campaign. */
+export interface PerformanceSegment {
+  key: string;
+  leads: number;
+  contacted: number;
+  meetings: number;
+  leadToMeeting: number | null;
+  qualified: number;
+  qualificationRate: number | null;
+  handedOff: number;
+  handoffRate: number | null;
 }
 
 export interface Exceptions {

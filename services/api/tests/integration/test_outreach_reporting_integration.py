@@ -224,7 +224,8 @@ async def test_performance_numbers_on_a_seeded_tenant(env: dict[str, Any]) -> No
     assert (perf["meetings"], perf["lead_to_meeting"]) == (1, 0.25)
     assert (perf["attended"], perf["show_rate"], perf["bounce_rate"]) == (1, 1.0, 0.5)
     assert perf["costs"] == {"total_micros": 8000000, "per_lead_micros": 2000000,
-                             "per_meeting_micros": 8000000}
+                             "per_meeting_micros": 8000000,
+                             "per_attended_meeting_micros": 8000000}  # plan 2.5
     assert perf["meetings_to_mark"] == []
 
     agent = (await client.get("/admin/outreach/performance",
@@ -244,6 +245,65 @@ async def test_performance_numbers_on_a_seeded_tenant(env: dict[str, Any]) -> No
     assert (await client.post(f"/admin/outreach/meetings/{attended.event_id}:outcome",
                               json={"outcome": "attended"},
                               cookies=_cookie(env["b"]))).status_code == 404
+
+
+async def test_the_new_dashboard_numbers_and_the_split_by_source_and_campaign(
+        env: dict[str, Any]) -> None:
+    """Plan 2.5: qualification rate (scored 45+) and hot leads (75+), hand-off rate,
+    meeting-to-opportunity, cost per attended meeting -- and the lead numbers split by lead
+    source and by campaign. Agents see the numbers without costs; another client sees none."""
+    from api.opportunities.repository import create_opportunity
+    from api.qualification import repository as qrepo
+
+    db, client, a = env["db"], env["client"], _claims(env["a"])
+    hot, hot_plan = await _person(env, "hot@x.com", lead=True)
+    warm, _ = await _person(env, "warm@x.com", lead=True)
+    cold, _ = await _person(env, "cold@x.com")
+    handed, handed_plan = await _person(env, "handed@x.com")
+    await db.execute("UPDATE leads SET source = 'web_form' WHERE lead_id IN (SELECT lead_id "
+                     "FROM contacts WHERE contact_id = ANY($1))", [hot, warm])
+    await qrepo.save_score(db, a, hot, score=88, band="high")
+    await qrepo.save_score(db, a, warm, score=50, band="medium")
+    await qrepo.save_score(db, a, cold, score=10, band="low")
+    await db.execute("UPDATE outreach_plans SET status = 'stopped', stop_reason = "
+                     "'human_takeover' WHERE plan_id = $1", handed_plan)
+    await db.execute("UPDATE outreach_campaigns SET name = 'November forms' WHERE campaign_id = "
+                     "(SELECT campaign_id FROM outreach_plans WHERE plan_id = $1)", hot_plan)
+    past = datetime.now(UTC) - timedelta(hours=2)
+    for email in ("hot@x.com", "warm@x.com"):
+        event = await create_event(db, a, starts_at=past, ends_at=past + timedelta(minutes=30),
+                                   timezone="America/New_York", visitor_id=None, lead_id=None,
+                                   consent={}, email=email, name="M")
+        await db.execute("UPDATE schedule_events SET status = 'completed' WHERE event_id = $1",
+                         event.event_id)
+    await create_opportunity(db, a, contact_id=hot, account_id=None, name="Deal", amount=None,
+                             currency="USD")
+    await db.execute("INSERT INTO usage_costs (tenant_id, cost_id, kind, units, unit, "
+                     "cost_micros) VALUES ($1, 'c-25', 'telephony', 1, 'minute', 9000000)",
+                     env["a"])
+
+    perf = (await client.get("/admin/outreach/performance?days=30",
+                             cookies=_cookie(env["a"]))).json()
+    assert (perf["leads"], perf["qualified"], perf["hot_leads"]) == (4, 2, 1)
+    assert perf["qualification_rate"] == 0.5
+    assert (perf["handed_off"], perf["handoff_rate"]) == (1, 0.25)
+    assert (perf["opportunities"], perf["meeting_to_opportunity"]) == (1, 0.5)
+    assert perf["costs"]["per_attended_meeting_micros"] == 4500000
+    by_source = {s["key"]: s for s in perf["by_source"]}
+    assert by_source["web_form"]["leads"] == 2 and by_source["web_form"]["qualified"] == 2
+    assert by_source["web_form"]["meetings"] == 2
+    assert by_source["manual"]["leads"] == 2  # no lead record: added by hand / CSV
+    by_campaign = {s["key"]: s for s in perf["by_campaign"]}
+    assert by_campaign["November forms"]["leads"] == 1
+    assert by_campaign["November forms"]["qualification_rate"] == 1.0
+    assert sum(s["leads"] for s in perf["by_campaign"]) == 4
+
+    agent = (await client.get("/admin/outreach/performance",
+                              cookies=_cookie(env["a"], Role.CLIENT_AGENT))).json()
+    assert agent["costs"] is None and agent["qualified"] == 2
+    other = (await client.get("/admin/outreach/performance",
+                              cookies=_cookie(env["b"]))).json()
+    assert (other["leads"], other["by_source"], other["by_campaign"]) == (0, [], [])
 
 
 async def test_exceptions_list_retry_and_dismiss(env: dict[str, Any]) -> None:

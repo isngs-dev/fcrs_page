@@ -130,6 +130,65 @@ def _rate(part: int, whole: int) -> float | None:
     return round(part / whole, 4) if whole else None
 
 
+# Plan 2.5: one row of facts per lead in the period, so the totals and the split by lead
+# source / campaign are counted from the same rows. ponytail: aggregated in Python -- move the
+# GROUP BY into SQL if a client's monthly cohort ever reaches tens of thousands.
+_COHORT_ROWS_SQL = """
+WITH cohort AS (
+    SELECT contact_id, min(created_at) AS started FROM outreach_plans
+    WHERE tenant_id = $1 GROUP BY contact_id HAVING min(created_at) >= $2
+), first_plan AS (
+    SELECT DISTINCT ON (p.contact_id) p.contact_id, c.name AS campaign
+    FROM outreach_plans p JOIN outreach_campaigns c
+      ON c.tenant_id = p.tenant_id AND c.campaign_id = p.campaign_id
+    WHERE p.tenant_id = $1 ORDER BY p.contact_id, p.created_at
+)
+SELECT k.contact_id, coalesce(l.source, 'manual') AS source,
+    coalesce(fp.campaign, 'none') AS campaign,
+    EXISTS (SELECT 1 FROM outreach_tasks t JOIN outreach_plans x
+            ON x.tenant_id = t.tenant_id AND x.plan_id = t.plan_id
+            WHERE t.tenant_id = $1 AND x.contact_id = k.contact_id
+            AND t.status = 'completed') AS contacted,
+    EXISTS (SELECT 1 FROM schedule_events e WHERE e.tenant_id = $1
+            AND e.status <> 'cancelled' AND e.created_at >= k.started
+            AND ((p.lead_id IS NOT NULL AND e.lead_id = p.lead_id)
+                 OR (p.email IS NOT NULL AND lower(e.email) = lower(p.email)))) AS met,
+    coalesce(q.band IN ('high', 'medium'), false) AS qualified,
+    coalesce(q.band = 'high', false) AS hot,
+    (EXISTS (SELECT 1 FROM outreach_plans x WHERE x.tenant_id = $1
+             AND x.contact_id = k.contact_id AND x.stop_reason = 'human_takeover')
+     OR EXISTS (SELECT 1 FROM email_messages m JOIN email_threads t
+                ON t.tenant_id = m.tenant_id AND t.thread_id = m.thread_id
+                WHERE m.tenant_id = $1 AND t.contact_id = k.contact_id
+                AND m.direction = 'inbound' AND m.handled_action = 'human')
+     OR EXISTS (SELECT 1 FROM call_sessions s WHERE s.tenant_id = $1
+                AND s.contact_id = k.contact_id AND s.outcome = 'escalated')) AS handed_off
+FROM cohort k
+JOIN contacts p ON p.tenant_id = $1 AND p.contact_id = k.contact_id
+LEFT JOIN leads l ON l.tenant_id = $1 AND l.lead_id = p.lead_id
+LEFT JOIN first_plan fp ON fp.contact_id = k.contact_id
+LEFT JOIN contact_qualifications q ON q.tenant_id = $1 AND q.contact_id = k.contact_id
+"""
+
+
+def _segments(rows: list[Any], key: str) -> list[dict[str, Any]]:
+    """The lead numbers per ``key`` (source / campaign), biggest first."""
+    groups: dict[str, list[Any]] = {}
+    for row in rows:
+        groups.setdefault(str(row[key]), []).append(row)
+    out = []
+    for name, members in groups.items():
+        leads = len(members)
+        met, qualified, handed = (sum(1 for r in members if r[f]) for f in
+                                  ("met", "qualified", "handed_off"))
+        out.append({"key": name, "leads": leads,
+                    "contacted": sum(1 for r in members if r["contacted"]),
+                    "meetings": met, "lead_to_meeting": _rate(met, leads),
+                    "qualified": qualified, "qualification_rate": _rate(qualified, leads),
+                    "handed_off": handed, "handoff_rate": _rate(handed, leads)})
+    return sorted(out, key=lambda s: (-s["leads"], s["key"]))
+
+
 async def performance(db: Database, claims: AuthClaims, *, now: datetime, days: int,
                       with_costs: bool) -> dict[str, Any]:
     """R2. Leads = contacts whose first plan started in the period."""
@@ -194,13 +253,27 @@ async def performance(db: Database, claims: AuthClaims, *, now: datetime, days: 
         "call_connection_rate": _rate(int(calls["connected"]), int(calls["placed"])),
         "costs": None,
     }
+    # Plan 2.5: qualification, hand-offs, deals, and the split by source / campaign.
+    rows = list(await db.fetch(_COHORT_ROWS_SQL, t, since))
+    qualified = sum(1 for r in rows if r["qualified"])
+    handed = sum(1 for r in rows if r["handed_off"])
+    deals = int(await db.fetchval("SELECT count(*) FROM opportunities WHERE tenant_id = $1 "
+                                  "AND created_at >= $2", t, since))
+    out.update({
+        "qualified": qualified, "qualification_rate": _rate(qualified, leads),
+        "hot_leads": sum(1 for r in rows if r["hot"]),
+        "handed_off": handed, "handoff_rate": _rate(handed, leads),
+        "opportunities": deals, "meeting_to_opportunity": _rate(deals, attended),
+        "by_source": _segments(rows, "source"), "by_campaign": _segments(rows, "campaign"),
+    })
     if with_costs:
         spent = int(await db.fetchval(
             "SELECT coalesce(sum(cost_micros), 0) FROM usage_costs WHERE tenant_id = $1 "
             "AND created_at >= $2", t, since))
         out["costs"] = {"total_micros": spent,
                         "per_lead_micros": spent // leads if leads else None,
-                        "per_meeting_micros": spent // met if met else None}
+                        "per_meeting_micros": spent // met if met else None,
+                        "per_attended_meeting_micros": spent // attended if attended else None}
     return out
 
 
