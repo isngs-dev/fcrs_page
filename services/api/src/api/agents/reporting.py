@@ -11,7 +11,10 @@ from common.db import Database
 from api.agents.repository import _reject_global
 from api.email_agent import repository as email_repo
 
-STATUSES = ("new", "contacted", "engaged", "qualified", "meeting_booked", "human_handoff",
+# Pipeline order (plan 2.4 added the journey stages: nurture, no-show, attended, opportunity,
+# won, lost, disqualified). Which one a contact shows is the first match in _STATUS_SQL.
+STATUSES = ("new", "contacted", "engaged", "qualified", "nurture", "meeting_booked", "no_show",
+            "attended", "opportunity", "won", "lost", "disqualified", "human_handoff",
             "invalid_contact", "not_interested", "opted_out")
 
 # R1: one status per contact (with at least one plan), first match wins.
@@ -36,9 +39,29 @@ WITH people AS (
         EXISTS (SELECT 1 FROM outreach_plans x WHERE x.tenant_id = $1
                 AND x.contact_id = p.contact_id AND x.status = 'active') AS running,
         EXISTS (SELECT 1 FROM schedule_events e WHERE e.tenant_id = $1
-                AND e.status IN ('booked', 'completed', 'no_show')
+                AND e.status = 'booked'
                 AND ((p.lead_id IS NOT NULL AND e.lead_id = p.lead_id)
                      OR (p.email IS NOT NULL AND lower(e.email) = lower(p.email)))) AS booked,
+        EXISTS (SELECT 1 FROM schedule_events e WHERE e.tenant_id = $1
+                AND e.status = 'completed'
+                AND ((p.lead_id IS NOT NULL AND e.lead_id = p.lead_id)
+                     OR (p.email IS NOT NULL AND lower(e.email) = lower(p.email)))) AS attended,
+        EXISTS (SELECT 1 FROM schedule_events e WHERE e.tenant_id = $1
+                AND e.status = 'no_show'
+                AND ((p.lead_id IS NOT NULL AND e.lead_id = p.lead_id)
+                     OR (p.email IS NOT NULL AND lower(e.email) = lower(p.email)))) AS no_show,
+        EXISTS (SELECT 1 FROM opportunities o WHERE o.tenant_id = $1
+                AND o.contact_id = p.contact_id AND o.stage = 'closed_won') AS won,
+        EXISTS (SELECT 1 FROM opportunities o WHERE o.tenant_id = $1
+                AND o.contact_id = p.contact_id AND o.stage = 'closed_lost') AS lost,
+        EXISTS (SELECT 1 FROM opportunities o WHERE o.tenant_id = $1
+                AND o.contact_id = p.contact_id
+                AND o.stage NOT IN ('closed_won', 'closed_lost')) AS deal_open,
+        EXISTS (SELECT 1 FROM leads l WHERE l.tenant_id = $1 AND l.lead_id = p.lead_id
+                AND l.stage = 'disqualified') AS disqualified,
+        EXISTS (SELECT 1 FROM outreach_plans x WHERE x.tenant_id = $1
+                AND x.contact_id = p.contact_id AND x.status = 'active'
+                AND x.plan->>'kind' = 'nurture') AS nurturing,
         EXISTS (SELECT 1 FROM outreach_plans x WHERE x.tenant_id = $1
                 AND x.contact_id = p.contact_id AND x.stop_reason = 'human_takeover')
         OR EXISTS (SELECT 1 FROM email_messages m JOIN email_threads t
@@ -67,8 +90,15 @@ SELECT contact_id, name, email, lead_id, CASE
     WHEN reasons && ARRAY['unsubscribe', 'stop', 'dnc_request', 'complaint'] AND NOT running
         THEN 'opted_out'
     WHEN 'not_interested' = ANY(reasons) THEN 'not_interested'
+    WHEN won THEN 'won'
+    WHEN lost AND NOT deal_open THEN 'lost'
+    WHEN disqualified THEN 'disqualified'
+    WHEN deal_open THEN 'opportunity'
     WHEN booked THEN 'meeting_booked'
+    WHEN attended THEN 'attended'
+    WHEN no_show THEN 'no_show'
     WHEN handoff THEN 'human_handoff'
+    WHEN nurturing THEN 'nurture'
     WHEN reasons && ARRAY['bounce', 'wrong_number'] AND NOT running THEN 'invalid_contact'
     WHEN qualified THEN 'qualified'
     WHEN engaged THEN 'engaged'

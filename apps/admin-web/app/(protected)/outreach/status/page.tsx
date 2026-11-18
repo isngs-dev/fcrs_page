@@ -1,6 +1,6 @@
 /**
  * Lead status (A13 R1/R5, CLIENT_ADMIN): where every person Rebecca works on stands --
- * the scope's nine states, derived from what actually happened.
+ * one status for the whole journey (plan 2.4), derived from what actually happened.
  */
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";

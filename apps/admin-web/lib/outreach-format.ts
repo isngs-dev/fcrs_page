@@ -102,13 +102,21 @@ export const COST_LABELS: Record<string, string> = {
   email: "Email",
 };
 
-/** A13: the nine outreach statuses, in pipeline order, with plain labels. */
+/** A13 + plan 2.4: every outreach status, in pipeline order, with plain labels (the API's
+ * ``reporting.STATUSES``; which one a person shows is decided there). */
 export const OUTREACH_STATUSES: { value: string; label: string }[] = [
   { value: "new", label: "New" },
   { value: "contacted", label: "Contacted" },
   { value: "engaged", label: "Engaged" },
   { value: "qualified", label: "Qualified" },
+  { value: "nurture", label: "Nurture" },
   { value: "meeting_booked", label: "Meeting booked" },
+  { value: "no_show", label: "No-show" },
+  { value: "attended", label: "Attended" },
+  { value: "opportunity", label: "Opportunity" },
+  { value: "won", label: "Won" },
+  { value: "lost", label: "Lost" },
+  { value: "disqualified", label: "Disqualified" },
   { value: "human_handoff", label: "With your team" },
   { value: "invalid_contact", label: "Invalid contact" },
   { value: "not_interested", label: "Not interested" },

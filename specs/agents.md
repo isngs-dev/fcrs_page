@@ -227,6 +227,14 @@ emails only, gated as usual at send time. "Later" is read from the points the cl
 answer: 100 → ready (none); 40–99 → first email in 30 days; under 40 → in 90 days; no answer → none.
 Email replies like "contact me in March" keep their own path (`email_agent._contact_later`).
 
+**One status for the whole journey (plan 2.4).** `reporting.STATUSES` (and the console's
+`OUTREACH_STATUSES`, same order) gained `nurture`, `no_show`, `attended`, `opportunity`, `won`,
+`lost`, `disqualified`; `meeting_booked` now means a meeting still `booked` (a marked one is
+`attended` / `no_show`). First match wins: opted_out → not_interested → won → lost (unless a new
+deal is open) → disqualified → opportunity (open deal) → meeting_booked (so a no-show who rebooked
+is booked) → attended → no_show → human_handoff → nurture (active nurture plan) → invalid_contact
+→ qualified → engaged → contacted → new.
+
 Migration 0080 adds the Phase 2 plan kinds (`no_show_recovery`, `after_meeting`, `nurture`) to
 `outreach_campaigns.kind` in one step.
 

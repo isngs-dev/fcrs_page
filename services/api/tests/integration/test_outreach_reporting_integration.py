@@ -112,7 +112,9 @@ async def test_every_status_is_reached_by_its_fact_and_priority_holds(env: dict[
 
     body = (await client.get("/admin/outreach/statuses", cookies=_cookie(env["a"]))).json()
     assert body["counts"] == {"new": 1, "contacted": 1, "engaged": 1, "qualified": 1,
-                              "meeting_booked": 1, "human_handoff": 1, "invalid_contact": 1,
+                              "nurture": 0, "meeting_booked": 1, "no_show": 0, "attended": 0,
+                              "opportunity": 0, "won": 0, "lost": 0, "disqualified": 0,
+                              "human_handoff": 1, "invalid_contact": 1,
                               "not_interested": 2, "opted_out": 1}
     only = (await client.get("/admin/outreach/statuses?status=not_interested",
                              cookies=_cookie(env["a"]))).json()["contacts"]
@@ -122,6 +124,67 @@ async def test_every_status_is_reached_by_its_fact_and_priority_holds(env: dict[
                              cookies=_cookie(env["a"], Role.CLIENT_AGENT))).status_code == 403
     other = (await client.get("/admin/outreach/statuses", cookies=_cookie(env["b"]))).json()
     assert sum(other["counts"].values()) == 0
+
+
+async def test_the_whole_journey_has_one_status_each(env: dict[str, Any]) -> None:
+    """Plan 2.4: nurture, no-show, attended, opportunity, won, lost and disqualified are
+    statuses too, with the priorities that make sense: a no-show who rebooked is booked, an
+    attended lead with an open deal is an opportunity, a won deal beats everything but an
+    opt-out."""
+    from datetime import timedelta as td
+
+    from api.agents.models import AgentTask
+    from api.opportunities.repository import create_opportunity
+
+    db, client, a = env["db"], env["client"], _claims(env["a"])
+    past, soon = datetime.now(UTC) - td(hours=3), datetime.now(UTC) + td(days=3)
+
+    async def meeting(email: str, status: str, at: datetime) -> None:
+        event = await create_event(db, a, starts_at=at, ends_at=at + td(minutes=30),
+                                   timezone="America/New_York", visitor_id=None, lead_id=None,
+                                   consent={}, email=email, name="M")
+        await db.execute("UPDATE schedule_events SET status = $2 WHERE event_id = $1",
+                         event.event_id, status)
+
+    async def deal(contact_id: str, stage: str | None = None) -> None:
+        opp = await create_opportunity(db, a, contact_id=contact_id, account_id=None,
+                                       name="Deal", amount=None, currency="USD")
+        if stage:
+            await db.execute("UPDATE opportunities SET stage = $2 WHERE opportunity_id = $1",
+                             opp, stage)
+
+    nurtured, plan = await _person(env, "nurture@x.com")
+    await db.execute("UPDATE outreach_plans SET status = 'completed' WHERE plan_id = $1", plan)
+    await planner.create_plan(db, a, contact_id=nurtured, kind="nurture", goal="nurture",
+                              now=datetime.now(UTC), steps=[AgentTask(
+                                  channel="email", offset=td(days=30), goal="re_engage",
+                                  intent="check in")])
+    await _person(env, "noshow@x.com")
+    await meeting("noshow@x.com", "no_show", past)
+    await _person(env, "rebooked@x.com")
+    await meeting("rebooked@x.com", "no_show", past)
+    await meeting("rebooked@x.com", "booked", soon)
+    await _person(env, "attended@x.com")
+    await meeting("attended@x.com", "completed", past)
+    deal_id, _ = await _person(env, "deal@x.com")
+    await meeting("deal@x.com", "completed", past)
+    await deal(deal_id)
+    won_id, _ = await _person(env, "won@x.com")
+    await deal(won_id, "closed_won")
+    lost_id, _ = await _person(env, "lost@x.com")
+    await deal(lost_id, "closed_lost")
+    dq_id, _ = await _person(env, "dq@x.com", lead=True)
+    await db.execute("UPDATE leads SET stage = 'disqualified' WHERE lead_id = "
+                     "(SELECT lead_id FROM contacts WHERE contact_id = $1)", dq_id)
+
+    statuses = {c["email"]: c["status"] for c in (await client.get(
+        "/admin/outreach/statuses?limit=200", cookies=_cookie(env["a"]))).json()["contacts"]}
+    assert statuses == {"nurture@x.com": "nurture", "noshow@x.com": "no_show",
+                        "rebooked@x.com": "meeting_booked", "attended@x.com": "attended",
+                        "deal@x.com": "opportunity", "won@x.com": "won", "lost@x.com": "lost",
+                        "dq@x.com": "disqualified"}
+    other = (await client.get("/admin/outreach/statuses", cookies=_cookie(env["b"]))).json()
+    assert sum(other["counts"].values()) == 0  # another client's journey is its own
 
 
 async def test_performance_numbers_on_a_seeded_tenant(env: dict[str, Any]) -> None:
