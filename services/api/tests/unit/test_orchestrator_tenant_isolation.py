@@ -66,6 +66,7 @@ async def test_every_downstream_call_carries_tenant_a_claims() -> None:
     get_working_memory = AsyncMock(return_value={"summary": None, "summary_message_count": 0, "messages": []})
     count_messages = AsyncMock(return_value=1)
     get_availability = AsyncMock(return_value=None)
+    tenant_has_approved_pricing = AsyncMock(return_value=False)
     retrieve_hybrid = AsyncMock(
         return_value=HybridResult(
             chunks=[
@@ -102,6 +103,8 @@ async def test_every_downstream_call_carries_tenant_a_claims() -> None:
         patch("api.orchestrator.service.get_recent_assistant_intents", AsyncMock(return_value=[])),
         patch("api.orchestrator.service.get_last_assistant_decision", AsyncMock(return_value=None)),
         patch("api.orchestrator.service.retrieve_hybrid", retrieve_hybrid),
+        patch("api.orchestrator.service.tenant_has_approved_pricing",
+              tenant_has_approved_pricing),
         patch("api.orchestrator.service.provider_for", provider_for),
     ):
         result = await answer_turn(db=object(), claims=_claims_a(), message="hello", message_id="turn-1")
@@ -115,6 +118,7 @@ async def test_every_downstream_call_carries_tenant_a_claims() -> None:
         count_messages,
         get_availability,
         retrieve_hybrid,
+        tenant_has_approved_pricing,
     ):
         for call in mock.await_args_list:
             claims_arg = call.args[1] if len(call.args) > 1 else call.kwargs.get("claims")
@@ -188,6 +192,8 @@ async def test_guardrail_block_still_carries_tenant_a_claims_scan_output_tenant_
         patch("api.orchestrator.service.get_recent_assistant_intents", AsyncMock(return_value=[])),
         patch("api.orchestrator.service.get_last_assistant_decision", AsyncMock(return_value=None)),
         patch("api.orchestrator.service.retrieve_hybrid", retrieve_hybrid),
+        patch("api.orchestrator.service.tenant_has_approved_pricing",
+              AsyncMock(return_value=False)),
         patch("api.orchestrator.service.provider_for", provider_for),
         patch("api.orchestrator.service.scan_output", wraps=real_scan_output) as spy_scan,
     ):
@@ -249,6 +255,8 @@ async def test_cross_tenant_conversation_id_invisible_404_no_classify_rag_or_gen
         patch("api.orchestrator.service.get_recent_assistant_intents", AsyncMock(return_value=[])),
         patch("api.orchestrator.service.get_last_assistant_decision", AsyncMock(return_value=None)),
         patch("api.orchestrator.service.retrieve_hybrid", retrieve_hybrid),
+        patch("api.orchestrator.service.tenant_has_approved_pricing",
+              AsyncMock(return_value=False)),
         patch("api.orchestrator.service.provider_for", provider_for),
     ):
         with pytest.raises(NotFoundError) as exc_info:
@@ -314,6 +322,8 @@ async def test_stream_every_downstream_call_carries_tenant_a_claims() -> None:
         patch("api.orchestrator.service.get_recent_assistant_intents", AsyncMock(return_value=[])),
         patch("api.orchestrator.service.get_last_assistant_decision", AsyncMock(return_value=None)),
         patch("api.orchestrator.service.retrieve_hybrid", retrieve_hybrid),
+        patch("api.orchestrator.service.tenant_has_approved_pricing",
+              AsyncMock(return_value=False)),
         patch("api.orchestrator.service.provider_for", provider_for),
     ):
         events = [
@@ -395,6 +405,8 @@ async def test_stream_cross_tenant_conversation_id_invisible_404_before_any_stre
         patch("api.orchestrator.service.get_recent_assistant_intents", AsyncMock(return_value=[])),
         patch("api.orchestrator.service.get_last_assistant_decision", AsyncMock(return_value=None)),
         patch("api.orchestrator.service.retrieve_hybrid", retrieve_hybrid),
+        patch("api.orchestrator.service.tenant_has_approved_pricing",
+              AsyncMock(return_value=False)),
         patch("api.orchestrator.service.provider_for", provider_for),
     ):
         with pytest.raises(NotFoundError) as exc_info:

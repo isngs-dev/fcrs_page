@@ -68,6 +68,13 @@ def _reset_settings() -> None:
             module.get_api_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_pricing_documents() -> Iterator[None]:
+    """Plan 2.6: the strict pricing rule is off unless a test switches it on."""
+    with patch("api.voice_agent.agent.tenant_has_approved_pricing", AsyncMock(return_value=False)):
+        yield
+
+
 @pytest.fixture
 def env() -> Iterator[None]:
     with patch.dict("os.environ", _ENV, clear=False):
@@ -680,7 +687,8 @@ async def test_a_garbled_utterance_is_asked_again_not_guessed_at() -> None:
 # -- Streamed answers on a streamed call (2026-11-12) -------------------------------------
 
 
-async def _streamed(pieces: list[str], *, can_book: bool = False, model: str = "gpt-6-luna"
+async def _streamed(pieces: list[str], *, can_book: bool = False, model: str = "gpt-6-luna",
+                    has_pricing: bool = False, category: str = "general",
                     ) -> tuple[str | None, list[str], MagicMock]:
     """answer_from_knowledge with a sentence sink set (a realtime call): the model's reply
     arrives in ``pieces``; returns (final reply, sentences spoken early, the stream mock)."""
@@ -704,10 +712,13 @@ async def _streamed(pieces: list[str], *, can_book: bool = False, model: str = "
 
     stream = MagicMock(side_effect=chunks)
     provider = SimpleNamespace(stream=stream, generate=AsyncMock(), aclose=AsyncMock())
-    chunk = SimpleNamespace(chunk_id="c1", content="We repair roofs for $200 within a week.")
+    chunk = SimpleNamespace(chunk_id="c1", content="We repair roofs for $200 within a week.",
+                            category=category)
     token = SPEAK_AS_WRITTEN.set(speak)
     try:
         with (
+            patch("api.voice_agent.agent.tenant_has_approved_pricing",
+                  AsyncMock(return_value=has_pricing)),
             patch("api.voice_agent.agent.get_llm_config", AsyncMock(return_value=SimpleNamespace(
                 embedding_model="emb", model=model))),
             patch("api.voice_agent.agent.retrieve_hybrid", AsyncMock(
@@ -750,6 +761,23 @@ async def test_a_sentence_that_fails_the_checks_stops_her_and_the_answer_is_a_mi
         ["Yes, we repair roofs. ", "We guarantee a 50% discount. ", "Call us anytime."])
     assert spoken == ["<bridge>", "Yes, we repair roofs."]  # the made-up discount: never said
     assert reply is None  # the turn logic answers with "a good question for our team"
+
+
+async def test_a_price_no_approved_pricing_document_states_is_never_spoken(env: None) -> None:
+    """Plan 2.6: once the client has approved pricing documents, a price only comes from
+    them -- one from any other document stops her, and the turn is a miss (the team quotes)."""
+    reply, spoken, _ = await _streamed(
+        ["Yes, we repair roofs. ", "A repair is $200. ", "Anything else?"], has_pricing=True)
+    assert spoken == ["<bridge>", "Yes, we repair roofs."]
+    assert reply is None
+
+
+async def test_a_price_from_an_approved_pricing_document_is_spoken(env: None) -> None:
+    reply, spoken, _ = await _streamed(
+        ["Yes, we repair roofs. ", "A repair is $200. ", "Anything else?"],
+        has_pricing=True, category="pricing")
+    assert spoken == ["<bridge>", "Yes, we repair roofs.", "A repair is $200."]
+    assert reply == "Yes, we repair roofs. A repair is $200. Anything else?"
 
 
 @pytest.mark.parametrize("pieces", [["NO_ANSWER_", "FOUND. Sorry."], ["BOOK_A_TIME. "]])

@@ -21,7 +21,7 @@ from api.conversation_store.repository import Message
 from api.leads.repository import Lead
 from api.llm.config_repository import LLMConfig
 from api.llm.provider import ChatMessage, Chunk, Completion, LLMError
-from api.orchestrator import identity_capture
+from api.orchestrator import identity_capture, service
 from api.orchestrator.config_repository import OrchestratorConfig
 from api.orchestrator.guardrails import (
     RULE_EMPTY_OUTPUT,
@@ -99,7 +99,8 @@ def _availability(available: bool = True) -> Availability | None:
     return Availability(timezone="UTC", rules={"mon": [["09:00", "17:00"]]}, updated_at=datetime.now(UTC))
 
 
-def _chunk(chunk_id: str = "c1", content: str = "Relevant chunk text.") -> HybridMatch:
+def _chunk(chunk_id: str = "c1", content: str = "Relevant chunk text.",
+           category: str = "general") -> HybridMatch:
     return HybridMatch(
         doc_id="doc-1",
         chunk_id=chunk_id,
@@ -107,6 +108,7 @@ def _chunk(chunk_id: str = "c1", content: str = "Relevant chunk text.") -> Hybri
         score=0.9,
         rrf_score=0.5,
         matched_by=["vector"],
+        category=category,
     )
 
 
@@ -187,6 +189,7 @@ class _Patched:
         stream_error: Exception | None = None,
         lead_id: str | None = ...,  # type: ignore[assignment]
         lead: Any = ...,
+        has_pricing: bool = False,
     ) -> None:
         self.config = _config() if config is ... else config
         self.orchestrator_config = orchestrator_config or _orch_cfg()
@@ -210,6 +213,8 @@ class _Patched:
         self.count_messages = AsyncMock(side_effect=_count_messages_side_effect)
         self.get_last_assistant_decision = AsyncMock(return_value=last_decision)
         self.get_upcoming_booking = AsyncMock(return_value=upcoming_booking)
+        # Plan 2.6: does this client have an approved pricing document?
+        self.tenant_has_approved_pricing = AsyncMock(return_value=has_pricing)
         self.get_recent_assistant_intents = AsyncMock(
             return_value=recent_intents if recent_intents is not None else []
         )
@@ -305,6 +310,8 @@ class _Patched:
                 self.get_last_assistant_decision,
             ),
             patch("api.orchestrator.service.get_upcoming_booking", self.get_upcoming_booking),
+            patch("api.orchestrator.service.tenant_has_approved_pricing",
+                  self.tenant_has_approved_pricing),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
             patch(
                 "api.orchestrator.identity_capture.get_lead_id_by_visitor_id",
@@ -2452,6 +2459,7 @@ class _RealStorePatched:
         self.get_recent_assistant_intents = AsyncMock(return_value=[])
         self.get_last_assistant_decision = AsyncMock(return_value=None)
         self.get_upcoming_booking = AsyncMock(return_value=None)
+        self.tenant_has_approved_pricing = AsyncMock(return_value=False)  # plan 2.6
         self.retrieve_hybrid = AsyncMock(
             return_value=HybridResult(chunks=[_chunk()], confidence=0.8)
         )
@@ -2484,6 +2492,8 @@ class _RealStorePatched:
                 self.get_last_assistant_decision,
             ),
             patch("api.orchestrator.service.get_upcoming_booking", self.get_upcoming_booking),
+            patch("api.orchestrator.service.tenant_has_approved_pricing",
+                  self.tenant_has_approved_pricing),
             patch("api.orchestrator.service.get_api_settings", return_value=self.settings),
         ]
         for p in self._patchers:
@@ -2890,3 +2900,45 @@ def test_the_grounding_prompt_never_asks_for_details_it_cant_use() -> None:
     # Only the code asks for a number, with the exact consent wording (CHAT-NAME-FIRST P1);
     # a live replay asked for one in a hand-off.
     assert "Never ask for their phone number yourself" in _GROUNDING_SYSTEM_PROMPT
+
+
+
+# -- Pricing only from approved pricing documents (plan 2.6) -----------------------------------
+
+
+def _priced(text: str) -> Completion:
+    return Completion(text=text, model="m", input_tokens=1, output_tokens=1)
+
+
+async def test_a_price_no_pricing_document_states_becomes_a_quote_offer() -> None:
+    """A client with an approved pricing document: a price that came from anywhere else (an
+    FAQ, the model) is never stated -- the visitor is offered an exact quote instead."""
+    p = _Patched(hybrid_result=HybridResult(chunks=[_chunk(content="We do inspections.")],
+                                            confidence=0.8),
+                 completion=_priced("An inspection is $500."), has_pricing=True)
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(),
+                                   message="How much is an inspection?")
+    assert result.decision == "escalate" and "$500" not in result.reply
+    assert result.reply == service._QUOTE_REPLY
+
+
+async def test_a_price_from_an_approved_pricing_document_is_answered() -> None:
+    chunk = _chunk(content="Inspections cost $500.", category="pricing")
+    p = _Patched(hybrid_result=HybridResult(chunks=[chunk], confidence=0.8),
+                 completion=_priced("An inspection is $500."), has_pricing=True)
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(),
+                                   message="How much is an inspection?")
+    assert (result.decision, result.reply) == ("answer", "An inspection is $500.")
+
+
+async def test_without_pricing_documents_answers_are_as_before() -> None:
+    """Owner, 2026-11-18: the strict rule starts once a client has a pricing document."""
+    p = _Patched(hybrid_result=HybridResult(chunks=[_chunk(content="Inspections are $500.")],
+                                            confidence=0.8),
+                 completion=_priced("An inspection is $500."), has_pricing=False)
+    with p:
+        result = await answer_turn(db=object(), claims=_claims(),
+                                   message="How much is an inspection?")
+    assert (result.decision, result.reply) == ("answer", "An inspection is $500.")

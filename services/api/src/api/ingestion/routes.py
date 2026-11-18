@@ -109,6 +109,12 @@ def _normalize_optional_text(value: str | None) -> str | None:
     return trimmed or None
 
 
+def _check_category(category: str) -> None:
+    """Plan 2.6: one of the knowledge categories, else 422 (the DB CHECK is the backstop)."""
+    if category not in repo.CATEGORIES:
+        raise ValidationError(f"Unknown category {category!r}.", code="INVALID_CATEGORY")
+
+
 async def _upload_document(
     file: UploadFile,
     request: Request,
@@ -116,6 +122,7 @@ async def _upload_document(
     *,
     title: str | None = None,
     description: str | None = None,
+    category: str = "general",
 ) -> Any:
     """Accept a document upload, store it, and enqueue the ingestion task.
 
@@ -131,6 +138,7 @@ async def _upload_document(
     cid = _correlation_id.get() or ""
     settings = get_api_settings()
     db = request.app.state.db
+    _check_category(category)
 
     # -- Validate content type ------------------------------------------------
     content_type = (file.content_type or "").split(";")[0].strip().lower()
@@ -196,6 +204,7 @@ async def _upload_document(
         title=_normalize_optional_text(title),
         description=_normalize_optional_text(description),
         uploaded_by=claims.subject,
+        category=category,
     )
     run = await repo.create_run(db, claims, doc_id=doc_id)
 
@@ -234,8 +243,10 @@ async def upload_document(
     claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
     title: str | None = Form(None),  # noqa: B008
     description: str | None = Form(None),  # noqa: B008
+    category: str = Form("general"),  # noqa: B008 -- plan 2.6
 ) -> Any:
-    return await _upload_document(file, request, claims, title=title, description=description)
+    return await _upload_document(file, request, claims, title=title, description=description,
+                                  category=category)
 
 
 @tenant_scoped_router.post("/upload", response_model=None)
@@ -245,9 +256,11 @@ async def upload_document_for_tenant(
     claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN)),  # noqa: B008
     title: str | None = Form(None),  # noqa: B008
     description: str | None = Form(None),  # noqa: B008
+    category: str = Form("general"),  # noqa: B008 -- plan 2.6
 ) -> Any:
     """PLATFORM_ADMIN super-user variant of ``POST /admin/ingestion/upload`` (S12.7)."""
-    return await _upload_document(file, request, claims, title=title, description=description)
+    return await _upload_document(file, request, claims, title=title, description=description,
+                                  category=category)
 
 
 class IngestUrlRequest(BaseModel):
@@ -402,6 +415,9 @@ async def _list_documents(request: Request, claims: AuthClaims) -> dict[str, Any
                     uploader_names.get(doc.uploaded_by) if doc.uploaded_by is not None else None
                 ),
                 "created_at": doc.created_at,
+                "category": doc.category,  # plan 2.6
+                "approved": doc.approved,
+                "reviewed_at": doc.reviewed_at,
             }
             for doc in docs
         ]
@@ -643,3 +659,51 @@ async def delete_document_for_tenant(
 ) -> dict[str, Any]:
     """PLATFORM_ADMIN super-user variant of ``DELETE /admin/ingestion/docs/{doc_id}`` (S12.7)."""
     return await _delete_document(doc_id, request, claims)
+
+
+# -- Category and approval (plan 2.6) -------------------------------------------------------
+
+
+class DocReview(BaseModel):
+    """What an admin may change about a document: its category and whether answers use it."""
+
+    category: str | None = None
+    approved: bool | None = None
+
+
+async def _review_document(doc_id: str, body: DocReview, request: Request,
+                           claims: AuthClaims) -> dict[str, Any]:
+    if body.category is not None:
+        _check_category(body.category)
+    db = request.app.state.db
+    doc = await repo.set_doc_review(db, claims, doc_id, reviewed_by=claims.subject,
+                                    category=body.category, approved=body.approved)
+    if doc is None:
+        raise NotFoundError("Document not found.", code="DOC_NOT_FOUND")
+    await record_audit(db, claims, action="knowledge.doc_reviewed", target_type="knowledge_doc",
+                       target_id=doc_id, metadata={"category": doc.category,
+                                                   "approved": doc.approved},
+                       actor_context=get_platform_admin_actor(request))
+    return {"doc_id": doc.doc_id, "category": doc.category, "approved": doc.approved,
+            "reviewed_at": doc.reviewed_at, "reviewed_by": doc.reviewed_by}
+
+
+@router.patch("/docs/{doc_id}")
+async def review_document(
+    doc_id: str,
+    body: DocReview,
+    request: Request,
+    claims: AuthClaims = Depends(require_roles(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> dict[str, Any]:
+    return await _review_document(doc_id, body, request, claims)
+
+
+@tenant_scoped_router.patch("/docs/{doc_id}")
+async def review_document_for_tenant(
+    doc_id: str,
+    body: DocReview,
+    request: Request,
+    claims: AuthClaims = Depends(resolve_tenant_scope(Role.CLIENT_ADMIN)),  # noqa: B008
+) -> dict[str, Any]:
+    """PLATFORM_ADMIN super-user variant of ``PATCH /admin/ingestion/docs/{doc_id}``."""
+    return await _review_document(doc_id, body, request, claims)

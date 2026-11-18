@@ -43,6 +43,7 @@ class ChunkMatch:
     chunk_id: str
     content: str
     score: float
+    category: str = "general"  # plan 2.6: the document's category
 
 
 def _reject_global(claims: AuthClaims) -> None:
@@ -72,13 +73,14 @@ async def search_chunks(
     """
     _reject_global(claims)
 
+    # Plan 2.6: only approved documents are ever retrieved (migration 0081's view).
     rows = await similarity_search(
         db,
-        "knowledge_chunks",
+        "approved_knowledge_chunks",
         claims,
         embedding,
         top_k=top_k,
-        select="doc_id, chunk_id, content",
+        select="doc_id, chunk_id, content, category",
     )
     return [
         ChunkMatch(
@@ -86,6 +88,7 @@ async def search_chunks(
             chunk_id=str(row["chunk_id"]),
             content=str(row["content"]),
             score=1.0 - float(row["distance"]),
+            category=str(row["category"]),
         )
         for row in rows
     ]
@@ -104,6 +107,7 @@ class KeywordMatch:
     chunk_id: str
     content: str
     rank: float
+    category: str = "general"  # plan 2.6: the document's category
 
 
 async def keyword_search(
@@ -131,9 +135,9 @@ async def keyword_search(
     params.append(top_k)
     limit_idx = len(params)
     sql = (
-        "SELECT doc_id, chunk_id, content, "  # noqa: S608
+        "SELECT doc_id, chunk_id, content, category, "  # noqa: S608
         "ts_rank(to_tsvector($1::regconfig, content), plainto_tsquery($1::regconfig, $2)) AS rank "
-        "FROM knowledge_chunks "
+        "FROM approved_knowledge_chunks "
         "WHERE to_tsvector($1::regconfig, content) @@ plainto_tsquery($1::regconfig, $2) "
         f"{frag} "
         f"ORDER BY rank DESC LIMIT ${limit_idx}"
@@ -145,6 +149,7 @@ async def keyword_search(
             chunk_id=str(row["chunk_id"]),
             content=str(row["content"]),
             rank=float(row["rank"]),
+            category=str(row["category"]),
         )
         for row in rows
     ]

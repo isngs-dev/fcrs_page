@@ -25,6 +25,8 @@ function okResult(): ListKnowledgeResult {
         uploadedBy: "user-1",
         uploadedByName: "Jane Doe",
         createdAt: "2026-01-01T00:00:00Z",
+        category: "pricing",
+        approved: true,
       },
     ],
   };

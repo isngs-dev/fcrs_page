@@ -61,6 +61,7 @@ import {
   ALLOWED_CONTENT_TYPES,
   ALLOWED_EXTENSIONS,
   FILE_INPUT_ACCEPT,
+  KNOWLEDGE_CATEGORIES,
   MAX_UPLOAD_BYTES,
   formatBytes,
   formatRunErrors,
@@ -461,6 +462,7 @@ export function UploadForm({ tenantId }: { tenantId?: string } = {}) {
   const fileInputId = useId();
   const titleId = useId();
   const descriptionId = useId();
+  const categoryId = useId();
 
   function applyFiles(files: FileList | null) {
     const file = files?.[0];
@@ -521,6 +523,22 @@ export function UploadForm({ tenantId }: { tenantId?: string } = {}) {
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={descriptionId}>Description (optional)</Label>
         <Textarea id={descriptionId} name="description" rows={2} placeholder="What's in this document?" />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={categoryId}>Category</Label>
+        <select
+          id={categoryId}
+          name="category"
+          defaultValue="general"
+          className="h-9 rounded-md border border-border bg-background px-3 text-[13px] text-foreground"
+        >
+          {KNOWLEDGE_CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <Dropzone

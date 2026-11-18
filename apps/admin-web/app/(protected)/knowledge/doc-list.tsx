@@ -25,6 +25,7 @@ import { badgeToneClassName, statusBadge } from "@/lib/knowledge-constants";
 import { cn } from "@/lib/utils";
 import { KnowledgeDocRow } from "@/app/(protected)/knowledge/knowledge-doc-row";
 import { DeleteDocButton } from "@/app/(protected)/knowledge/delete-doc-button";
+import { DocReviewControl } from "@/app/(protected)/knowledge/doc-review-control";
 import type { ListKnowledgeResult } from "@/app/(protected)/knowledge/actions";
 
 export function formatUploadedAt(iso: string): string {
@@ -105,7 +106,8 @@ export function KnowledgeDocList({
                 Uploaded {formatUploadedAt(doc.createdAt)}
                 {doc.uploadedByName ? ` by ${doc.uploadedByName}` : ""}
               </p>
-              <div className="mt-1">
+              <div className="mt-1 flex flex-col gap-2">
+                <DocReviewControl docId={doc.docId} category={doc.category} approved={doc.approved} />
                 <DeleteDocButton docId={doc.docId} label={doc.title || doc.filename} />
               </div>
             </SoftCard>

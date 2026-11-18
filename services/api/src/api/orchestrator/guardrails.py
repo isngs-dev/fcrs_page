@@ -123,6 +123,22 @@ _COMMITMENT_WORDS = ("free", "discount", "guarantee", "guaranteed", "refund", "w
                      "no obligation", "no-obligation", "risk-free")
 
 
+# Plan 2.6: a price is a currency amount ("$200", "$8,500") or "N dollars / USD".
+_PRICE = re.compile(r"[$€£]\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\s?(?:dollars?|usd|bucks)\b",
+                    re.I)
+
+
+def _amount(price: str) -> str:
+    return re.sub(r"[^\d.]", "", price).rstrip(".")
+
+
+def unsupported_prices(text: str, pricing_context: str) -> list[str]:
+    """Prices in ``text`` that the approved pricing documents (``pricing_context``) don't
+    state -- compared by amount, so "$150" and "150 dollars" match (plan 2.6)."""
+    allowed = {_amount(m.group(0)) for m in _PRICE.finditer(pricing_context)}
+    return [m.group(0) for m in _PRICE.finditer(text) if _amount(m.group(0)) not in allowed]
+
+
 def unstated_commitments(text: str, context: str) -> list[str]:
     """Amounts, percentages and commitment words in ``text`` that ``context`` doesn't contain."""
     ctx = context.casefold()

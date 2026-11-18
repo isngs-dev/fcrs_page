@@ -86,6 +86,7 @@ class _StubDatabase:
                 description,
                 uploaded_by,
                 source_url,
+                category,  # plan 2.6
             ) = args
             self._insert_seq += 1
             self._docs[(tenant_id, doc_id)] = {
@@ -100,6 +101,10 @@ class _StubDatabase:
                 "description": description,
                 "uploaded_by": uploaded_by,
                 "source_url": source_url,
+                "category": category,  # plan 2.6
+                "approved": True,
+                "reviewed_at": None,
+                "reviewed_by": None,
                 "created_at": _NOW,
                 "updated_at": _NOW,
                 "tenant_id": tenant_id,

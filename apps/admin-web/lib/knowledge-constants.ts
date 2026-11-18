@@ -186,3 +186,19 @@ export function schedulePolling<T>(opts: {
 
   return stop;
 }
+
+/** Plan 2.6: what a knowledge document is about -- mirrors the API's CATEGORIES. "Pricing"
+ * matters: once a client has an approved Pricing document, the agent quotes prices only
+ * from those. */
+export const KNOWLEDGE_CATEGORIES = [
+  { value: "general", label: "General" },
+  { value: "company", label: "Company" },
+  { value: "services", label: "Services" },
+  { value: "industry", label: "Industry" },
+  { value: "customer_profile", label: "Customer profile" },
+  { value: "sales_playbook", label: "Sales playbook" },
+  { value: "case_studies", label: "Case studies" },
+  { value: "pricing", label: "Pricing" },
+  { value: "competitive", label: "Competitive" },
+  { value: "faq", label: "FAQ" },
+] as const;

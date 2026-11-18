@@ -34,10 +34,11 @@ from common.logging import get_logger
 
 from api.agents.memory import frame as frame_memory
 from api.config import get_api_settings
+from api.ingestion.repository import tenant_has_approved_pricing
 from api.llm.config_repository import LLMConfig, get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, Chunk, LLMError
-from api.orchestrator.guardrails import scan_output, unstated_commitments
+from api.orchestrator.guardrails import scan_output, unstated_commitments, unsupported_prices
 from api.rag.service import retrieve_hybrid
 from api.voice_agent.repository import VoiceAgentConfig
 
@@ -250,15 +251,17 @@ def _streamed_effort(model: str) -> str:
     return "none" if model.startswith(_NO_REASONING_MODELS) else "low"
 
 
-def _sayable(sentence: str, context: str) -> bool:
+def _sayable(sentence: str, context: str, pricing: str | None = None) -> bool:
     """The whole reply's checks, on one sentence: no model signal, nothing the output
-    guardrails block, no price or promise the knowledge base doesn't state."""
+    guardrails block, no price or promise the knowledge base doesn't state -- and, once the
+    client has approved pricing documents (``pricing``), no price they don't state (2.6)."""
     return (_NO_ANSWER not in sentence and BOOK_A_TIME not in sentence
-            and scan_output(sentence).ok and not unstated_commitments(sentence, context))
+            and scan_output(sentence).ok and not unstated_commitments(sentence, context)
+            and not (pricing is not None and unsupported_prices(sentence, pricing)))
 
 
 async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: LiveVoice, context: str,
-                            can_book: bool) -> str:
+                            can_book: bool, pricing: str | None = None) -> str:
     """Collect the whole reply (checked whole afterwards, as ever) and speak each finished
     sentence on the way. The first one that isn't sayable stops all early speech; the last
     sentence is left for the caller of answer_from_knowledge, which knows the final reply."""
@@ -270,7 +273,7 @@ async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: LiveVoice, cont
             sentence, pending = pending[:end.end()].strip(), pending[end.end():]
             if not sentence:
                 continue
-            if not _sayable(sentence, context) or (can_book and BOOK_A_TIME in text):
+            if not _sayable(sentence, context, pricing) or (can_book and BOOK_A_TIME in text):
                 stopped = True
                 break
             await speak.sentence(sentence)
@@ -346,6 +349,9 @@ async def answer_from_knowledge(
         )
         return None
     context = "\n".join(f"[{c.chunk_id}] {c.content}" for c in result.chunks)
+    # Plan 2.6: with approved pricing documents, prices come only from them.
+    pricing = ("\n".join(c.content for c in result.chunks if c.category == "pricing")
+               if await tenant_has_approved_pricing(db, claims) else None)
     prompt = [
         ChatMessage(role="system", content=(
             # ``assistant``: who she is (the calling agent's "Rebecca, the AI assistant at X")
@@ -369,7 +375,7 @@ async def answer_from_knowledge(
             text = await _speak_as_written(
                 provider.stream(prompt, model=chosen, max_tokens=settings.llm_max_tokens,
                                 reasoning_effort=_streamed_effort(chosen)),
-                speak, context, can_book)
+                speak, context, can_book, pricing)
         else:
             completion = await provider.generate(
                 prompt, model=model or config.model, max_tokens=settings.llm_max_tokens,
@@ -395,6 +401,8 @@ async def answer_from_knowledge(
         miss = "reply failed the output guardrails"
     elif unstated_commitments(reply, context):  # A9 H4: no spoken price/promise not in the KB
         miss = "unstated commitment"
+    elif pricing is not None and unsupported_prices(reply, pricing):
+        miss = "price not in an approved pricing document"
     else:
         return reply
     _log.info("voice agent could not answer", extra={"event": "voice_agent_miss", "reason": miss})

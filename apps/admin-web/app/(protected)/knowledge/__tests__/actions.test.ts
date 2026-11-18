@@ -26,6 +26,7 @@ const {
   dismissGap,
   addKnowledgeUrl,
   deleteKnowledgeDocAction,
+  reviewKnowledgeDocAction,
 } = await import("@/app/(protected)/knowledge/actions");
 const { AdminApiError } = await import("@/lib/api");
 
@@ -35,9 +36,10 @@ function jsonResponse(body: Record<string, unknown>, status: number): Response {
 
 function buildFormData(
   file: File | null,
-  extra: { title?: string; description?: string } = {}
+  extra: { title?: string; description?: string; category?: string } = {}
 ): FormData {
   const fd = new FormData();
+  if (extra.category !== undefined) fd.set("category", extra.category);
   if (file) fd.set("file", file);
   if (extra.title !== undefined) fd.set("title", extra.title);
   if (extra.description !== undefined) fd.set("description", extra.description);
@@ -300,6 +302,17 @@ describe("uploadKnowledge", () => {
     expect(init.body.get("title")).toBeNull();
     expect(init.body.get("description")).toBeNull();
   });
+
+  it("sends the chosen category (plan 2.6)", async () => {
+    adminApiFetchMock.mockResolvedValue(
+      jsonResponse({ doc_id: "doc-1", run_id: "run-1", status: "pending" }, 200)
+    );
+
+    await uploadKnowledge(undefined, { status: "idle" }, buildFormData(makeFile(), { category: "pricing" }));
+
+    const [, init] = adminApiFetchMock.mock.calls[0] as [string, { body: FormData }];
+    expect(init.body.get("category")).toBe("pricing");
+  });
 });
 
 describe("listKnowledgeDocs", () => {
@@ -323,6 +336,8 @@ describe("listKnowledgeDocs", () => {
               uploaded_by: "user-1",
               uploaded_by_name: "Jane Admin",
               created_at: "2026-08-18T12:00:00Z",
+              category: "pricing",
+              approved: false,
             },
           ],
         },
@@ -345,6 +360,8 @@ describe("listKnowledgeDocs", () => {
         uploadedBy: "user-1",
         uploadedByName: "Jane Admin",
         createdAt: "2026-08-18T12:00:00Z",
+        category: "pricing",
+        approved: false,
       });
     }
   });
@@ -1159,5 +1176,38 @@ describe("deleteKnowledgeDocAction", () => {
     if (result.status === "error") {
       expect(result.message).toMatch(/unable to reach the server/i);
     }
+  });
+});
+
+describe("reviewKnowledgeDocAction (plan 2.6)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    adminApiFetchMock.mockReset();
+    revalidatePathMock.mockReset();
+  });
+
+  it("PATCHes the doc's category/approval and revalidates /knowledge", async () => {
+    adminApiFetchMock.mockResolvedValue(jsonResponse({ doc_id: "doc 1", approved: false }, 200));
+
+    const result = await reviewKnowledgeDocAction("doc 1", { approved: false });
+
+    expect(result.status).toBe("ok");
+    const [path, init] = adminApiFetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/admin/ingestion/docs/doc%201");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ approved: false });
+    expect(revalidatePathMock).toHaveBeenCalledWith("/knowledge");
+  });
+
+  it("maps a 403 to a permission message, never revalidating", async () => {
+    adminApiFetchMock.mockRejectedValue(
+      new AdminApiError(403, { error_code: "ROLE_NOT_PERMITTED", message: "no", correlation_id: "c" })
+    );
+
+    const result = await reviewKnowledgeDocAction("doc-1", { category: "pricing" });
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") expect(result.message).toMatch(/permission/i);
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 });

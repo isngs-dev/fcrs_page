@@ -229,3 +229,29 @@ def test_scan_output_takes_only_text() -> None:
 
     sig = inspect.signature(scan_output)
     assert list(sig.parameters) == ["text"]
+
+
+# -- Prices only from approved pricing documents (plan 2.6) -----------------------------------
+
+_PRICING = "Roof inspections cost $200. Full replacement from $8,500. Gutters: 150 dollars."
+
+
+@pytest.mark.parametrize(("text", "flagged"), [
+    ("An inspection is $200.", []),                            # stated in the pricing docs
+    ("Replacements start at $8,500.", []),
+    ("Gutter cleaning is 150 dollars.", []),
+    ("Gutter cleaning is $150.", []),                          # same amount, other wording
+    ("An inspection is $250.", ["$250"]),                      # not in the pricing docs
+    ("Repairs run about 300 dollars.", ["300 dollars"]),
+    ("We cover 3 counties and reply in 24 hours.", []),        # numbers, but not prices
+])
+def test_only_prices_the_pricing_documents_state_pass(text: str, flagged: list[str]) -> None:
+    from api.orchestrator.guardrails import unsupported_prices
+
+    assert unsupported_prices(text, _PRICING) == flagged
+
+
+def test_with_no_pricing_text_every_price_is_flagged() -> None:
+    from api.orchestrator.guardrails import unsupported_prices
+
+    assert unsupported_prices("It's $99 a month.", "") == ["$99"]

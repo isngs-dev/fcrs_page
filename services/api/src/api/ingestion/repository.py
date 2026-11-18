@@ -69,6 +69,16 @@ class KnowledgeDoc:
     description: str | None = None
     uploaded_by: str | None = None
     source_url: str | None = None
+    # Plan 2.6 (migration 0081): what kind of knowledge it is, and whether answers may use it.
+    category: str = "general"
+    approved: bool = True
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+
+
+# Plan 2.6: the knowledge categories (the DB CHECK in migration 0081 holds the same list).
+CATEGORIES = ("company", "services", "industry", "customer_profile", "sales_playbook",
+              "case_studies", "pricing", "competitive", "faq", "general")
 
 
 @dataclass(frozen=True)
@@ -120,6 +130,7 @@ async def create_doc(
     description: str | None = None,
     uploaded_by: str | None = None,
     source_url: str | None = None,
+    category: str = "general",
 ) -> KnowledgeDoc:
     """Insert a new ``knowledge_docs`` row with ``status='pending'``.
 
@@ -147,18 +158,19 @@ async def create_doc(
         description,
         uploaded_by,
         source_url,
+        category,
     ]
     await db.execute(
         "INSERT INTO knowledge_docs "
         "(tenant_id, doc_id, source, filename, content_type, status, "
-        " content_hash, storage_key, title, description, uploaded_by, source_url) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        " content_hash, storage_key, title, description, uploaded_by, source_url, category) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         *params,
     )
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
         "storage_key, created_at, updated_at, title, description, uploaded_by, "
-        "source_url "
+        "source_url, category, approved, reviewed_at, reviewed_by "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND doc_id = $2",
         claims.tenant_id,
@@ -185,7 +197,7 @@ async def find_doc_by_hash(
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
         "storage_key, created_at, updated_at, title, description, uploaded_by, "
-        "source_url "
+        "source_url, category, approved, reviewed_at, reviewed_by "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND content_hash = $2",
         claims.tenant_id,
@@ -205,7 +217,7 @@ async def get_doc(
     row = await db.fetchrow(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
         "storage_key, created_at, updated_at, title, description, uploaded_by, "
-        "source_url "
+        "source_url, category, approved, reviewed_at, reviewed_by "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 AND doc_id = $2",
         claims.tenant_id,
@@ -232,7 +244,7 @@ async def list_docs(
     rows = await db.fetch(
         "SELECT doc_id, source, filename, content_type, status, content_hash, "
         "storage_key, created_at, updated_at, title, description, uploaded_by, "
-        "source_url "
+        "source_url, category, approved, reviewed_at, reviewed_by "
         "FROM knowledge_docs "
         "WHERE tenant_id = $1 "
         "ORDER BY created_at DESC "
@@ -240,6 +252,38 @@ async def list_docs(
         claims.tenant_id,
     )
     return [_row_to_doc(row) for row in rows]
+
+
+async def set_doc_review(
+    db: Database,
+    claims: AuthClaims,
+    doc_id: str,
+    *,
+    reviewed_by: str,
+    category: str | None = None,
+    approved: bool | None = None,
+) -> KnowledgeDoc | None:
+    """Plan 2.6: set a doc's category and/or approval (only what is given), stamping who and
+    when. ``None`` when the doc isn't this tenant's. Retrieval reads only approved docs."""
+    _reject_global(claims)
+    row = await db.fetchrow(
+        "UPDATE knowledge_docs SET category = coalesce($3, category), "
+        "approved = coalesce($4, approved), reviewed_at = now(), reviewed_by = $5, "
+        "updated_at = now() WHERE tenant_id = $1 AND doc_id = $2 "
+        "RETURNING doc_id, source, filename, content_type, status, content_hash, storage_key, "
+        "created_at, updated_at, title, description, uploaded_by, source_url, category, "
+        "approved, reviewed_at, reviewed_by",
+        claims.tenant_id, doc_id, category, approved, reviewed_by)
+    return _row_to_doc(row) if row is not None else None
+
+
+async def tenant_has_approved_pricing(db: Database, claims: AuthClaims) -> bool:
+    """Plan 2.6: the strict pricing rule applies once a client has an approved pricing doc."""
+    _reject_global(claims)
+    found = await db.fetchval(
+        "SELECT 1 FROM knowledge_docs WHERE tenant_id = $1 AND category = 'pricing' "
+        "AND approved LIMIT 1", claims.tenant_id)
+    return found is not None
 
 
 async def update_doc_status(
@@ -546,6 +590,10 @@ def _row_to_doc(row: Any) -> KnowledgeDoc:
         description=row.get("description"),
         uploaded_by=row.get("uploaded_by"),
         source_url=row.get("source_url"),
+        category=row.get("category") or "general",
+        approved=bool(row.get("approved", True)),
+        reviewed_at=row.get("reviewed_at"),
+        reviewed_by=row.get("reviewed_by"),
     )
 
 

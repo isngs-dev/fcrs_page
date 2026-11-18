@@ -112,6 +112,9 @@ export async function uploadKnowledge(
   if (typeof description === "string" && description.trim()) {
     uploadForm.append("description", description.trim());
   }
+  // Plan 2.6: omitted means the API's default ("general").
+  const category = formData.get("category");
+  if (typeof category === "string" && category) uploadForm.append("category", category);
 
   const uploadPath = tenantId
     ? `/admin/tenants/${encodeURIComponent(tenantId)}/ingestion/upload`
@@ -432,6 +435,9 @@ export interface KnowledgeDocListItem {
   uploadedBy: string | null;
   uploadedByName: string | null;
   createdAt: string;
+  /** Plan 2.6: the document's category, and whether the agent uses it. */
+  category: string;
+  approved: boolean;
 }
 
 export interface ListKnowledgeOk {
@@ -457,6 +463,8 @@ interface AdminKnowledgeDocListItemBody {
   uploaded_by: string | null;
   uploaded_by_name: string | null;
   created_at: string;
+  category: string;
+  approved: boolean;
 }
 
 interface AdminKnowledgeListResponseBody {
@@ -505,6 +513,8 @@ export async function listKnowledgeDocs(tenantId?: string): Promise<ListKnowledg
       uploadedBy: doc.uploaded_by,
       uploadedByName: doc.uploaded_by_name,
       createdAt: doc.created_at,
+      category: doc.category,
+      approved: doc.approved,
     })),
   };
 }
@@ -579,6 +589,40 @@ function mapDeleteDocError(err: AdminApiError): DeleteKnowledgeDocError {
     message: `${err.message} (correlation ID: ${err.correlationId || "unknown"})`,
     correlationId: err.correlationId || null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Review a knowledge doc (plan 2.6): category + whether the agent uses it
+// ---------------------------------------------------------------------------
+
+export type ReviewKnowledgeDocResult = { status: "ok" } | DeleteKnowledgeDocError;
+
+/**
+ * `PATCH /admin/ingestion/docs/{doc_id}` -- CLIENT_ADMIN, own tenant (same precedent as
+ * delete: no platform-admin `tenantId` bind). Errors reuse the delete mapping (404/403/401).
+ */
+export async function reviewKnowledgeDocAction(
+  docId: string,
+  change: { category?: string; approved?: boolean }
+): Promise<ReviewKnowledgeDocResult> {
+  try {
+    await adminApiFetch(`/admin/ingestion/docs/${encodeURIComponent(docId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change),
+    });
+  } catch (err) {
+    if (err instanceof AdminApiError) {
+      const mapped = mapDeleteDocError(err);
+      return err.status === 403 || err.errorCode === "ROLE_NOT_PERMITTED"
+        ? { ...mapped, message: "You do not have permission to change knowledge documents." }
+        : mapped;
+    }
+    return { status: "error", message: GENERIC_NETWORK_ERROR, correlationId: null };
+  }
+
+  revalidatePath("/knowledge");
+  return { status: "ok" };
 }
 
 // ---------------------------------------------------------------------------

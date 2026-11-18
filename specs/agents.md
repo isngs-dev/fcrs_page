@@ -248,6 +248,28 @@ biggest first. Agents get everything but costs. Time to first response was alrea
 Migration 0080 adds the Phase 2 plan kinds (`no_show_recovery`, `after_meeting`, `nurture`) to
 `outreach_campaigns.kind` in one step.
 
+## 7g. Knowledge categories, approval and the pricing rule (plan 2.6, owner decisions 2026-11-18)
+
+Migration 0081 gives every `knowledge_docs` row a `category` (company, services, industry,
+customer_profile, sales_playbook, case_studies, pricing, competitive, faq, general — default
+general) and `approved` (default **true**: a new upload is used at once; owner) plus
+`reviewed_at` / `reviewed_by`. Upload takes an optional `category` form field (422
+`INVALID_CATEGORY`); `PATCH /admin/ingestion/docs/{id}` (CLIENT_ADMIN; PLATFORM_ADMIN via the
+tenant-scoped path) changes the category or switches the document on/off, audited
+`knowledge.doc_reviewed`; another tenant's document is 404. The console's Knowledge page has a
+category picker on upload and, per document, its category and "Used by the agent / Stop using".
+
+**Retrieval reads only approved documents** — vector and keyword search both query the view
+`approved_knowledge_chunks` (chunks joined to approved docs, with the category), so the shared
+`common.pgvector` helper is unchanged. Looking up a past answer's sources still reads all chunks.
+
+**Pricing rule.** Strict only once the client has at least one approved Pricing document (before
+that, nothing changes; owner). Then a price in a reply — `$200`, `$8,500`, `150 dollars` — must be
+stated by a retrieved Pricing chunk (matched by amount; percentages are left to the existing
+commitments check). Chat: an unsupported price replaces the reply with an exact-quote offer
+(`_QUOTE_REPLY`, decision `escalate`, so the booking/lead card follows). Calls: the sentence is
+never spoken and the turn is a miss (her "good question for our team" line).
+
 ## 8. Tests (DoD)
 
 Policy: property tests (no output plan ever violates limits). State machine: every legal/illegal

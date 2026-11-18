@@ -60,12 +60,13 @@ from api.conversation_store.repository import (
     get_recent_assistant_intents,
     get_working_memory,
 )
+from api.ingestion.repository import tenant_has_approved_pricing
 from api.llm.config_repository import LLMConfig, get_llm_config
 from api.llm.factory import provider_for
 from api.llm.provider import ChatMessage, LLMError, LLMProvider
 from api.orchestrator import identity_capture
 from api.orchestrator.config_repository import get_orchestrator_config
-from api.orchestrator.guardrails import scan_output, unstated_commitments
+from api.orchestrator.guardrails import scan_output, unstated_commitments, unsupported_prices
 from api.qualification import repository as qualification
 from api.qualification import service as qualification_service
 from api.rag.service import HybridMatch, HybridResult, retrieve_hybrid
@@ -183,6 +184,9 @@ class _GeneratePlan:
     # ``suffix_intent`` replaces the stored intent when the suffix is shown.
     suffix: str | None = None
     suffix_intent: str | None = None
+    # Plan 2.6: the retrieved pricing documents' text when this client has approved pricing
+    # documents (the strict rule is on); ``None`` when it hasn't (the rule is off).
+    pricing_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -311,6 +315,10 @@ _OFF_TOPIC_BOOKING_REPLY = (
     "happy to talk through what you need."
 )
 _OFF_TOPIC_BOOKING_AFTER = 3  # the Nth off-topic question in a row offers the call
+# Plan 2.6: what a visitor hears instead of a price the approved pricing documents don't state.
+_QUOTE_REPLY = (
+    "Pricing depends on the details of your project, so our team will give you an exact quote. "
+    "You can book a short call below, or share your details and they'll be in touch.")
 
 # Fixed scheduling_request template -- the visitor explicitly ASKED to book,
 # so ask for the details in the chat (no card yet). Their reply triggers the
@@ -1323,6 +1331,8 @@ async def _resolve_turn(
         )
         prompt = _personal(_build_prompt(wm, result.chunks))
         sources = _sources_from_chunks(result.chunks)
+        pricing = ("\n".join(c.content for c in result.chunks if c.category == "pricing")
+                   if await tenant_has_approved_pricing(db, claims) else None)
         return _GeneratePlan(
             conversation_id=conversation_id,
             assistant_id=assistant_id,
@@ -1336,6 +1346,7 @@ async def _resolve_turn(
             provider=provider,
             suffix=suffix,
             suffix_intent=suffix_intent,
+            pricing_context=pricing,
         )
 
     # Nothing retrieved at all -- offer the booking call directly (fixed
@@ -1427,6 +1438,19 @@ def _finalize_generation(text: str, plan: _GeneratePlan) -> _FinalizedGeneration
             grounded=False,
             action="lead_form",
             guardrail_flag=guardrail.rule,
+        )
+    if (plan.grounded and plan.pricing_context is not None
+            and unsupported_prices(text, plan.pricing_context)):
+        # Plan 2.6: a price no approved pricing document states is never shown -- an exact
+        # quote from the team instead (the booking/lead card follows, like any escalate).
+        return _FinalizedGeneration(
+            reply=_QUOTE_REPLY,
+            decision="escalate",
+            sources=[],
+            grounded=False,
+            action=None,
+            guardrail_flag=None,
+            resolve_escalate_action=True,
         )
     if plan.grounded and _NO_ANSWER_SENTINEL in text:
         return _FinalizedGeneration(

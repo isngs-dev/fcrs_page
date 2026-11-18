@@ -35,8 +35,10 @@ _TEST_ENV = {
 # Simulates the full (both-tenant) contents of knowledge_chunks as pgvector
 # would see it before the tenant_filter WHERE fragment is applied.
 _ALL_ROWS = [
-    {"tenant_id": _TENANT_A, "doc_id": "a-doc", "chunk_id": "a-0000", "content": "tenant A secret", "distance": 0.05},
-    {"tenant_id": _TENANT_B, "doc_id": "b-doc", "chunk_id": "b-0000", "content": "tenant B secret", "distance": 0.02},
+    {"tenant_id": _TENANT_A, "doc_id": "a-doc", "chunk_id": "a-0000", "content": "tenant A secret", "distance": 0.05,
+     "category": "general"},
+    {"tenant_id": _TENANT_B, "doc_id": "b-doc", "chunk_id": "b-0000", "content": "tenant B secret", "distance": 0.02,
+     "category": "general"},
 ]
 
 

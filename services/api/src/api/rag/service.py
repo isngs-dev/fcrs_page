@@ -46,6 +46,7 @@ class HybridMatch:
     score: float | None
     rrf_score: float
     matched_by: list[str]
+    category: str = "general"  # plan 2.6: the document's category (pricing rule)
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,7 @@ def _rrf_fuse(
     rrf_scores: dict[str, float] = {}
     doc_ids: dict[str, str] = {}
     contents: dict[str, str] = {}
+    categories: dict[str, str] = {}
     scores: dict[str, float | None] = {}
     matched_by: dict[str, list[str]] = {}
 
@@ -177,6 +179,7 @@ def _rrf_fuse(
         rrf_scores[vm.chunk_id] = rrf_scores.get(vm.chunk_id, 0.0) + 1.0 / (rrf_k + rank)
         doc_ids.setdefault(vm.chunk_id, vm.doc_id)
         contents.setdefault(vm.chunk_id, vm.content)
+        categories.setdefault(vm.chunk_id, vm.category)
         scores[vm.chunk_id] = vm.score
         matched_by.setdefault(vm.chunk_id, []).append("vector")
 
@@ -184,6 +187,7 @@ def _rrf_fuse(
         rrf_scores[km.chunk_id] = rrf_scores.get(km.chunk_id, 0.0) + 1.0 / (rrf_k + rank)
         doc_ids.setdefault(km.chunk_id, km.doc_id)
         contents.setdefault(km.chunk_id, km.content)
+        categories.setdefault(km.chunk_id, km.category)
         scores.setdefault(km.chunk_id, None)
         matched_by.setdefault(km.chunk_id, []).append("keyword")
 
@@ -196,6 +200,7 @@ def _rrf_fuse(
             score=scores[chunk_id],
             rrf_score=rrf_score,
             matched_by=matched_by[chunk_id],
+            category=categories[chunk_id],
         )
         for chunk_id, rrf_score in ordered[:k]
     ]

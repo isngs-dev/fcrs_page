@@ -2,7 +2,7 @@
 
 Covers:
 - search_chunks calls common.pgvector.similarity_search with
-  table="knowledge_chunks", the tenant claims, and the embedding as a bound
+  table="approved_knowledge_chunks" (plan 2.6), the tenant claims, and the embedding as a bound
   (positional) arg -- never interpolated into SQL.
 - distance -> score mapping: score = 1 - distance (e.g. distance 0.1 -> 0.9).
 - Result order is preserved from the DB (descending score = ascending distance).
@@ -36,8 +36,10 @@ def _claims(tenant_id: str | None = _TENANT_ID, role: Role = Role.CLIENT_ADMIN) 
 async def test_search_chunks_maps_distance_to_score_and_preserves_order() -> None:
     """distance 0.1 -> score 0.9; distance 0.4 -> score 0.6; DB order preserved."""
     rows = [
-        {"doc_id": "doc-1", "chunk_id": "doc-1-0000", "content": "hello", "distance": 0.1},
-        {"doc_id": "doc-1", "chunk_id": "doc-1-0001", "content": "world", "distance": 0.4},
+        {"doc_id": "doc-1", "chunk_id": "doc-1-0000", "content": "hello", "distance": 0.1,
+         "category": "faq"},
+        {"doc_id": "doc-1", "chunk_id": "doc-1-0001", "content": "world", "distance": 0.4,
+         "category": "general"},
     ]
     stub = AsyncMock(return_value=rows)
     claims = _claims()
@@ -65,11 +67,11 @@ async def test_search_chunks_passes_table_claims_and_embedding_through() -> None
 
     stub.assert_awaited_once()
     args, kwargs = stub.await_args
-    assert args[1] == "knowledge_chunks"
+    assert args[1] == "approved_knowledge_chunks"  # plan 2.6: only approved documents
     assert args[2] is claims
     assert args[3] == embedding
     assert kwargs["top_k"] == 7
-    assert kwargs["select"] == "doc_id, chunk_id, content"
+    assert kwargs["select"] == "doc_id, chunk_id, content, category"  # plan 2.6
 
 
 async def test_search_chunks_global_caller_raises_validation_error() -> None:
@@ -111,7 +113,8 @@ async def test_keyword_search_binds_regconfig_query_and_limit_as_params() -> Non
     string-interpolated into the SQL text."""
     db = _StubKeywordDb(
         [
-            {"doc_id": "doc-1", "chunk_id": "doc-1-0000", "content": "mystery shopping", "rank": 0.8},
+            {"doc_id": "doc-1", "chunk_id": "doc-1-0000", "content": "mystery shopping", "rank": 0.8,
+             "category": "general"},
         ]
     )
     claims = _claims()
@@ -154,8 +157,8 @@ async def test_keyword_search_global_caller_raises_validation_error() -> None:
 
 async def test_keyword_search_maps_rank_and_preserves_order() -> None:
     rows = [
-        {"doc_id": "doc-1", "chunk_id": "c1", "content": "first", "rank": 0.9},
-        {"doc_id": "doc-1", "chunk_id": "c2", "content": "second", "rank": 0.4},
+        {"doc_id": "doc-1", "chunk_id": "c1", "content": "first", "rank": 0.9, "category": "pricing"},
+        {"doc_id": "doc-1", "chunk_id": "c2", "content": "second", "rank": 0.4, "category": "faq"},
     ]
     db = _StubKeywordDb(rows)
     claims = _claims()
