@@ -207,6 +207,9 @@ async def _meeting_outcome(request: Request, claims: AuthClaims, event_id: str,
     status = "completed" if outcome == "attended" else "no_show"
     if not await reporting.set_meeting_outcome(db, claims, event_id, status):
         raise ConflictError("Only a past meeting can be marked.", code="MEETING_NOT_PAST")
+    # Plan 2.1: a no-show starts the recovery sequence; "attended" stops one that is running.
+    await emit(db, claims, "meeting_no_show" if outcome == "no_show" else "meeting_attended",
+               {"event_id": event_id})
     await record_audit(db, claims, action="outreach.meeting_outcome", target_type="schedule_event",
                        target_id=event_id, metadata={"outcome": outcome},
                        actor_context=get_platform_admin_actor(request))

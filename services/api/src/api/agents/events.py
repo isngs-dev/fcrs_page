@@ -23,14 +23,14 @@ from api.agents.repository import _reject_global
 KNOWN_KINDS = frozenset({
     "inbound_lead_created", "outreach_requested", "email_reply_received", "email_bounced",
     "email_complained", "call_completed", "meeting_booked", "opt_out_received", "human_takeover",
-    "intake_meta_lead",
+    "intake_meta_lead", "meeting_no_show", "meeting_attended",
 })
 # Kinds with a handler. Emitting any other known kind would pile up unprocessed,
 # so it is refused until the sprint that adds its handler enables it.
 ENABLED_KINDS = frozenset({
     "outreach_requested", "opt_out_received", "human_takeover", "meeting_booked",
     "email_reply_received", "email_bounced", "email_complained", "inbound_lead_created",
-    "call_completed", "intake_meta_lead",
+    "call_completed", "intake_meta_lead", "meeting_no_show", "meeting_attended",
 })
 MAX_EVENT_ATTEMPTS = 5
 

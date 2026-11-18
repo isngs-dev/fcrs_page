@@ -11,7 +11,8 @@ TaskGoal = Literal[
     "follow_up", "answer_questions", "qualify", "book_meeting", "reminder", "re_engage",
     "thank_you", "acknowledge",
 ]
-PlanKind = Literal["inbound_auto", "outbound_manual", "outbound_csv"]
+PlanKind = Literal["inbound_auto", "outbound_manual", "outbound_csv", "no_show_recovery",
+                   "after_meeting", "nurture"]  # Phase 2 kinds (migration 0080)
 
 
 class AgentTask(BaseModel):

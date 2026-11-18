@@ -56,6 +56,12 @@ async def _handle_event(db: Database, claims: AuthClaims, event: events.ClaimedE
         from api.email_agent.inbound_service import handle_reply  # noqa: PLC0415 -- cycle
 
         return await handle_reply(db, claims, payload)
+    if event.kind in ("meeting_no_show", "meeting_attended"):  # plan 2.1
+        from api.agents import meetings  # noqa: PLC0415 -- cycle
+
+        handler = (meetings.handle_no_show if event.kind == "meeting_no_show"
+                   else meetings.handle_attended)
+        return await handler(db, claims, payload)
     if event.kind == "intake_meta_lead":  # A10 I7: fetch the lead from Meta, then ingest
         from api.intake.service import handle_meta_lead  # noqa: PLC0415 -- cycle
 

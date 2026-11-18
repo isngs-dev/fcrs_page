@@ -199,6 +199,19 @@ The turn cap (`turn_cap`, default 6) stays as the fallback to scheduling, per CL
 `conversation-orchestrator` skill. Raising or removing that default to fully match the PDF's "don't
 force scheduling prematurely" is a spec change for the owner (the demo client's cap is 100).
 
+## 7f. After the meeting — no-show recovery (plan 2.1, owner decision 2026-11-18)
+
+Marking a past meeting in the console (`POST /admin/outreach/meetings/{id}:outcome`) now emits
+`meeting_no_show` or `meeting_attended` (`agents/meetings.py`). A **no-show** stops the contact's
+active plan and starts a `no_show_recovery` plan: a friendly reschedule email now, **one call the
+next business day** (Mon–Fri in the contact's zone) **for anyone with call consent** (owner: not
+only high-scoring leads), and a final email on day 3 — then nothing more. All the usual gates apply
+(consent, calling window, gap, touch budget, opt-outs); booking again or a reply stops it. Marked
+twice → one sequence. Marked **attended** afterwards (a correction) stops a running recovery
+(`stop_reason = meeting_attended`). A meeting nobody we know booked starts nothing (`NO_CONTACT`).
+Migration 0080 adds the Phase 2 plan kinds (`no_show_recovery`, `after_meeting`, `nurture`) to
+`outreach_campaigns.kind` in one step.
+
 ## 8. Tests (DoD)
 
 Policy: property tests (no output plan ever violates limits). State machine: every legal/illegal
