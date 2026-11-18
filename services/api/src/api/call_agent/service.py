@@ -425,7 +425,8 @@ async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSession
 
 
 async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, start: datetime,
-                timezone: str, email: str | None) -> tuple[str, str | None, str | None]:
+                timezone: str, email: str | None, extra_email: str | None = None
+                ) -> tuple[str, str | None, str | None]:
     """Book the agreed slot (L6) -> ``("booked", meet_url, event_id)``, ``("taken", ...)`` when
     it went meanwhile, ``("failed", ...)`` when the connected calendar refused it (the booking
     is undone, like the widget: never a booked row without its calendar event)."""
@@ -449,7 +450,8 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
                 db, claims, event, recipient=email, name=name,
                 business=config.company_name if config else None, meet_url=meet_url,
                 organizer=organizer, lead_id=contact.lead_id if contact else None,
-                contact_id=session.contact_id)
+                contact_id=session.contact_id,
+                copies=[extra_email] if extra_email else [])
         except Exception as exc:  # noqa: BLE001 -- reminders backstop the confirmation
             _log.warning("call booking confirmation not sent", extra={
                 "event": "call_booking_confirm_failed", "reason": type(exc).__name__})
@@ -654,7 +656,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
 
     def final_check() -> str:
         return script.final_check_line(datetime.fromisoformat(state.chosen or ""), tz,
-                                       state.email, who=state.who)
+                                       state.email, who=state.who, extra=state.extra_email)
 
     async def confirm() -> TurnResult:
         state.stage = "confirming"
@@ -675,7 +677,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
 
     async def finish_booking(email: str | None) -> TurnResult:
         chosen = datetime.fromisoformat(state.chosen or "")
-        status, meet_url, event_id = await _book(db, claims, session, chosen, tz, email)
+        status, meet_url, event_id = await _book(db, claims, session, chosen, tz, email,
+                                                 extra_email=state.extra_email)
         if status == "failed":
             await _handoff(db, claims, session, "calendar_sync_failed")
             return await bye(script.SYNC_FAILED_LINE, "escalated")
@@ -686,6 +689,12 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             await _handoff(db, claims, session, "email_needed")
         elif session.contact_id:
             await _keep_email(db, claims, session.contact_id, email)
+        if state.extra_email and session.contact_id:  # their other address finds them too
+            try:
+                await add_identity(db, claims, session.contact_id, identity_type="email",
+                                   identity_value=state.extra_email)
+            except ValidationError:
+                pass  # already theirs (or another contact's): the copy still went
         if state.rescheduling and state.booked:  # their old invite came from elsewhere
             await retire_booking(db, claims, state.booked["event_id"])  # 1.6: calendar too
             await _handoff(db, claims, session, "booking_rescheduled",
@@ -753,18 +762,37 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         if state.email_tries >= script.EMAIL_TRIES:  # book anyway; the team sends the details
             return await confirm()
         return await say(script.EMAIL_RETRY_LINE)
+    if state.stage == "email_extra_ask":  # 2026-11-18: a second address for a copy
+        heard = script.parse_spoken_email(speech)
+        if heard and heard != state.email:
+            state.extra_email = heard
+            return await confirm()
+        state.email_tries += 1
+        if state.email_tries >= script.EMAIL_TRIES:  # the copy is dropped, the booking isn't
+            return await confirm()
+        return await say(script.EMAIL_RETRY_LINE)
     if state.stage == "confirming" and state.chosen:
         if kind == "yes":
             return await finish_booking(state.email)
         heard = script.parse_spoken_email(speech)
+        change = script.email_change(speech)  # "my other mail as well" (live 2026-11-18)
         if heard:
-            state.email = heard
+            if change == "add":
+                state.extra_email = heard
+            else:
+                state.email = heard
             return await confirm()
+        if change == "add":
+            state.stage, state.email_tries = "email_extra_ask", 0
+            return await say(script.EXTRA_EMAIL_ASK)
         if named_time:
             return await pick_time()
-        if re.search(r"\be-?mail\b", speech, re.I):
+        if change == "replace" or re.search(r"\be-?mail\b", speech, re.I):
             state.stage, state.email, state.email_tries = "email_ask", None, 0
             return await say(script.EMAIL_ASK_LINE)
+        if script.mentions_domain(speech):  # "...to it at isngs.com": an address, not a clear one
+            state.stage, state.email, state.email_tries = "email_ask", None, 0
+            return await say(script.EMAIL_RETRY_LINE)
         if script.corrects_details(speech):  # a corrected name / company: never read back wrong
             if session.contact_id:  # the team sees the right details
                 await memory.remember(db, claims, session.contact_id, channel="call", kind="need",
@@ -776,8 +804,10 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             return await say(script.OTHER_TIME_LINE)
         if kind == "no":
             return await say(script.CHANGE_LINE)
-        if not script.is_question(speech):
-            return await confirm()
+        if not script.is_question(speech):  # never the same read-back twice in a row
+            said = state.history[-2][1] if len(state.history) >= 2 else ""
+            return await say(script.CONFIRM_CLARIFY_LINE if said == final_check()
+                             else final_check())
     elif state.stage == "asking_time":
         if named_time or script.asks_what_is_open(speech):
             return await pick_time()

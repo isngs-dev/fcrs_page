@@ -105,8 +105,9 @@ async def test_name_first_then_answers_by_name_then_asks_for_email(chat: dict[st
     assert second.reply == "A grounded answer.\n\n" + ic.EMAIL_ASK
     assert ic.EMAIL_GUIDANCE not in provider.prompts[-1][0].content
     gutters = await say("Do you also do gutters?", conv)
-    assert ic.EMAIL_ASK not in gutters.reply  # asked once; the model may still ask when it fits
-    assert ic.EMAIL_GUIDANCE in provider.prompts[-1][0].content
+    assert ic.EMAIL_ASK not in gutters.reply  # asked once
+    # Live 2026-11-18: and the model isn't told to ask again either (it did, two turns on).
+    assert ic.EMAIL_GUIDANCE not in provider.prompts[-1][0].content
 
     ack = await say("sure, jane@example.com", conv)
     assert ack.reply == ic.email_ack_reply("Jane", "jane@example.com", ask_phone=True)
@@ -676,6 +677,48 @@ async def test_without_details_yes_asks_only_for_what_is_missing(chat: dict[str,
     yes = await say("yes")
     assert yes.action is None and "email and phone number" in yes.reply
     assert "name" not in yes.reply.split("share")[-1]  # her name is already known
+
+
+# -- Live chat 2026-11-18: the email asked twice; "Nothing" not heard as a goodbye ------------
+
+
+async def test_once_the_email_is_asked_for_the_model_is_not_told_to_ask_again(
+    chat: dict[str, Any],
+) -> None:
+    db, visitor, provider = chat["db"], chat["visitor"], chat["provider"]
+    say = _sayer(db, visitor)
+    await say("Do you fix leaks?")
+    answered = await say("Vinith")  # the deferred question, answered with our own email ask
+    assert answered.reply.endswith(ic.EMAIL_ASK)
+    await say("So how can roofengine help me get roofers?")
+    assert ic.EMAIL_GUIDANCE not in provider.prompts[-1][0].content  # no second ask from it
+
+
+async def test_nothing_after_what_else_is_a_goodbye_and_rings_the_waiting_call(
+    chat: dict[str, Any],
+) -> None:
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    say = _sayer(db, visitor)
+    for text in ("Do you fix leaks?", "Jane", "jane@example.com"):
+        await say(text)
+    thanks = await say("786 823 3553")
+    assert thanks.reply.endswith("What else can I help you with?")
+    bye = await say("Nothing")
+    assert bye.reply == ic.goodbye_reply("Jane")
+
+
+async def test_a_short_no_after_what_else_is_a_goodbye_but_not_after_the_offer(
+    chat: dict[str, Any],
+) -> None:
+    say = await _detailed_visitor(chat)
+    no_more = await say("no thanks")  # after "What else can I help you with?"
+    assert no_more.reply == ic.goodbye_reply("Jane")
+    say = await _detailed_visitor({**chat, "visitor": AuthClaims(
+        subject=f"v-{uuid4().hex[:8]}", role=Role.VISITOR, tenant_id=chat["tenant"])})
+    await say("How do I get started with you?")  # ends with the booking offer
+    declined = await say("no thanks")
+    assert declined.reply == ic.BOOKING_OFFER_DECLINED_REPLY  # the offer's own "no"
 
 
 # -- One person per phone number (plan 1.1, owner 2026-11-17: "same person") -----------------

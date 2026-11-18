@@ -176,3 +176,34 @@ def test_the_booking_offer_is_an_invitation_not_a_push() -> None:
     assert ic.BOOKING_OFFER == ("If you'd like, I can find a time for you to talk this through "
                                 "with our team -- just say yes.")
     assert ic.BOOKING_OFFER_DECLINED_REPLY == "No problem! What else can I help you with?"
+
+
+# -- Goodbyes after "what else can I help with?" (live chat, 2026-11-18) ---------------------
+
+
+@pytest.mark.parametrize(("text", "closing"), [
+    ("Nothing", True),            # live: "What else can I help you with?" -> "Nothing"
+    ("nothing, thanks", True),
+    ("Nothing works on my roof", False),
+])
+def test_a_bare_nothing_is_a_goodbye(text: str, closing: bool) -> None:
+    assert ic.is_closing(text) is closing
+
+
+@pytest.mark.parametrize(("text", "no"), [
+    ("no", True), ("No thanks", True), ("nope", True), ("not really", True),
+    ("I'm good", True),
+    ("no, how much is it?", False), ("no I want to know about SEO", False),
+])
+def test_a_short_no(text: str, no: bool) -> None:
+    assert ic.is_short_no(text) is no
+
+
+@pytest.mark.parametrize(("reply", "asked"), [
+    ("Thanks, Vinith! Our team will be in touch. What else can I help you with?", True),
+    ("Glad that helped. Is there anything else you'd like to know?", True),
+    ("If you'd like, I can find a time for you to talk this through with our team -- just "
+     "say yes.", False),
+])
+def test_what_counts_as_asking_what_else(reply: str, asked: bool) -> None:
+    assert ic.asked_what_else(reply) is asked

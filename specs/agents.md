@@ -189,6 +189,12 @@ opens the booking card filled in from what they already gave (only missing name/
 asked for, then Step 5.6 opens it); "no" gets `BOOKING_OFFER_DECLINED_REPLY`; a question is just
 answered. Exploring visitors (questions about what we do, general pricing, areas) are never pushed.
 
+**Live chat fixes (2026-11-18).** Once our own email ask (`ASK_EMAIL_INTENT`) has gone out, the
+model is no longer told it may ask (`EMAIL_GUIDANCE`) — it had asked again two answers later. A
+bare "nothing" is a goodbye (`is_closing`); a short "no / no thanks / nope / I'm good" is one only
+right after our reply asked "what else / anything else …?" (`asked_what_else`) — a "no" to the
+booking offer keeps its own meaning. The goodbye rings a waiting chat call at once, as before.
+
 The turn cap (`turn_cap`, default 6) stays as the fallback to scheduling, per CLAUDE.md §1 and the
 `conversation-orchestrator` skill. Raising or removing that default to fully match the PDF's "don't
 force scheduling prematurely" is a spec change for the owner (the demo client's cap is 100).

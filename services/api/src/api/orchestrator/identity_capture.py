@@ -233,11 +233,30 @@ def email_only_reply(first_name: str | None, email: str | None) -> str:
     return f"No problem{who}, we won't call. What's the best email for us to follow up on?"
 
 
+_BARE_NOTHING = re.compile(r"^\s*nothing(?:\s*,?\s*(?:else|more|thanks?|thank you))?\W*$", re.I)
+_SHORT_NO = re.compile(r"^\s*(?:no|nope|nah|not really|i'?m good|i am good)"
+                       r"(?:\s*,?\s*(?:thanks?|thank you))?\W*$", re.I)
+_WHAT_ELSE = re.compile(r"\b(?:what else|anything else)\b[^?]*\?\s*$", re.I)
+
+
 def is_closing(message: str) -> bool:
-    """A short goodbye ("ok thanks, that's all"). A bare "thanks"/"ok" mid-chat isn't one.
-    ponytail: phrase list; a closing worded some other way just gets a normal answer."""
+    """A short goodbye ("ok thanks, that's all", or a bare "nothing" -- live 2026-11-18). A
+    bare "thanks"/"ok" mid-chat isn't one. ponytail: phrase list; a closing worded some other
+    way just gets a normal answer."""
     text = message.strip()
+    if _BARE_NOTHING.match(text):
+        return True
     return "?" not in text and len(text.split()) <= 10 and bool(_CLOSING_RE.search(text))
+
+
+def is_short_no(message: str) -> bool:
+    """ "no" / "no thanks" / "nope" / "I'm good" and nothing more."""
+    return bool(_SHORT_NO.match(message))
+
+
+def asked_what_else(reply: str | None) -> bool:
+    """Our reply ended with "what else / anything else ...?" -- a short no to it is a goodbye."""
+    return bool(reply and _WHAT_ELSE.search(reply.strip()))
 
 
 def call_offer_reply(first_name: str | None) -> str:

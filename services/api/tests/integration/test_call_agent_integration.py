@@ -874,6 +874,70 @@ async def test_the_final_check_confirms_name_company_and_email_and_a_new_email_s
                              cid) == "kaustubh.b1@gmail.com"  # the follow-ups use it too
 
 
+async def _at_final_check(env: dict[str, Any], tenant: str) -> tuple[str, str, datetime]:
+    call_id, cid = await _form_call(env, tenant, {"service": "SEO", "company": "Lee Roofing"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "Sure, how much is a repair?")
+    await _say(env, call_id, "I'd like to book a time")
+    day = (datetime.now(_NY) + timedelta(days=1)).date()
+    three = datetime.combine(day, dtime(15), tzinfo=_NY)
+    final = service.spoken_text(await _say(env, call_id, "tomorrow at 3 pm"))
+    assert final == script.final_check_line(three, "America/New_York", "jane@example.com",
+                                            who="Jane Doe from Lee Roofing")
+    return call_id, cid, three
+
+
+async def test_also_send_it_to_my_other_mail_asks_for_it_and_both_get_the_details(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-18: "send it to my other mail as well" wasn't heard as being about the
+    email, so the same final check came back again and again. Now she asks for the other
+    address, reads both back, and both get the booking details."""
+    db, a = env["db"], env["a"]
+    call_id, cid, three = await _at_final_check(env, a)
+    asked = service.spoken_text(await _say(env, call_id, "Can you also send it to my other mail?"))
+    assert asked == script.EXTRA_EMAIL_ASK
+    both = service.spoken_text(await _say(env, call_id, "v i n i t h at isngs dot com"))
+    assert both == script.final_check_line(three, "America/New_York", "jane@example.com",
+                                           who="Jane Doe from Lee Roofing",
+                                           extra="vinith@isngs.com")
+    assert service.spoken_text(await _say(env, call_id, "yes")).startswith("You're booked for")
+    sent = {r["recipient"] for r in await db.fetch(
+        "SELECT recipient FROM notification_jobs WHERE tenant_id = $1 AND "
+        "payload->>'kind' = 'booking_confirm'", a)}
+    assert sent == {"jane@example.com", "vinith@isngs.com"}
+    assert await db.fetchval("SELECT email FROM contacts WHERE contact_id = $1",
+                             cid) == "jane@example.com"  # a copy, not a replacement
+    assert await db.fetchval("SELECT contact_id FROM contact_identities WHERE tenant_id = $1 "
+                             "AND identity_value = 'vinith@isngs.com'", a) == cid
+
+
+async def test_an_instruction_at_the_final_check_is_never_taken_as_the_email(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-18: "Don't change anything, send me the booking link to it at isngs.com"
+    became don'tchangeanything.sendmethebookinglinktoit@isngs.com. Now a domain without a
+    clear address gets "please spell it", and the spelled address is the one used."""
+    db, a = env["db"], env["a"]
+    call_id, _, three = await _at_final_check(env, a)
+    retry = service.spoken_text(await _say(
+        env, call_id, "Don't change anything, send me the booking link to it at isngs.com"))
+    assert retry == script.EMAIL_RETRY_LINE
+    fixed = service.spoken_text(await _say(env, call_id, "v i n i t h at i s n g s dot com"))
+    assert fixed == script.final_check_line(three, "America/New_York", "vinith@isngs.com",
+                                            who="Jane Doe from Lee Roofing")
+    await _say(env, call_id, "yes")
+    assert await db.fetchval("SELECT email FROM schedule_events WHERE tenant_id = $1",
+                             a) == "vinith@isngs.com"
+
+
+async def test_the_final_check_is_never_read_twice_in_a_row(env: dict[str, Any]) -> None:
+    call_id, _, three = await _at_final_check(env, env["a"])
+    unsure = service.spoken_text(await _say(env, call_id, "hmm let me think about it"))
+    assert unsure == script.CONFIRM_CLARIFY_LINE  # not the whole read-back again
+    again = service.spoken_text(await _say(env, call_id, "hmm let me think about it"))
+    assert again == script.final_check_line(three, "America/New_York", "jane@example.com",
+                                            who="Jane Doe from Lee Roofing")
+
+
 async def test_a_call_booking_confirms_with_their_agenda_a_prep_question_and_a_manage_link(
         env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     """Plan 1.6: the confirmation for a call booked on the phone carries what they asked about

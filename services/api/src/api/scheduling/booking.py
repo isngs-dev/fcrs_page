@@ -222,10 +222,12 @@ async def send_confirmation(db: Database, claims: AuthClaims, event: ScheduleEve
                             meet_url: str | None, organizer: str | None,
                             rescheduled_from: datetime | None = None,
                             calendly_link: str | None = None, lead_id: str | None = None,
-                            contact_id: str | None = None) -> None:
-    """The booking-confirmation email, once per booking: agenda, prep question and the
-    manage link (plan 1.6). Raises on a failed enqueue -- callers decide (a booking never
-    fails because of its email)."""
+                            contact_id: str | None = None,
+                            copies: list[str] | None = None) -> None:
+    """The booking-confirmation email, once per booking (and once per ``copies`` address --
+    "my other mail as well", 2026-11-18): agenda, prep question and the manage link (plan
+    1.6). Raises on a failed enqueue -- callers decide (a booking never fails because of its
+    email)."""
     agenda, prepare = await confirmation_extras(db, claims, contact_id=contact_id,
                                                 lead_id=lead_id or event.lead_id,
                                                 email=recipient)
@@ -239,12 +241,14 @@ async def send_confirmation(db: Database, claims: AuthClaims, event: ScheduleEve
         payload["from_name"] = business
     if organizer:
         payload["reply_to"] = organizer
-    job_id = await enqueue_notification(
-        db, claims, channel="email", recipient=recipient, subject=subject, body=body,
-        dedupe_key=f"booking_confirm:{event.event_id}", payload=payload,
-        lead_id=lead_id or event.lead_id)
-    if job_id is not None:
-        send_notification.delay(job_id=job_id, tenant_id=claims.tenant_id, correlation_id="")
+    for to in [recipient, *[c for c in (copies or []) if c and c != recipient]]:
+        dedupe = f"booking_confirm:{event.event_id}" + ("" if to == recipient else f":{to}")
+        job_id = await enqueue_notification(
+            db, claims, channel="email", recipient=to, subject=subject, body=body,
+            dedupe_key=dedupe, payload=payload, lead_id=lead_id or event.lead_id)
+        if job_id is not None:
+            send_notification.delay(job_id=job_id, tenant_id=claims.tenant_id,
+                                    correlation_id="")
 
 
 async def notify_organizer(db: Database, claims: AuthClaims, event: ScheduleEvent,

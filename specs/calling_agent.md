@@ -493,3 +493,15 @@ second, then the discovery thanks with the booking offer), or as the one follow-
 (`pause_question`, then `QUALIFY_DONE_LINE`). During a question, a question back or a booking request is
 handled as usual and the question dropped; a date alone is an answer ("about fifteen a month", "next
 spring"). What she heard (`qual_heard`) is mapped to a choice after the call, then the lead is rescored.
+
+**R40 — "my other mail as well" and instructions that aren't addresses (live call, 2026-11-18):** at the
+final check the caller asked to send the details to their other mail too; "mail" wasn't heard as being about
+the email, so the whole final check was read again each time. Then "Don't change anything, send me the
+booking link to it at isngs.com" was parsed into don'tchangeanything.sendmethebookinglinktoit@isngs.com and the
+booking went there. Now: `email_change` treats mail / email / email ID as the email; "also / as well / too /
+both / copy" asks for the other address (`EXTRA_EMAIL_ASK`, spelled), the final check reads both back, and
+the confirmation goes to both (`send_confirmation(copies=...)`; the second address becomes an identity, the
+main one is unchanged). `parse_spoken_email` strips lead-ins ("send the meeting link to", "my other mail id
+is") and refuses ordinary words before "at" (`_NOT_EMAIL_WORDS`) — a domain with no clear address gets
+`EMAIL_RETRY_LINE` (spell it). The same final check is never read twice in a row: the second time she asks
+`CONFIRM_CLARIFY_LINE` instead.

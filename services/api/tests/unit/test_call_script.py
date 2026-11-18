@@ -240,6 +240,47 @@ def test_spoken_email_is_turned_into_an_address(speech: str, email: str | None) 
     assert script.parse_spoken_email(speech) == email
 
 
+@pytest.mark.parametrize(("speech", "email"), [
+    # Live 2026-11-18: the whole instruction became the address and the booking went to it.
+    ("Don't change anything, send me the booking link to it at isngs.com", None),
+    ("send it to my other mail at gmail dot com", None),
+    ("send the meeting link to it at isngs dot com", None),
+    # Said properly, after the same kind of lead-in: the address alone.
+    ("send the meeting link to vinith at isngs dot com", "vinith@isngs.com"),
+    ("my other email is v i n i t h at isngs dot com", "vinith@isngs.com"),
+    ("my other mail id is vinith dot s at isngs dot com", "vinith.s@isngs.com"),
+    ("also send it to s vinith 814 at gmail dot com", "svinith814@gmail.com"),
+])
+def test_an_instruction_is_never_turned_into_an_address(speech: str, email: str | None) -> None:
+    assert script.parse_spoken_email(speech) == email
+
+
+@pytest.mark.parametrize(("speech", "change"), [
+    ("Can you also send it to my other mail?", "add"),
+    ("send it to my other email as well", "add"),
+    ("please copy my other email id too", "add"),
+    ("send it to both my emails", "add"),
+    ("send it to my other mail instead", "replace"),
+    ("use a different email", "replace"),
+    ("change the mail address", "replace"),
+    ("yes that's right", None),
+    ("what time is that in India?", None),
+])
+def test_what_they_want_done_with_the_email(speech: str, change: str | None) -> None:
+    assert script.email_change(speech) == change
+
+
+def test_the_final_check_reads_back_both_addresses() -> None:
+    from datetime import UTC, datetime
+
+    slot = datetime(2026, 11, 23, 18, 30, tzinfo=UTC)
+    line = script.final_check_line(slot, "America/New_York", "jane@example.com",
+                                   who="Jane Doe", extra="vinith@isngs.com")
+    assert line.endswith(
+        f"I'll send the booking details to {script.say_email('jane@example.com')}, and a copy "
+        f"to {script.say_email('vinith@isngs.com')}. Are those emails right?")
+
+
 def test_email_is_read_back_letter_by_letter() -> None:
     """Owner, 2026-11-17: be precise -- every letter of the address is read back, only a
     well-known provider is said as a word."""

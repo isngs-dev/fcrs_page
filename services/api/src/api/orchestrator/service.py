@@ -620,6 +620,12 @@ def _reschedule_offer(
     )
 
 
+async def _last_bot_reply(db: Database, claims: AuthClaims, conversation_id: str) -> str | None:
+    """Our previous reply in this conversation (the visitor's new turn is already stored)."""
+    wm = await get_working_memory(db, claims, conversation_id, keep_recent=4)
+    return next((m.content for m in reversed(wm["messages"]) if m.role == "bot"), None)
+
+
 async def _visitor_contact(db: Database, claims: AuthClaims) -> str | None:
     """The contact the agents made for this visitor (their chat identity), if any yet."""
     return await get_contact_id_by_identity(db, claims, identity_type="visitor_id",
@@ -852,7 +858,10 @@ async def _resolve_turn(
                 grounded=False,
                 tokens=None,
             )
-        if identity_capture.is_closing(message):
+        if identity_capture.is_closing(message) or (
+                identity_capture.is_short_no(message)
+                and identity_capture.asked_what_else(
+                    await _last_bot_reply(db, claims, conversation_id))):
             need = {"need_name": not (lead and lead.name), "need_email": not lead_has_email,
                     "need_phone": not lead_has_phone and not declined_call}
             already = any(i in recent_bot for i in (identity_capture.WRAP_UP_INTENT,
@@ -1093,7 +1102,9 @@ async def _resolve_turn(
     # Step 6.5: until there's an email the model may ask for one when it fits
     # (no fixed turn, 2026-10-30). An email given inside a longer message gets
     # the number question -- a code-owned suffix so the disclosure is exact.
-    ask_email = cfg.identity_gate_enabled and not lead_has_email
+    # Live 2026-11-18: once our own email ask has gone out, the model isn't told to ask again.
+    ask_email = (cfg.identity_gate_enabled and not lead_has_email
+                 and identity_capture.ASK_EMAIL_INTENT not in recent_bot)
     phone_ask = (cfg.identity_gate_enabled and captured_email and not lead_has_phone
                  and not asked_phone)
     suffix = identity_capture.PHONE_ASK if phone_ask else None

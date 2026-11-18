@@ -1628,9 +1628,9 @@ async def test_a_non_name_reply_is_just_answered_and_never_re_asked() -> None:
 
 
 @pytest.mark.parametrize("turns", [1, 2, 3, 5])
-async def test_until_there_is_an_email_the_model_may_ask_on_any_turn(turns: int) -> None:
-    """No fixed turn (2026-10-30): after our own email ask (2026-11-04) the guidance is there
-    every turn; the model decides."""
+async def test_after_our_email_ask_the_model_is_not_told_to_ask_again(turns: int) -> None:
+    """Live chat 2026-11-18: our own email ask (2026-11-04) went out, then the model asked
+    again two answers later. Once ours has gone out, the model isn't told to ask."""
     p = _Patched(
         orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
         lead=_lead(name="Jane Doe", email=None), count_messages_return=turns,
@@ -1643,9 +1643,21 @@ async def test_until_there_is_an_email_the_model_may_ask_on_any_turn(turns: int)
     assert result.decision == "answer"
     system = p.provider.generate.await_args.args[0][0].content
     assert "first name is Jane" in system
-    assert identity_capture.EMAIL_GUIDANCE in system
+    assert identity_capture.EMAIL_GUIDANCE not in system
     assert identity_capture.PHONE_ASK not in result.reply  # no turn-count number ask either
     assert identity_capture.EMAIL_ASK not in result.reply  # ours is asked once
+
+
+async def test_before_our_email_ask_the_model_may_still_ask_when_it_fits() -> None:
+    p = _Patched(
+        orchestrator_config=_orch_cfg(identity_gate_enabled=True), lead_id="lead-1",
+        lead=_lead(name="Jane Doe", email=None), count_messages_return=2,
+        recent_intents=["chitchat"],
+        classify_return="chitchat", hybrid_result=HybridResult(chunks=[_chunk()], confidence=0.8),
+    )
+    with p:
+        await answer_turn(db=object(), claims=_claims(), message="How are you?")
+    assert identity_capture.EMAIL_GUIDANCE in p.provider.generate.await_args.args[0][0].content
 
 
 async def test_no_email_ask_once_the_email_is_known() -> None:

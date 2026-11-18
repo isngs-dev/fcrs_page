@@ -462,14 +462,47 @@ def not_open_line(windows: list[list[str]], timezone: str) -> str:
 
 
 def final_check_line(slot: datetime, timezone: str, email: str | None, *,
-                     who: str | None = None) -> str:
+                     who: str | None = None, extra: str | None = None) -> str:
     """The one confirmation: every detail read back together -- the time, who it's for, and
-    the email asked about outright (owner, 2026-11-17: the booking and the follow-ups go there)."""
+    the email asked about outright (owner, 2026-11-17: the booking and the follow-ups go there).
+    ``extra``: a second address that gets a copy (live 2026-11-18: "my other mail as well")."""
     when = f"Just to confirm, that's {say_time(slot, timezone)}{f', for {who}' if who else ''}"
     if not email:
         return f"{when}, and our team will send you the booking details. Shall I book it?"
+    if extra:
+        return (f"{when}. I'll send the booking details to {say_email(email)}, and a copy to "
+                f"{say_email(extra)}. Are those emails right?")
     return (f"{when}. I'll send the booking details to {say_email(email)}. Is that the right "
             "email, or would you like me to use a different one?")
+
+
+# Live 2026-11-18: "send it to my other mail as well" wasn't heard as being about the email
+# ("mail", not "email"), so the same final check was read again and again.
+_MENTIONS_EMAIL = re.compile(r"\b(?:e-?mails?|mails?)\b|\bmail (?:address|id)\b", re.I)
+_ADD_EMAIL = re.compile(r"\b(?:also|as well|too|both|copy|cc|additional|second)\b", re.I)
+_REPLACE_EMAIL = re.compile(r"\b(?:instead|different|change|another|other|wrong|new|use)\b",
+                            re.I)
+EXTRA_EMAIL_ASK = "Sure. What's the other email? Please spell it for me, letter by letter."
+CONFIRM_CLARIFY_LINE = ("Sorry, I didn't quite catch that. Shall I book it, or would you like "
+                        "to change the email or the time?")
+
+
+_DOMAIN = re.compile(r"\bat\s+[a-z0-9-]+(?:\.|\s+dot\s+)(?:com|net|org|co|in|io|us|ai)\b", re.I)
+
+
+def mentions_domain(text: str) -> bool:
+    """ "...send it to it at isngs.com": they're giving an address that didn't come through."""
+    return bool(_DOMAIN.search(text))
+
+
+def email_change(text: str) -> str | None:
+    """At the final check: ``"add"`` (a copy to another address too), ``"replace"`` (a
+    different address), or ``None`` when they aren't asking about the email."""
+    if not _MENTIONS_EMAIL.search(text):
+        return None
+    if _ADD_EMAIL.search(text):
+        return "add"
+    return "replace" if _REPLACE_EMAIL.search(text) else None
 
 
 def who(name: str | None, company: str | None) -> str | None:
@@ -685,8 +718,19 @@ def parse_when(text: str, today: date) -> tuple[date | None, tuple[int, int] | N
 
 _EMAIL_PREFIX = re.compile(
     r"^(?:(?:yes|yeah|sure|ok(?:ay)?|no|nope|actually)[,.]?\s+)?"
-    r"(?:(?:it'?s|it is|that'?s|my email(?: address)? is|the email(?: address)? is|email is"
-    r"|(?:you can |please )?use|send (?:it|them|the details) to)\s+)?")
+    r"(?:(?:it'?s|it is|that'?s|the email(?: address)? is|email is"
+    r"|my (?:other |second )?(?:e-?mail|mail)(?: address| id)? is"
+    r"|(?:you can |please )?use"
+    r"|(?:can you |could you |please )?(?:also )?(?:send|mail|email|forward)(?: me)?"
+    r"(?: it| them| the (?:booking |meeting )?(?:details|link|invite|confirmation))?"
+    r"(?: link)? to(?: my (?:other |second )?(?:e-?mail|mail)(?: address| id)?)?)\s+)?")
+# Live 2026-11-18: "don't change anything, send me the booking link to it at isngs.com" became
+# the address. Ordinary words in the part before "at" mean it isn't an address yet -- she asks
+# for it spelled instead of guessing.
+_NOT_EMAIL_WORDS = {
+    "send", "me", "the", "to", "it", "is", "my", "other", "mail", "email", "link", "booking",
+    "details", "change", "anything", "don't", "dont", "please", "and", "also", "as", "well",
+    "meeting", "invite", "address", "id", "copy", "both", "too", "use", "can", "you", "your"}
 _EMAIL_SUFFIX = re.compile(r"\s+(?:instead|please|thanks|thank you|ok(?:ay)?)\W*$")
 _EMAIL_WORDS = {"dot": ".", "period": ".", "point": ".", "at": "@", "underscore": "_",
                 "dash": "-", "hyphen": "-", "zero": "0", "one": "1", "two": "2", "three": "3",
@@ -713,6 +757,9 @@ def parse_spoken_email(text: str) -> str | None:
         elif re.fullmatch(r"[a-z0-9](?:-[a-z0-9])+", word):  # "K-A-U-S"
             word = word.replace("-", "")
         parts.append(_EMAIL_WORDS.get(word, word))
+    local = parts[:parts.index("@")] if "@" in parts else parts
+    if any(p in _NOT_EMAIL_WORDS for p in local):
+        return None
     try:
         return validate_email("".join(parts).strip(".,"),
                               check_deliverability=False).normalized.lower()
@@ -742,7 +789,7 @@ def say_email(email: str) -> str:
 # -- Per-call memory ------------------------------------------------------------------------
 
 Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask", "booked_check",
-                "qualifying"]
+                "qualifying", "email_extra_ask"]
 
 
 @dataclass
@@ -753,6 +800,7 @@ class CallState:
     zone: str | None = None  # a time zone they named; else the business's
     chosen: str | None = None  # the open slot (ISO datetime) awaiting the final check
     email: str | None = None  # where the meeting details go
+    extra_email: str | None = None  # a second address that gets a copy (2026-11-18)
     email_tries: int = 0
     silences: int = 0
     misses: int = 0
@@ -777,7 +825,8 @@ class CallState:
 
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "day": self.day, "at": self.at, "zone": self.zone,
-                "chosen": self.chosen, "email": self.email, "email_tries": self.email_tries,
+                "chosen": self.chosen, "email": self.email, "extra_email": self.extra_email,
+                "email_tries": self.email_tries,
                 "silences": self.silences, "misses": self.misses,
                 "recording_started": self.recording_started, "question": self.question,
                 "history": self.history[-12:], "booked": self.booked,
@@ -793,6 +842,7 @@ class CallState:
         data = data or {}
         return cls(stage=data.get("stage", "talking"), day=data.get("day"), at=data.get("at"),
                    zone=data.get("zone"), chosen=data.get("chosen"), email=data.get("email"),
+                   extra_email=data.get("extra_email"),
                    email_tries=int(data.get("email_tries", 0)),
                    silences=int(data.get("silences", 0)),
                    misses=int(data.get("misses", 0)),
