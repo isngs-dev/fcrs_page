@@ -328,6 +328,30 @@ async def get_task(db: Database, claims: AuthClaims, task_id: str) -> dict[str, 
     return dict(row) if row is not None else None
 
 
+async def finished_plans_system(db: Database, *, quiet_since: datetime, limit: int
+                                ) -> list[dict[str, Any]]:
+    """System-scoped (plan 2.3): active new-enquiry / no-show plans with nothing left to send
+    whose last step closed before ``quiet_since``. Rows carry their own ``tenant_id``."""
+    rows = await db.fetch(
+        "SELECT p.tenant_id, p.plan_id, p.contact_id FROM outreach_plans p "
+        "WHERE p.status = 'active' AND p.plan->>'kind' IN ('inbound_auto', 'no_show_recovery') "
+        "AND NOT EXISTS (SELECT 1 FROM outreach_tasks t WHERE t.tenant_id = p.tenant_id "
+        "  AND t.plan_id = p.plan_id AND t.status IN ('scheduled', 'pending', 'in_progress')) "
+        "AND coalesce((SELECT max(coalesce(t.completed_at, t.scheduled_at)) FROM outreach_tasks t "
+        "  WHERE t.tenant_id = p.tenant_id AND t.plan_id = p.plan_id), p.created_at) < $1 "
+        "ORDER BY p.created_at LIMIT $2", quiet_since, limit)
+    return [dict(r) for r in rows]
+
+
+async def complete_plan(db: Database, claims: AuthClaims, plan_id: str) -> bool:
+    """A finished plan -> ``completed`` (only while still active). Returns whether it moved."""
+    _reject_global(claims)
+    tag = await db.execute(
+        "UPDATE outreach_plans SET status = 'completed' WHERE tenant_id = $1 AND plan_id = $2 "
+        "AND status = 'active'", claims.tenant_id, plan_id)
+    return str(tag).endswith(" 1")
+
+
 async def has_plan_since(db: Database, claims: AuthClaims, contact_id: str, *, kind: str,
                          since: datetime) -> bool:
     """A ``kind`` plan was made for the contact after ``since`` (plan 2.2: one thank-you per

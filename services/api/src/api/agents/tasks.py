@@ -86,6 +86,10 @@ def reap_stale(
         counts["calls"] = await reap_stale_calls(db, grace_seconds=s.call_reap_grace_seconds)
         # A12 F5: campaigns past their end date stop their plans.
         counts["campaign_plans"] = await end_campaigns_system(db, now=datetime.now(UTC))
+        # Plan 2.3: finished sequences complete; "later" leads get their nurture.
+        from api.agents import nurture  # noqa: PLC0415 -- dispatch imports agents.tasks
+
+        counts["nurture"] = await nurture.sweep_system(db, now=datetime.now(UTC))
         return counts
 
     result: dict[str, int] = _run(body)

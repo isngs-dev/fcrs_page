@@ -218,6 +218,15 @@ they told us, in their words. It is **always a draft** for a person to review an
 AI wasn't in the meeting — whatever the client's email mode (`email_agent.service`). One per
 meeting however often it is marked (`has_plan_since`).
 
+**Nurture (plan 2.3).** The housekeeping sweep (`agents.reap_stale`, every 5 min →
+`nurture.sweep_system`) finds new-enquiry and no-show plans with nothing left to send whose last
+step closed over a day ago, and marks them `completed` (before this, finished plans stayed
+`active`). If the lead has no booking coming up and their urgency answer means later, it starts a
+`nurture` plan: a light check-in email at their timeline and a last one 30 days on, then nothing —
+emails only, gated as usual at send time. "Later" is read from the points the client gave that
+answer: 100 → ready (none); 40–99 → first email in 30 days; under 40 → in 90 days; no answer → none.
+Email replies like "contact me in March" keep their own path (`email_agent._contact_later`).
+
 Migration 0080 adds the Phase 2 plan kinds (`no_show_recovery`, `after_meeting`, `nurture`) to
 `outreach_campaigns.kind` in one step.
 
