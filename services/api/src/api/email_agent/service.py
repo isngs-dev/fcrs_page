@@ -157,7 +157,10 @@ async def prepare_and_maybe_send(
     references = await repo.thread_message_ids(db, claims, thread_id)
     subject = f"Re: {thread_subject}" if references else composed.subject
     domain = config.from_address.rpartition("@")[2]
-    status = "approved" if settings.email_mode == "auto_send" else "draft"
+    # Plan 2.2: the after-meeting thank-you is always a draft -- the AI wasn't in the meeting,
+    # so a person reviews and completes it, whatever the client's email mode.
+    auto = settings.email_mode == "auto_send" and task.plan_kind != "after_meeting"
+    status = "approved" if auto else "draft"
     message_id = await repo.insert_message(
         db, claims, thread_id=thread_id, rfc_message_id=f"<{uuid4().hex}@{domain}>",
         in_reply_to=references[-1] if references else None, references=references,

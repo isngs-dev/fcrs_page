@@ -117,3 +117,88 @@ async def test_a_meeting_with_nobody_we_know_starts_nothing(env: dict[str, Any])
     await _mark(env, event.event_id, "no_show")
     assert await db.fetchval("SELECT last_error FROM agent_events WHERE kind = 'meeting_no_show' "
                              "AND tenant_id = $1", env["a"]) == "NO_CONTACT"
+
+
+# -- After the meeting (plan 2.2) ----------------------------------------------------------------
+
+
+async def _attended(env: dict[str, Any], *, owner: str | None = None,
+                    lead_agent: str | None = None) -> tuple[str, str]:
+    db, a = env["db"], _claims(env["a"])
+    contact_id = await _contact(db, a, email="jane@example.com", owner=owner)
+    if lead_agent:
+        from api.leads.repository import create_lead
+
+        lead_id = await create_lead(db, a, visitor_id="v-1", name="Jane Doe",
+                                    email="jane@example.com", phone=None, consent={},
+                                    source="widget")
+        await db.execute("UPDATE leads SET assigned_agent_id = $2 WHERE lead_id = $1", lead_id,
+                         lead_agent)
+        await db.execute("UPDATE contacts SET lead_id = $2 WHERE contact_id = $1", contact_id,
+                         lead_id)
+    past = datetime.now(UTC) - timedelta(hours=2)
+    event = await create_event(db, a, starts_at=past, ends_at=past + timedelta(minutes=30),
+                               timezone="America/New_York", visitor_id=None, lead_id=None,
+                               consent={}, email="jane@example.com", name="Jane Doe")
+    return contact_id, event.event_id
+
+
+async def _opportunities(env: dict[str, Any], contact_id: str) -> list[Any]:
+    return list(await env["db"].fetch(
+        "SELECT name, stage, currency, owner_agent_id FROM opportunities WHERE contact_id = $1",
+        contact_id))
+
+
+async def test_attended_creates_an_opportunity_owned_by_the_leads_agent(
+        env: dict[str, Any]) -> None:
+    contact_id, event_id = await _attended(env, lead_agent="agent-7")
+    await _mark(env, event_id, "attended")
+    [opp] = await _opportunities(env, contact_id)
+    assert (opp["stage"], opp["owner_agent_id"]) == ("prospecting", "agent-7")
+    assert opp["name"] == "Jane Doe" and opp["currency"]
+
+
+async def test_without_a_lead_agent_the_contacts_owner_takes_it(env: dict[str, Any]) -> None:
+    contact_id, event_id = await _attended(env, owner="agent-3")
+    await _mark(env, event_id, "attended")
+    [opp] = await _opportunities(env, contact_id)
+    assert opp["owner_agent_id"] == "agent-3"
+
+
+async def test_attended_drafts_a_thank_you_for_a_person_to_review(env: dict[str, Any]) -> None:
+    """The AI wasn't in the meeting: the thank-you is ALWAYS a draft, even for a client whose
+    emails otherwise send automatically."""
+    db = env["db"]
+    contact_id, event_id = await _attended(env)
+    await _mark(env, event_id, "attended")
+    [plan] = await _plans(env, contact_id)
+    assert (plan["kind"], plan["status"]) == ("after_meeting", "active")
+    goal = await db.fetchval("SELECT goal FROM outreach_tasks WHERE plan_id = $1",
+                             plan["plan_id"])
+    assert goal == "thank_you"
+    sent_before = len(env["mailer"].sent)
+    await dispatch.dispatch_due_tasks(db, limit=10)
+    assert await db.fetchval("SELECT m.status FROM email_messages m JOIN email_threads t "
+                             "USING (tenant_id, thread_id) WHERE t.contact_id = $1",
+                             contact_id) == "draft"
+    assert len(env["mailer"].sent) == sent_before  # nothing went out
+
+
+async def test_attended_twice_makes_one_opportunity_and_one_draft(env: dict[str, Any]) -> None:
+    contact_id, event_id = await _attended(env)
+    await _mark(env, event_id, "attended")
+    await _mark(env, event_id, "attended")
+    assert len(await _opportunities(env, contact_id)) == 1
+    assert len(await _plans(env, contact_id)) == 1
+
+
+async def test_a_no_show_corrected_to_attended_gets_the_after_meeting_steps(
+        env: dict[str, Any]) -> None:
+    contact_id, event_id = await _missed(env)
+    await _mark(env, event_id, "no_show")
+    await _mark(env, event_id, "attended")
+    kinds = [(p["kind"], p["status"]) for p in await _plans(env, contact_id)]
+    assert kinds == [("no_show_recovery", "stopped"), ("after_meeting", "active")]
+    assert len(await _opportunities(env, contact_id)) == 1
+    assert await env["db"].fetchval("SELECT count(*) FROM opportunities WHERE tenant_id = $1",
+                                    env["b"]) == 0

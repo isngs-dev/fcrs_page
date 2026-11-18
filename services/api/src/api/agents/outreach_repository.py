@@ -328,6 +328,18 @@ async def get_task(db: Database, claims: AuthClaims, task_id: str) -> dict[str, 
     return dict(row) if row is not None else None
 
 
+async def has_plan_since(db: Database, claims: AuthClaims, contact_id: str, *, kind: str,
+                         since: datetime) -> bool:
+    """A ``kind`` plan was made for the contact after ``since`` (plan 2.2: one thank-you per
+    meeting, however often it is marked attended)."""
+    _reject_global(claims)
+    found = await db.fetchval(
+        "SELECT 1 FROM outreach_plans WHERE tenant_id = $1 AND contact_id = $2 "
+        "AND plan->>'kind' = $3 AND created_at >= $4 LIMIT 1",
+        claims.tenant_id, contact_id, kind, since)
+    return found is not None
+
+
 async def next_planned_call(db: Database, claims: AuthClaims, plan_id: str,
                             after_task_id: str) -> datetime | None:
     """When the plan's next scheduled call step is due (plan 1.4: the day-4 call), if any."""

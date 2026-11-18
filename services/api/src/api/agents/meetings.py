@@ -17,12 +17,18 @@ from common.errors import ConflictError
 
 from api.agents import planner
 from api.agents.models import AgentTask
-from api.agents.outreach_repository import get_active_plan, stop_plan
+from api.agents.outreach_repository import get_active_plan, has_plan_since, stop_plan
+from api.audit.repository import record_audit
 from api.contacts.repository import (
+    get_contact,
     get_contact_by_lead_id,
     get_contact_id_by_identity,
     get_contact_timezone,
 )
+from api.leads.assignment import select_next_agent
+from api.leads.repository import get_lead
+from api.opportunities.config_repository import get_opportunity_config
+from api.opportunities.repository import create_opportunity, list_opportunities
 from api.scheduling.repository import get_availability, get_event
 
 NO_SHOW_EMAIL_INTENT = (
@@ -35,6 +41,13 @@ NO_SHOW_CALL_INTENT = (
 NO_SHOW_FINAL_INTENT = (
     "Last friendly note after a missed call: an easy way to book a new time, or to tell us "
     "they're all set. After this we stop.")
+
+
+AFTER_MEETING_INTENT = (
+    "Thank them for meeting with our team. Briefly recap what they told us they're looking for, "
+    "in their own words, and say the team will follow up with next steps. Do not claim anything "
+    "was agreed or decided in the meeting: a person from the team reviews and completes this "
+    "email before it is sent.")
 
 
 def next_business_day(now: datetime, timezone: str) -> timedelta:
@@ -100,8 +113,43 @@ async def handle_no_show(db: Database, claims: AuthClaims, payload: dict[str, An
     return "planned" if outcome.plan_id else "NO_ALLOWED_CHANNEL"
 
 
+async def _owner(db: Database, claims: AuthClaims, contact: Any) -> str | None:
+    """Who owns the deal: the lead's agent, else the contact's owner, else the next agent in
+    the client's round-robin (``None`` when that is off -- the console shows it unassigned)."""
+    if contact.lead_id:
+        lead = await get_lead(db, claims, contact.lead_id)
+        if lead is not None and lead.assigned_agent_id:
+            return str(lead.assigned_agent_id)
+    if contact.owner_agent_id:
+        return str(contact.owner_agent_id)
+    return await select_next_agent(db, claims)
+
+
+async def _ensure_opportunity(db: Database, claims: AuthClaims, contact_id: str) -> str:
+    """One open opportunity per contact: an existing open one is kept, never duplicated."""
+    existing, _ = await list_opportunities(db, claims, contact_id=contact_id, open_only=True,
+                                           limit=1)
+    if existing:
+        return "kept"
+    contact = await get_contact(db, claims, contact_id)
+    if contact is None:
+        return "NO_CONTACT"
+    config = await get_opportunity_config(db, claims)
+    opportunity_id = await create_opportunity(
+        db, claims, contact_id=contact_id, account_id=contact.account_id,
+        name=contact.name or contact.email or "New opportunity", amount=None,
+        currency=config.currency, owner_agent_id=await _owner(db, claims, contact))
+    await record_audit(db, claims, action="opportunity.created_after_meeting",
+                       target_type="opportunity", target_id=opportunity_id,
+                       metadata={"contact_id": contact_id})
+    return "created"
+
+
 async def handle_attended(db: Database, claims: AuthClaims, payload: dict[str, Any]) -> str:
-    """They showed after all: a running no-show recovery stops."""
+    """Plan 2.2: they came. A running plan (a no-show recovery, a correction) stops; an open
+    opportunity is created with a sales owner; a thank-you is DRAFTED for a person to review
+    and complete -- the AI wasn't in the meeting (``email_agent.service`` never auto-sends
+    an ``after_meeting`` email)."""
     event = await get_event(db, claims, payload["event_id"])
     if event is None:
         return "EVENT_GONE"
@@ -109,7 +157,19 @@ async def handle_attended(db: Database, claims: AuthClaims, payload: dict[str, A
     if contact_id is None:
         return "NO_CONTACT"
     active = await get_active_plan(db, claims, contact_id)
-    if active is not None and _kind(active) == "no_show_recovery":
+    if active is not None and _kind(active) != "after_meeting":
         await stop_plan(db, claims, active["plan_id"], reason="meeting_attended")
-        return "recovery_stopped"
-    return "nothing_to_stop"
+    opportunity = await _ensure_opportunity(db, claims, contact_id)
+    if await has_plan_since(db, claims, contact_id, kind="after_meeting",
+                            since=event.starts_at):
+        return f"opportunity:{opportunity},thank_you:already"
+    try:
+        outcome = await planner.create_plan(
+            db, claims, contact_id=contact_id, kind="after_meeting", goal="thank_you",
+            now=datetime.now(UTC), steps=[AgentTask(
+                channel="email", offset=timedelta(0), goal="thank_you",
+                intent=AFTER_MEETING_INTENT, max_attempts=3)])
+    except ConflictError:
+        return f"opportunity:{opportunity},thank_you:already"
+    drafted = "drafted" if outcome.plan_id else "NO_ALLOWED_CHANNEL"
+    return f"opportunity:{opportunity},thank_you:{drafted}"

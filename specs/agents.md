@@ -209,6 +209,15 @@ only high-scoring leads), and a final email on day 3 — then nothing more. All 
 (consent, calling window, gap, touch budget, opt-outs); booking again or a reply stops it. Marked
 twice → one sequence. Marked **attended** afterwards (a correction) stops a running recovery
 (`stop_reason = meeting_attended`). A meeting nobody we know booked starts nothing (`NO_CONTACT`).
+**Attended (plan 2.2).** Marking a meeting attended stops any other running plan for the contact
+(a no-show recovery, …), creates ONE open opportunity (an existing open one is kept, never
+duplicated) owned by the lead's agent → else the contact's owner → else the next agent in the
+client's round-robin (none when that is off; audited `opportunity.created_after_meeting`), and
+starts an `after_meeting` plan with one email (`goal = thank_you`): a thank-you that recaps what
+they told us, in their words. It is **always a draft** for a person to review and complete — the
+AI wasn't in the meeting — whatever the client's email mode (`email_agent.service`). One per
+meeting however often it is marked (`has_plan_since`).
+
 Migration 0080 adds the Phase 2 plan kinds (`no_show_recovery`, `after_meeting`, `nurture`) to
 `outreach_campaigns.kind` in one step.
 
