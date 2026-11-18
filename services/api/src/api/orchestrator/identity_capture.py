@@ -93,6 +93,29 @@ QUAL_PER_CHAT = 2
 QUAL_THANKS_REPLY = "Thanks, that's helpful! What else can I help you with?"
 
 
+# Plan 1.5 (2026-11-18): a visitor who shows they're ready (getting started, a quote, a start
+# date, a price for THEIR business) is offered a time once, appended to the answer; "yes"
+# opens the booking card filled in. Exploring visitors are never pushed. ponytail: a phrase
+# list -- a readiness worded some other way just gets a normal answer.
+BOOKING_OFFER_INTENT = "booking_offer"
+BOOKING_OFFER = ("If you'd like, I can find a time for you to talk this through with our team "
+                 "-- just say yes.")
+BOOKING_OFFER_DECLINED_REPLY = "No problem! What else can I help you with?"
+_READY_RE = re.compile(
+    r"\b(?:get(?:ting)? started|sign(?:ing)? up|go ahead|move forward|ready to"
+    r"|(?:when|how soon|how quickly|how fast) (?:can|could|would) (?:you|we) "
+    r"(?:start|begin|get going)"
+    r"|quote|estimate|proposal"
+    r"|(?:cost|price|pricing|charge)\b.{0,40}\b"
+    r"(?:for (?:us|me|my|our)|my business|our business))\b",
+    re.I)
+
+
+def buying_signal(message: str) -> bool:
+    """They sound ready to talk business (plan 1.5), not just exploring."""
+    return bool(_READY_RE.search(message))
+
+
 def qual_ask(ask: str) -> str:
     return f"If you don't mind me asking, {ask[:1].lower()}{ask[1:]}"
 

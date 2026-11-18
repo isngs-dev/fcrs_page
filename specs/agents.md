@@ -178,6 +178,21 @@ confirmation with a new link, tells the rep when the calendar names one, audits
 calendar), audits `scheduling.booking_cancelled`, and puts `booking_cancelled_by_attendee` in the
 console feed. A booking that is no longer upcoming shows "no longer booked".
 
+## 7e. The chatbot offers a time when the visitor is ready (plan 1.5, 2026-11-18)
+
+`identity_capture.buying_signal` spots a ready visitor from their own words (getting started,
+signing up, going ahead, a quote/estimate/proposal, when or how soon we can start, a price for
+THEIR business) — no extra model call; ponytail: a phrase list. When such a question is answered
+(`intent == "question"`, no other code-owned line that turn), the answer ends with
+`BOOKING_OFFER`, once a conversation and never over an upcoming booking. The reply decides: "yes"
+opens the booking card filled in from what they already gave (only missing name/email/phone is
+asked for, then Step 5.6 opens it); "no" gets `BOOKING_OFFER_DECLINED_REPLY`; a question is just
+answered. Exploring visitors (questions about what we do, general pricing, areas) are never pushed.
+
+The turn cap (`turn_cap`, default 6) stays as the fallback to scheduling, per CLAUDE.md §1 and the
+`conversation-orchestrator` skill. Raising or removing that default to fully match the PDF's "don't
+force scheduling prematurely" is a spec change for the owner (the demo client's cap is 100).
+
 ## 8. Tests (DoD)
 
 Policy: property tests (no output plan ever violates limits). State machine: every legal/illegal

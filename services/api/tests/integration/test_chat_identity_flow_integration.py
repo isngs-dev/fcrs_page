@@ -162,7 +162,7 @@ async def test_email_then_number_in_chat_gives_the_calling_agent_a_consented_num
     await say("Jane", conv)
     thanks = await say("jane@example.com", conv)
     assert thanks.reply.endswith(ic.PHONE_ASK)
-    await dispatch.dispatch_events(db, limit=10)  # email-only plan
+    await dispatch.dispatch_events(db, limit=500)  # email-only plan
     assert [r["channel"] for r in await db.fetch(
         "SELECT channel FROM outreach_tasks t JOIN outreach_plans p USING (tenant_id, plan_id) "
         "WHERE p.tenant_id = $1 AND p.status = 'active'", tenant)] == ["email"] * 3  # day 0/2/7
@@ -171,7 +171,7 @@ async def test_email_then_number_in_chat_gives_the_calling_agent_a_consented_num
     assert ack.reply == ic.phone_ack_reply("Jane", consented=True)
     assert await db.fetchval("SELECT phone FROM leads WHERE visitor_id = $1",
                              visitor.subject) == "+17868233553"
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     assert await db.fetchval("SELECT last_error FROM agent_events WHERE tenant_id = $1 "
                              "ORDER BY created_at DESC LIMIT 1", tenant) == "replanned"
 
@@ -303,7 +303,8 @@ async def _chat_call(db: Database, tenant: str) -> Any:
         "SELECT t.tenant_id, t.task_id, t.plan_id, p.contact_id, t.channel, t.goal, t.intent, "
         "t.attempts, t.max_attempts, t.scheduled_at FROM outreach_tasks t "
         "JOIN outreach_plans p USING (tenant_id, plan_id) WHERE t.tenant_id = $1 "
-        "AND p.status = 'active' AND t.channel = 'call'", tenant)
+        "AND p.status = 'active' AND t.channel = 'call' "
+        "ORDER BY t.step_index LIMIT 1", tenant)  # plan 1.4: the day-0 call, not day 4's
     task = ClaimedTask(tenant_id=row["tenant_id"], task_id=row["task_id"],
                        plan_id=row["plan_id"], contact_id=row["contact_id"],
                        channel=row["channel"], goal=row["goal"], intent=row["intent"],
@@ -324,7 +325,7 @@ async def test_the_chat_call_waits_for_the_visitor_to_go_quiet_or_say_goodbye(
     await say("Jane")
     await say("jane@example.com")
     await say("786 823 3553")
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     task, _ = await _chat_call(db, tenant)
     assert task.intent == planner.CHAT_CALL_INTENT
     assert dispatch.gate_purpose(task) == "first_response"  # the email minutes ago won't hold it
@@ -350,7 +351,7 @@ async def test_another_tenants_chat_never_holds_back_this_tenants_call(
     say = _sayer(db, visitor)
     for text in ("Do you fix leaks?", "Jane", "jane@example.com", "786 823 3553", "bye"):
         await say(text)
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     task, _ = await _chat_call(db, tenant)
 
     other = f"t-{uuid4().hex[:10]}"
@@ -373,12 +374,12 @@ async def test_a_number_given_after_the_first_email_went_out_still_gets_a_call(
     await say("Do you fix leaks?")
     await say("Jane")
     await say("jane@example.com")
-    await dispatch.dispatch_events(db, limit=10)  # email-only plan
+    await dispatch.dispatch_events(db, limit=500)  # email-only plan
     await db.execute("UPDATE outreach_tasks SET status = 'completed', completed_at = now() "
                      "WHERE tenant_id = $1 AND step_index = 0", tenant)
     await say("Can you call me instead?")
     await say("786 823 3553")
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     task, _ = await _chat_call(db, tenant)
     assert task.intent == planner.CHAT_CALL_INTENT
 
@@ -401,9 +402,9 @@ async def test_a_number_given_after_the_email_is_the_one_rebecca_dials(
     say = _sayer(db, visitor)
     for text in ("How much does it cost?", "Sainath", "sainath@example.com"):
         await say(text)
-    await dispatch.dispatch_events(db, limit=10)  # contact made now, without a number
+    await dispatch.dispatch_events(db, limit=500)  # contact made now, without a number
     await say("+918828393252")
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     assert await _dialled(db, tenant) == "+918828393252"
 
 
@@ -433,9 +434,9 @@ async def test_a_returning_visitor_is_rung_on_the_number_they_just_gave(
     say = _sayer(db, visitor)
     for text in ("How much does it cost?", "Sainath", "sainath@example.com"):
         await say(text)
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     await say("+918828393252")
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     task, _ = await _chat_call(db, tenant)
     assert task.contact_id == old  # joined by email, as before
     assert await _dialled(db, tenant) == "+918828393252"
@@ -471,7 +472,7 @@ async def test_just_email_me_starts_the_email_follow_up_and_stops_asking_for_a_n
         assert reply.reply == ic.email_only_reply("Jane", "jane@example.com")
         assert reply.decision == "answer"
     assert len(provider.prompts) == spent  # no model reply, so no "I can't email you"
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     assert await _active_steps(db, tenant) == [("email", "scheduled")] * 3  # day 0/2/7
     assert await db.fetchval("SELECT count(*) FROM outreach_plans WHERE tenant_id = $1",
                              tenant) == 1
@@ -488,11 +489,11 @@ async def test_dont_call_me_calls_off_a_planned_call_and_keeps_the_emails(
     say = _sayer(db, visitor)
     for text in ("Do you fix leaks?", "Jane", "jane@example.com", "(786) 823-3553"):
         await say(text)
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     assert [c for c, _ in await _active_steps(db, tenant)] == ["call", "email", "email", "call", "email"]
 
     await say("Please don't call me")
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     assert await _active_steps(db, tenant) == [
         ("call", "cancelled"), ("email", "scheduled"), ("email", "scheduled"),
         ("call", "cancelled"), ("email", "scheduled")]  # both calls off, emails kept
@@ -512,7 +513,7 @@ async def test_email_only_before_an_email_asks_for_the_email_then_never_for_a_nu
     assert (await say("Just email me please")).reply == ic.email_only_reply("Jane", None)
     ack = await say("jane@example.com")
     assert ack.reply == ic.email_ack_reply("Jane", "jane@example.com", ask_phone=False)
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     assert [c for c, _ in await _active_steps(db, tenant)] == ["email"] * 3
 
 
@@ -548,7 +549,7 @@ async def _chatted_and_known(chat: dict[str, Any]) -> Any:
     say = _sayer(db, visitor)
     for text in ("Do you fix leaks?", "Jane", "jane@example.com", "786 823 3553"):
         await say(text)
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     return say
 
 
@@ -619,6 +620,64 @@ async def test_no_question_is_asked_before_there_is_a_contact_to_keep_the_answer
     assert reply.reply == "A grounded answer."
 
 
+# -- Readiness: offer a time when they're ready, never push explorers (plan 1.5) -------------
+
+
+async def _detailed_visitor(chat: dict[str, Any]) -> Any:
+    """Name, email and number given; agents off, so no qualification questions get in the way."""
+    say = _sayer(chat["db"], chat["visitor"])
+    for text in ("Do you fix leaks?", "Jane", "jane@example.com", "786 823 3553"):
+        await say(text)
+    return say
+
+
+async def test_a_ready_visitor_is_offered_a_time_once(chat: dict[str, Any]) -> None:
+    say = await _detailed_visitor(chat)
+    offered = await say("How do I get started with you?")
+    assert offered.reply == f"A grounded answer.\n\n{ic.BOOKING_OFFER}"
+    again = await say("Can you send me a quote?")
+    assert again.reply == "A grounded answer."  # offered once a conversation
+
+
+async def test_yes_to_the_offer_opens_the_card_filled_in_without_asking_again(
+    chat: dict[str, Any],
+) -> None:
+    say = await _detailed_visitor(chat)
+    await say("When can you start?")
+    yes = await say("yes please")
+    assert yes.action in ("schedule_cta", "lead_form")  # the card, pre-filled
+    assert yes.prefill is not None and {k: yes.prefill[k] for k in ("name", "email", "phone")} == {
+        "name": "Jane", "email": "jane@example.com", "phone": "+17868233553"}
+    assert "share your name" not in yes.reply  # nothing they already gave is asked again
+
+
+async def test_no_to_the_offer_is_respected(chat: dict[str, Any]) -> None:
+    say = await _detailed_visitor(chat)
+    await say("How do I get started with you?")
+    no = await say("no thanks, not yet")
+    assert no.reply == ic.BOOKING_OFFER_DECLINED_REPLY and no.action is None
+
+
+async def test_an_exploring_visitor_is_answered_and_never_pushed(chat: dict[str, Any]) -> None:
+    say = await _detailed_visitor(chat)
+    for question in ("Do you do gutters?", "What areas do you cover?",
+                     "How much does SEO usually cost?"):
+        reply = await say(question)
+        assert reply.reply == "A grounded answer." and reply.action is None
+
+
+async def test_without_details_yes_asks_only_for_what_is_missing(chat: dict[str, Any]) -> None:
+    db, visitor = chat["db"], chat["visitor"]
+    say = _sayer(db, visitor)
+    await say("Do you fix leaks?")
+    await say("Jane")
+    offered = await say("How do I get started with you?")
+    assert offered.reply.endswith(ic.BOOKING_OFFER)
+    yes = await say("yes")
+    assert yes.action is None and "email and phone number" in yes.reply
+    assert "name" not in yes.reply.split("share")[-1]  # her name is already known
+
+
 # -- One person per phone number (plan 1.1, owner 2026-11-17: "same person") -----------------
 
 
@@ -661,7 +720,7 @@ async def test_a_chat_number_already_on_a_contact_joins_that_contact(
     say = _sayer(db, visitor)
     for text in ("Do you fix leaks?", "Vinith", "vinith@example.com"):
         await say(text)
-    await dispatch.dispatch_events(db, limit=10)  # the chat's own contact, no number yet
+    await dispatch.dispatch_events(db, limit=500)  # the chat's own contact, no number yet
     assert len(await _contact_ids(db, tenant)) == 2
     from api.agents import memory
 
@@ -669,7 +728,7 @@ async def test_a_chat_number_already_on_a_contact_joins_that_contact(
     await memory.remember(db, claims, chat_contact, channel="chat", kind="need",
                           text="Asked about leak repairs")
     await say("786 823 3553")
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
 
     assert await _contact_ids(db, tenant) == [old]
     task, _ = await _chat_call(db, tenant)
@@ -709,7 +768,7 @@ async def test_a_new_lead_on_a_known_number_is_that_contact_and_other_tenants_ar
     for text in ("Do you fix leaks?", "ok thanks, that's all",
                  "Sam Lee, sam@example.com, 786 823 3553"):
         await say(text)
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
 
     assert await _contact_ids(db, tenant) == [old]
     assert tuple(await db.fetchrow("SELECT name, email FROM contacts WHERE contact_id = $1",
@@ -730,11 +789,11 @@ async def test_a_chat_contact_that_was_already_emailed_is_not_folded_in(
     say = _sayer(db, visitor)
     for text in ("Do you fix leaks?", "Vinith", "vinith@example.com"):
         await say(text)
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
     await db.execute("UPDATE outreach_tasks SET status = 'completed', completed_at = now() "
                      "WHERE tenant_id = $1 AND step_index = 0", tenant)
     await say("786 823 3553")
-    await dispatch.dispatch_events(db, limit=10)
+    await dispatch.dispatch_events(db, limit=500)
 
     ids = await _contact_ids(db, tenant)
     assert len(ids) == 2 and old in ids

@@ -149,3 +149,30 @@ def test_email_only_reply_confirms_the_email_or_asks_for_one() -> None:
     confirmed = ic.email_only_reply("Sam", "sam@example.com")
     assert "won't call" in confirmed and "sam@example.com" in confirmed
     assert "email" in ic.email_only_reply("Sam", None) and ic.PHONE_ASK not in confirmed
+
+
+# -- Readiness (plan 1.5, 2026-11-18) ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(("text", "ready"), [
+    ("How do I get started with you?", True),
+    ("When can you start?", True),
+    ("How soon could you start on our campaign?", True),
+    ("Can you send me a quote?", True),
+    ("We'd like to go ahead", True),
+    ("How much would it cost for us to run Facebook ads?", True),
+    ("What would the price be for my business?", True),
+    ("I'm ready to sign up", True),
+    ("Do you do gutters?", False),             # exploring: a question about what they do
+    ("How much does SEO usually cost?", False),  # general pricing: details, not yet ready
+    ("What areas do you cover?", False),
+    ("Thanks, that's helpful", False),
+])
+def test_buying_signal(text: str, ready: bool) -> None:
+    assert ic.buying_signal(text) is ready
+
+
+def test_the_booking_offer_is_an_invitation_not_a_push() -> None:
+    assert ic.BOOKING_OFFER == ("If you'd like, I can find a time for you to talk this through "
+                                "with our team -- just say yes.")
+    assert ic.BOOKING_OFFER_DECLINED_REPLY == "No problem! What else can I help you with?"

@@ -958,6 +958,43 @@ async def _resolve_turn(
                     tokens=None,
                 )
 
+    # Step 5.57 (plan 1.5): the reply to our booking offer. "Yes" opens the booking card filled
+    # in from what they already gave (only missing details are asked for); "no" is respected;
+    # anything else (a question) falls through and is answered.
+    if last_intent == identity_capture.BOOKING_OFFER_INTENT and "?" not in message:
+        answer = _yes_no(message)
+        if answer == "no":
+            await provider.aclose()
+            return _FixedOutcome(
+                conversation_id=conversation_id, assistant_id=assistant_id,
+                reply=identity_capture.BOOKING_OFFER_DECLINED_REPLY, decision="answer",
+                confidence=None, sources=[], intent="booking_offer_declined", action=None,
+                grounded=False, tokens=None)
+        if answer == "yes":
+            await provider.aclose()
+            upcoming = await get_upcoming_booking(db, claims, claims.subject)
+            if upcoming is not None:
+                return _reschedule_offer(conversation_id, assistant_id, upcoming)
+            lead_now = await identity_capture.visitor_lead(db, claims)
+            offer_prefill = {key: str(value) for key, value in (
+                ("name", lead_now.name if lead_now else None),
+                ("email", lead_now.email if lead_now else None),
+                ("phone", lead_now.phone if lead_now else None)) if value}
+            missing = [key for key, _ in _REQUIRED_DETAILS if key not in offer_prefill]
+            if missing:  # their reply opens the card via Step 5.6
+                return _FixedOutcome(
+                    conversation_id=conversation_id, assistant_id=assistant_id,
+                    reply=_missing_details_reply(offer_prefill, missing), decision="escalate",
+                    confidence=None, sources=[], intent="scheduling_request", action=None,
+                    grounded=False, tokens=None)
+            action = await _schedule_action(db, claims)
+            return _FixedOutcome(
+                conversation_id=conversation_id, assistant_id=assistant_id,
+                reply=(_BOOKING_DETAILS_REPLY if action == "schedule_cta"
+                       else _BOOKING_DETAILS_LEAD_REPLY),
+                decision="answer", confidence=None, sources=[], intent="scheduling_request",
+                action=action, grounded=False, tokens=None, prefill=offer_prefill)
+
     # Step 5.6: booking details typed into the chat (name/email/phone, as the
     # scheduling reply asks for). Triggered by an email address; by a phone
     # number right after a booking turn; or by ANY reply right after the bot
@@ -1110,6 +1147,16 @@ async def _resolve_turn(
             and identity_capture.ASK_EMAIL_INTENT not in recent_bot):
         suffix, suffix_intent = identity_capture.EMAIL_ASK, identity_capture.ASK_EMAIL_INTENT
         ask_email = False
+
+    # Step 7.55 (plan 1.5): a ready visitor (getting started, a quote, a start date, a price
+    # for their business) is offered a time, once a conversation, never over a booking.
+    if intent == "question" and suffix is None and identity_capture.buying_signal(message):
+        intents = recent_bot if cfg.identity_gate_enabled else await get_recent_assistant_intents(
+            db, claims, conversation_id, limit=20)
+        if (identity_capture.BOOKING_OFFER_INTENT not in intents
+                and await get_upcoming_booking(db, claims, claims.subject) is None):
+            suffix = identity_capture.BOOKING_OFFER
+            suffix_intent = identity_capture.BOOKING_OFFER_INTENT
 
     # Step 7.6 (plan 1.2): with the details in, an answered question may end with one
     # qualification question -- only once there is a contact to keep the answer, and never on
