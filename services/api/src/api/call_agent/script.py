@@ -183,6 +183,21 @@ def wants_info(text: str) -> bool:
     return bool(_WANTS_INFO.search(text))
 
 
+_TIME_OK = re.compile(
+    r"\b(?:it'?s|it is|this is|now is|now'?s|that'?s)\s+(?:a\s+)?"
+    r"(?:good|fine|great|ok(?:ay)?|perfect)\b"
+    r"|\bi(?:'?ve| have| got)\s+(?:a\s+)?(?:few\s+)?(?:minutes?|time|a minute)\b"
+    r"|\bgo ahead\b", re.I)
+
+
+def time_is_ok(text: str) -> bool:
+    """ "Yes, this is a good time", "now is fine", "I have a few minutes": a yes to "Is now a
+    good time?" however long, and never their need (live 2026-11-19: Flux split "Yes, this is
+    a good time" in two, and the tail became the booking email's agenda)."""
+    return (bool(_TIME_OK.search(text)) and len(text.split()) <= 8 and not is_question(text)
+            and not _CALLBACK.search(text))
+
+
 _CHANGE_MIND = re.compile(r"\b(?:but|change|instead|actually|wait|not sure)\b", re.I)
 
 

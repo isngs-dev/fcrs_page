@@ -814,6 +814,12 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         state.stage = "talking"
         if kind == "no":
             return await say(script.DISCOVERY_NO_LINE)
+        if script.time_is_ok(speech):  # the tail of "yes, this is a good time": ask again
+            state.stage = "discovery"
+            asked = next((text for role, text in reversed(state.history)
+                          if role == "assistant"), None)
+            if asked:
+                return await say(asked)
         # A word or two is a cut-off sentence more often than an answer: the model can ask again.
         # "I want to know about ..." is a question to answer below, not their need.
         if (kind == "other" and not script.is_question(speech)
@@ -826,7 +832,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                 state.qual_offer, state.qual_named = True, bool(state.first_name)
                 return await say(script.qualify_line(state.first_name, ask_next()))
             return await say(script.discovery_thanks_line(state.first_name))
-    if kind == "yes" and opening_question:  # "Is now a good time?" -> yes: get them talking
+    # "Is now a good time?" -> yes (or "yes, this is a good time"): get them talking
+    if opening_question and (kind == "yes" or script.time_is_ok(speech)):
         state.stage = "booked_check" if state.booked else "discovery"
         return await say(f"Great. {opening_question}")
 

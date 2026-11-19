@@ -720,3 +720,18 @@ def test_the_resent_line_reads_the_address_back_and_says_what_went() -> None:
         f"Done. I've sent the meeting link again to {script.say_email('jane@gmail.com')}. "
         "It should arrive in a minute.")
     assert "booking details" in script.link_sent_line("jane@gmail.com", link=False)
+
+
+@pytest.mark.parametrize("text", [
+    "Yes, this is a good time.", "this is a good time.", "Now is fine", "it's a good time",
+    "Sure, I have a few minutes", "yeah go ahead", "Yes, now's good"])
+def test_saying_now_is_a_good_time(text: str) -> None:
+    assert script.time_is_ok(text)
+
+
+@pytest.mark.parametrize("text", [
+    "this is not a good time", "it's a bad time, call me later", "is this a good time to call?",
+    "we need more roof replacement jobs", "I have a few minutes but call me back tomorrow",
+    "Now is a good time to grow our roofing business with more leads every single month"])
+def test_not_saying_now_is_a_good_time(text: str) -> None:
+    assert not script.time_is_ok(text)

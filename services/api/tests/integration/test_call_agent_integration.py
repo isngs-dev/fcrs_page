@@ -683,6 +683,37 @@ async def test_a_question_mid_booking_is_answered_and_the_booking_goes_on(
     assert "two hundred dollars" in said and said.endswith(script.WHICH_TIME)
 
 
+async def test_the_rest_of_yes_this_is_a_good_time_is_not_their_need(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-19: Flux split "Yes, this is a good time" into "Yes" + "this is a good
+    time." -- the tail was saved as their need and the booking email listed it under "What
+    we'll cover". It isn't a need: she asks her question again, and their real answer counts."""
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    await _no_questions(env, a)
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    assert service.spoken_text(await _say(env, call_id, "Yes.")) == f"Great. {_QUESTION}"
+    again = service.spoken_text(await _say(env, call_id, "this is a good time."))
+    assert again == f"Great. {_QUESTION}"
+    contact_id = str(await db.fetchval("SELECT contact_id FROM call_sessions WHERE call_id = $1",
+                                       call_id))
+    assert all("good time" not in m["text"] for m in await memory.items(db, claims, contact_id))
+    thanks = service.spoken_text(await _say(env, call_id, "we need more roof replacement jobs"))
+    assert thanks == script.discovery_thanks_line("Jane")
+    assert (await memory.items(db, claims, contact_id))[-1]["text"] == (
+        "we need more roof replacement jobs")
+
+
+async def test_yes_this_is_a_good_time_in_one_turn_is_a_yes(env: dict[str, Any]) -> None:
+    """Six words is too long for a bare "yes" -- it still answers "Is now a good time?"."""
+    await _no_questions(env, env["a"])
+    call_id, _ = await _dial(env, env["a"])
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    said = service.spoken_text(await _say(env, call_id, "Yes, this is a good time."))
+    assert said == f"Great. {_QUESTION}"
+
+
 async def test_a_fragment_is_not_taken_as_their_answer(env: dict[str, Any]) -> None:
     """Live: "so when" (a cut-off sentence) got "Thanks, that's really helpful"."""
     db, a = env["db"], env["a"]
