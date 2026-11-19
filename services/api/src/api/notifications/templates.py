@@ -74,7 +74,7 @@ def booking_confirmation_message(
         else ""
     )
     reschedule_line = (
-        f"Need to move or cancel it? Manage your booking here: {manage_url}"
+        f"Need to move or cancel it? Manage your booking: {manage_url}"
         if manage_url
         else f"Need to reschedule? Manage your booking here: {calendly_link}"
         if calendly_link

@@ -26,8 +26,12 @@ SECURITY_HEADERS: dict[str, str] = {
 
 
 def apply_security_headers(response: Response) -> None:
-    """Set the standard security headers on *response*."""
+    """Set the standard security headers on *response*. A page that serves HTML may set its
+    own narrower CSP (the public booking page allows exactly its one style block, by hash);
+    every other response gets the default."""
     for header, value in SECURITY_HEADERS.items():
+        if header == "Content-Security-Policy" and header in response.headers:
+            continue
         response.headers[header] = value
 
 

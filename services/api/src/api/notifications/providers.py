@@ -73,6 +73,9 @@ class Notification:
 
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
+# "Label: <long signed address>" in the plain text -> just "Label" as the HTML link (the
+# plain-text part keeps the address: there it can't be a link). Owner, 2026-11-04 / 11-19.
+_LABELLED_LINK = re.compile(r'(Manage your booking|Unsubscribe): <a href="([^"]+)">[^<]+</a>')
 
 
 def _text_to_html(text: str) -> str:
@@ -85,7 +88,8 @@ def _text_to_html(text: str) -> str:
             url = html.escape(match.group(0))
             out += [html.escape(block[last:match.start()]), f'<a href="{url}">{url}</a>']
             last = match.end()
-        return "".join([*out, html.escape(block[last:])])
+        linked = "".join([*out, html.escape(block[last:])])
+        return _LABELLED_LINK.sub(r'<a href="\2">\1</a>', linked)
 
     paragraphs = [linkify(block).replace("\n", "<br>\n") for block in text.strip().split("\n\n")]
     body = "\n".join(f'<p style="margin:0 0 14px">{p}</p>' for p in paragraphs)

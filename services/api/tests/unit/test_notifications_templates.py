@@ -213,7 +213,7 @@ def test_the_confirmation_carries_an_agenda_a_prep_question_and_a_manage_link() 
     assert "What we'll cover:\n- SEO\n- We want more roof replacement jobs" in body
     assert ("To help us prepare, could you reply with: What do you spend on marketing "
             "a month?") in body
-    assert ("Need to move or cancel it? Manage your booking here: "
+    assert ("Need to move or cancel it? Manage your booking: "
             "https://api.example.com/public/bookings/tok") in body
     assert "please contact us" not in body
 

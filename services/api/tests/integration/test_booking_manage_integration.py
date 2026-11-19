@@ -4,6 +4,8 @@ open time (new booking first, then the old one retired), cancel. The token is th
 credential: forged or another tenant's booking -> 404."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
 import re
 from datetime import UTC, datetime
@@ -140,7 +142,7 @@ async def test_the_confirmation_has_their_agenda_a_prep_question_and_a_manage_li
     assert "Lee Roofing" not in body  # the company is a detail, not a topic
     assert ("To help us prepare, could you reply with: Roughly how many roofing jobs do you "
             "do a month?") in body
-    assert "Need to move or cancel it? Manage your booking here: " in body
+    assert "Need to move or cancel it? Manage your booking: https://api.example.com/" in body
     assert env["notify"].delay.call_count == 1
 
 
@@ -166,6 +168,16 @@ async def test_the_page_shows_the_booking_and_open_times_and_changes_nothing(
     assert "Your call with Acme Roofing Marketing" in page.text
     assert "Cancel my call" in page.text and "Move my call" in page.text
     assert page.text.count("name='starts_at'") >= 3  # open times to move to
+    # 2026-11-19: the API's default CSP (default-src 'none') blocked every style, so the page
+    # rendered bare. It now allows exactly its own <style> block, by hash -- nothing else.
+    css = re.search(r"<style>(.*?)</style>", page.text, re.S)
+    assert css is not None and " style=" not in page.text
+    digest = base64.b64encode(hashlib.sha256(css.group(1).encode()).digest()).decode()
+    csp = page.headers["content-security-policy"]
+    assert f"style-src 'sha256-{digest}'" in csp and "default-src 'none'" in csp
+    assert "script-src" not in csp and "unsafe-inline" not in csp
+    assert (await client.get("/healthz")).headers["content-security-policy"] == (
+        "default-src 'none'; frame-ancestors 'none'")  # every other response unchanged
     assert await db.fetchval("SELECT status FROM schedule_events WHERE event_id = $1",
                              event.event_id) == "booked"  # a mail scanner's GET is harmless
 

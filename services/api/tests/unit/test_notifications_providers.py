@@ -597,6 +597,25 @@ async def test_smtp_provider_sends_text_and_html_with_business_name_and_reply_to
     assert "&lt;team&gt;" in html and "<team>" not in html  # text is escaped
 
 
+async def test_the_html_shows_manage_your_booking_not_the_long_address() -> None:
+    """Owner, 2026-11-19: the signed manage address is long and ugly -- the HTML shows just
+    "Manage your booking"; the plain text keeps the address (there it can't be a link)."""
+    url = "https://api.example.com/public/bookings/ZTE1.tok_-a8"
+    smtp, provider = _smtp_capture()
+    message = Notification(
+        channel="email", recipient="alice@example.com", subject="Your call is confirmed",
+        body=f"Join the call: https://meet.google.com/abc\n\nNeed to move or cancel it? "
+             f"Manage your booking: {url}")
+    with patch("smtplib.SMTP", return_value=smtp):
+        await provider.send(_CLAIMS, message)
+    sent = smtp.send_message.call_args[0][0]
+    html = sent.get_body(preferencelist=("html",)).get_content()
+    assert f'Need to move or cancel it? <a href="{url}">Manage your booking</a>' in html
+    assert f">{url}<" not in html
+    assert '<a href="https://meet.google.com/abc">https://meet.google.com/abc</a>' in html
+    assert url in sent.get_body(preferencelist=("plain",)).get_content()
+
+
 async def test_smtp_provider_keeps_config_sender_and_no_reply_to_by_default() -> None:
     smtp, provider = _smtp_capture()
     with patch("smtplib.SMTP", return_value=smtp):

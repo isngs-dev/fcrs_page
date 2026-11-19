@@ -62,13 +62,9 @@ def _clean(value: str) -> str:
     return re.sub(r"[\r\n]+", " ", value).strip()
 
 
-_UNSUBSCRIBE_LINK = re.compile(r'Unsubscribe: <a href="([^"]+)">[^<]+</a>')
-
-
 def email_html(body_text: str) -> str:
-    """The HTML twin, with the footer's long signed address shown as just "Unsubscribe"
-    (the plain-text part keeps the address: there it can't be a link)."""
-    return _UNSUBSCRIBE_LINK.sub(r'<a href="\1">Unsubscribe</a>', _text_to_html(body_text))
+    """The HTML twin; the footer's long signed address shows as just "Unsubscribe"."""
+    return _text_to_html(body_text)
 
 
 def thread_headers(email: OutboundEmail) -> dict[str, str]:
