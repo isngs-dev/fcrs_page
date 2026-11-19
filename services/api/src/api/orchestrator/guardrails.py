@@ -118,14 +118,16 @@ def scan_output(text: str) -> GuardrailResult:
 
 # -- Unstated commitments (A2 E7; shared with spoken call replies since A9 H4) ------------
 
-_MONEY_OR_PERCENT = re.compile(r"[$€£]\s?\d[\d,]*(?:\.\d+)?|\d+(?:\.\d+)?\s?%")
+# A number never ends in a comma: "a one-time $700, and ..." is $700 (live call 2026-11-19,
+# where "$700," wasn't found in the context and a right answer was thrown away).
+_MONEY_OR_PERCENT = re.compile(r"[$€£]\s?\d(?:[\d,]*\d)?(?:\.\d+)?|\d+(?:\.\d+)?\s?%")
 _COMMITMENT_WORDS = ("free", "discount", "guarantee", "guaranteed", "refund", "warranty",
                      "no obligation", "no-obligation", "risk-free")
 
 
 # Plan 2.6: a price is a currency amount ("$200", "$8,500") or "N dollars / USD".
-_PRICE = re.compile(r"[$€£]\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\s?(?:dollars?|usd|bucks)\b",
-                    re.I)
+_PRICE = re.compile(r"[$€£]\s?\d(?:[\d,]*\d)?(?:\.\d+)?"
+                    r"|\b\d(?:[\d,]*\d)?(?:\.\d+)?\s?(?:dollars?|usd|bucks)\b", re.I)
 
 
 def _amount(price: str) -> str:

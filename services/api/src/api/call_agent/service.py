@@ -67,6 +67,7 @@ from api.scheduling.booking import (
 )
 from api.scheduling.repository import (
     get_availability,
+    get_event,
     get_upcoming_for_contact,
 )
 from api.voice_agent.agent import BOOK_A_TIME, MissReply, answer_from_knowledge, opening_lines
@@ -464,6 +465,47 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
     return "booked", meet_url, event.event_id
 
 
+async def _link_address(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
+                        event_email: str | None, mailbox: str | None) -> str | None:
+    """Where "send me the link again" goes: the address on file in the mailbox they named
+    ("my gmail"), else the booking's own address. ``None``: ask them for it."""
+    contact = await get_contact(db, claims, session.contact_id) if session.contact_id else None
+    if mailbox is None:
+        return event_email or (contact.email if contact else None)
+    known = [i.identity_value for i in (await list_identities(db, claims, contact.contact_id)
+                                        if contact else []) if i.identity_type == "email"]
+    known = ([contact.email] if contact and contact.email else []) + known
+    return next((e for e in known if e.casefold().endswith(f"@{mailbox}")), None)
+
+
+async def _resend_link(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
+                       event_id: str, to: str) -> str:
+    """The booking's confirmation (meeting link, manage link) sent again to ``to`` -- and her
+    line saying so only once it's on its way; else the team is asked to send it."""
+    event = await get_event(db, claims, event_id)
+    try:
+        if event is None or event.status != "booked":
+            raise LookupError("no booking to send")
+        config = await repo.get_call_config(db, claims)
+        await send_confirmation(
+            db, claims, event, recipient=to, name=event.name,
+            business=config.company_name if config else None, meet_url=event.meet_url,
+            organizer=None, lead_id=event.lead_id, contact_id=session.contact_id,
+            resend=f"{session.call_id}:{to}")
+    except Exception as exc:  # noqa: BLE001 -- said honestly; a person sends it
+        _log.warning("meeting link not resent", extra={
+            "event": "call_link_resend_failed", "reason": type(exc).__name__})
+        await _handoff(db, claims, session, "link_resend_failed")
+        return script.LINK_FAILED_LINE
+    if session.contact_id:  # an address they gave on the call finds them next time too
+        try:
+            await add_identity(db, claims, session.contact_id, identity_type="email",
+                               identity_value=to)
+        except ValidationError:
+            pass  # already theirs (or another contact's): the email still went
+    return script.link_sent_line(to, link=bool(event.meet_url))
+
+
 # Started alongside a turn's answer, never in its way (owner 2026-11-19: no gap at the start).
 # Held here so a running task isn't garbage-collected half-way.
 _background: set[asyncio.Task[None]] = set()
@@ -621,6 +663,28 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                        {"contact_id": session.contact_id, "channel": "call"})
             return await bye(script.OPT_OUT_LINE, "opted_out")
         return await bye(script.WRONG_NUMBER_LINE, "wrong_number")
+    # "Send me the link again (to my gmail)" with a booking: its confirmation, sent again
+    # (live call 2026-11-19 got "I don't have a link to share").
+    booked_id = (state.booked or {}).get("event_id") if not state.rescheduling else None
+    if state.stage == "link_email_ask" and booked_id:
+        heard = script.parse_spoken_email(speech)
+        if heard:
+            state.stage = "talking"
+            return await say(await _resend_link(db, claims, session, booked_id, heard))
+        state.email_tries += 1
+        if state.email_tries < script.EMAIL_TRIES:
+            return await say(script.EMAIL_RETRY_LINE)
+        state.stage = "talking"
+        await _handoff(db, claims, session, "link_resend_failed")
+        return await say(script.LINK_FAILED_LINE)
+    if booked_id and script.wants_link_again(speech):
+        event = await get_event(db, claims, booked_id)
+        to = script.parse_spoken_email(speech) or await _link_address(
+            db, claims, session, event.email if event else None, script.named_mailbox(speech))
+        if to is None:
+            state.stage, state.email_tries = "link_email_ask", 0
+            return await say(script.LINK_EMAIL_ASK)
+        return await say(await _resend_link(db, claims, session, booked_id, to))
     if kind == "robot":
         return await say(script.ROBOT_LINE)
     if kind == "hold":  # no follow-up question: they're stepping away for a moment

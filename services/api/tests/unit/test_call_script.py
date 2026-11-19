@@ -686,3 +686,37 @@ def test_why_she_is_calling_names_the_real_reason() -> None:
 ])
 def test_same_time_is_recognised(text: str, same: bool) -> None:
     assert script.means_same_time(text) is same
+
+
+# -- "Can you send me the link again?" (live call 2026-11-19) -----------------------------
+
+
+@pytest.mark.parametrize(("speech", "wants"), [
+    ("So can you once again send me the link", True),
+    ("Can you resend the meeting invite to my Gmail?", True),
+    ("please email me the zoom link again", True),
+    ("send the calendar invite to my other email", True),
+    ("I didn't get the invitation, can you send it again?", True),
+    ("Send me information about Meta ads", False),
+    ("Can you send me more details about pricing?", False),
+    ("What's the link between ads and leads?", False),
+])
+def test_asking_for_the_meeting_link_again(speech: str, wants: bool) -> None:
+    assert script.wants_link_again(speech) is wants
+
+
+@pytest.mark.parametrize(("speech", "domain"), [
+    ("send it to my gmail", "gmail.com"),
+    ("to my Yahoo mail please", "yahoo.com"),
+    ("my outlook one", "outlook.com"),
+    ("send me the link again", None),
+])
+def test_the_mailbox_they_name(speech: str, domain: str | None) -> None:
+    assert script.named_mailbox(speech) == domain
+
+
+def test_the_resent_line_reads_the_address_back_and_says_what_went() -> None:
+    assert script.link_sent_line("jane@gmail.com", link=True) == (
+        f"Done. I've sent the meeting link again to {script.say_email('jane@gmail.com')}. "
+        "It should arrive in a minute.")
+    assert "booking details" in script.link_sent_line("jane@gmail.com", link=False)

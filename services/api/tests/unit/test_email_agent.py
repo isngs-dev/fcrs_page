@@ -169,6 +169,11 @@ async def test_sendgrid_network_error_is_transient() -> None:
     ("Inspection is free.", "We offer a free roof inspection.", []),
     ("Inspection is free and guaranteed.", "We offer a free roof inspection.", ["guaranteed"]),
     ("We can help with your roof.", "", []),
+    # Live call 2026-11-19: "a one-time $700, and ..." -- the comma isn't part of the price.
+    ("The setup is a one-time $700, and you pay $50 per lead.",
+     "Setup: one-time $700. Then $50 for each qualified lead.", []),
+    ("Plans cost $1,200, billed yearly.", "Plans are $1,200 per year.", []),
+    ("It's $900, billed once.", "Setup: one-time $700.", ["$900"]),
 ])
 def test_unstated_commitments(text: str, context: str, unstated: list[str]) -> None:
     assert unstated_commitments(text, context) == unstated

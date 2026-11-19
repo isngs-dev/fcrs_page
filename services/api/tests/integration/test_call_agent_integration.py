@@ -1374,6 +1374,64 @@ async def test_a_booked_lead_is_asked_to_keep_or_reschedule_not_to_book(
     assert [e["status"] for e in events] == ["booked"]  # nothing new, nothing cancelled
 
 
+async def _booked_call(env: dict[str, Any], tenant: str) -> tuple[str, str]:
+    """A contact who booked on the website, on a call, past "keep it": (call_id, event_id)."""
+    booked_at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(15),
+                                 tzinfo=_NY)
+    event_id = await _form_booking(env, tenant, booked_at)
+    call_id, _ = await _dial(env, tenant)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes sure")
+    await _say(env, call_id, "keep it")
+    return call_id, event_id
+
+
+async def _resent_to(env: dict[str, Any], tenant: str) -> list[tuple[str, str]]:
+    return [(r["recipient"], r["dedupe_key"]) for r in await env["db"].fetch(
+        "SELECT recipient, dedupe_key FROM notification_jobs WHERE tenant_id = $1 "
+        "AND dedupe_key LIKE 'booking_confirm:%:resend:%' ORDER BY created_at", tenant)]
+
+
+async def test_the_meeting_link_is_sent_again_to_the_gmail_they_name(
+        env: dict[str, Any]) -> None:
+    """Live call 2026-11-19: "can you once again send me the link" got "I don't have a link to
+    share". With a booking, it's the booking's confirmation, sent again -- to the address they
+    name ("my gmail": their Gmail on file), and only for this tenant."""
+    a, b = env["a"], env["b"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    call_id, event_id = await _booked_call(env, a)
+    contact_id = await env["db"].fetchval(
+        "SELECT contact_id FROM call_sessions WHERE call_id = $1", call_id)
+    await add_identity(env["db"], claims, str(contact_id), identity_type="email",
+                       identity_value="jane.doe@gmail.com")
+
+    said = service.spoken_text(await _say(
+        env, call_id, "Can you send me the meeting link again to my Gmail?"))
+    assert said == script.link_sent_line("jane.doe@gmail.com", link=False)
+    assert await _resent_to(env, a) == [
+        ("jane.doe@gmail.com", f"booking_confirm:{event_id}:resend:{call_id}:jane.doe@gmail.com")]
+    assert await _resent_to(env, b) == []
+
+
+async def test_the_link_goes_to_the_booking_email_when_they_name_none(
+        env: dict[str, Any]) -> None:
+    a = env["a"]
+    call_id, event_id = await _booked_call(env, a)
+    said = service.spoken_text(await _say(env, call_id, "So can you once again send me the link"))
+    assert said == script.link_sent_line("jane@example.com", link=False)
+    assert [to for to, _ in await _resent_to(env, a)] == ["jane@example.com"]
+
+
+async def test_a_mailbox_we_dont_have_is_asked_for_then_used(env: dict[str, Any]) -> None:
+    a = env["a"]
+    call_id, _ = await _booked_call(env, a)
+    ask = service.spoken_text(await _say(env, call_id, "send the invite again to my yahoo"))
+    assert ask == script.LINK_EMAIL_ASK
+    said = service.spoken_text(await _say(env, call_id, "j a n e at yahoo dot com"))
+    assert said == script.link_sent_line("jane@yahoo.com", link=False)
+    assert [to for to, _ in await _resent_to(env, a)] == ["jane@yahoo.com"]
+
+
 async def test_rescheduling_books_the_new_time_and_asks_the_team_to_cancel_the_old_invite(
         env: dict[str, Any]) -> None:
     db, a, b = env["db"], env["a"], env["b"]

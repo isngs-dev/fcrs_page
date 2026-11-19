@@ -223,11 +223,13 @@ async def send_confirmation(db: Database, claims: AuthClaims, event: ScheduleEve
                             rescheduled_from: datetime | None = None,
                             calendly_link: str | None = None, lead_id: str | None = None,
                             contact_id: str | None = None,
-                            copies: list[str] | None = None) -> None:
+                            copies: list[str] | None = None,
+                            resend: str | None = None) -> None:
     """The booking-confirmation email, once per booking (and once per ``copies`` address --
     "my other mail as well", 2026-11-18): agenda, prep question and the manage link (plan
-    1.6). Raises on a failed enqueue -- callers decide (a booking never fails because of its
-    email)."""
+    1.6). ``resend``: sent again on request ("send me the link again", 2026-11-19), once per
+    this key. Raises on a failed enqueue -- callers decide (a booking never fails because of
+    its email)."""
     agenda, prepare = await confirmation_extras(db, claims, contact_id=contact_id,
                                                 lead_id=lead_id or event.lead_id,
                                                 email=recipient)
@@ -242,7 +244,8 @@ async def send_confirmation(db: Database, claims: AuthClaims, event: ScheduleEve
     if organizer:
         payload["reply_to"] = organizer
     for to in [recipient, *[c for c in (copies or []) if c and c != recipient]]:
-        dedupe = f"booking_confirm:{event.event_id}" + ("" if to == recipient else f":{to}")
+        dedupe = (f"booking_confirm:{event.event_id}" + (f":resend:{resend}" if resend else "")
+                  + ("" if to == recipient else f":{to}"))
         job_id = await enqueue_notification(
             db, claims, channel="email", recipient=to, subject=subject, body=body,
             dedupe_key=dedupe, payload=payload, lead_id=lead_id or event.lead_id)

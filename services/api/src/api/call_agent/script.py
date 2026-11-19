@@ -483,6 +483,36 @@ _ADD_EMAIL = re.compile(r"\b(?:also|as well|too|both|copy|cc|additional|second)\
 _REPLACE_EMAIL = re.compile(r"\b(?:instead|different|change|another|other|wrong|new|use)\b",
                             re.I)
 EXTRA_EMAIL_ASK = "Sure. What's the other email? Please spell it for me, letter by letter."
+
+# Live call 2026-11-19: "can you once again send me the link" got "I don't have a link to
+# share". With a booking it's that booking's confirmation, sent again.
+_LINK_AGAIN = re.compile(
+    r"\b(?:re-?send|send|e-?mail|forward|share)\b.{0,40}?"
+    r"\b(?:link|invite|invitation|calendar invite|confirmation|meeting details|zoom|google meet)\b"
+    r"|\b(?:link|invite|invitation|confirmation)\b.{0,40}?\b(?:send|resend)\b.{0,15}?\bagain\b",
+    re.I)
+_MAILBOXES = {"gmail": "gmail.com", "yahoo": "yahoo.com", "outlook": "outlook.com",
+              "hotmail": "hotmail.com", "icloud": "icloud.com"}
+LINK_EMAIL_ASK = "Sure. Which email should I send it to? Please spell it for me, letter by letter."
+LINK_FAILED_LINE = ("Sorry, I couldn't send it just now, so I've asked our team to email it to "
+                    "you.")
+
+
+def wants_link_again(text: str) -> bool:
+    """They want the meeting link / invite / confirmation (again)."""
+    return bool(_LINK_AGAIN.search(text))
+
+
+def named_mailbox(text: str) -> str | None:
+    """"to my gmail" -> "gmail.com": which of their addresses they mean."""
+    lowered = text.casefold()
+    return next((domain for name, domain in _MAILBOXES.items()
+                 if re.search(rf"\b{name}\b", lowered)), None)
+
+
+def link_sent_line(email: str, *, link: bool) -> str:
+    what = "the meeting link" if link else "your booking details"
+    return f"Done. I've sent {what} again to {say_email(email)}. It should arrive in a minute."
 CONFIRM_CLARIFY_LINE = ("Sorry, I didn't quite catch that. Shall I book it, or would you like "
                         "to change the email or the time?")
 
@@ -789,7 +819,7 @@ def say_email(email: str) -> str:
 # -- Per-call memory ------------------------------------------------------------------------
 
 Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask", "booked_check",
-                "qualifying", "email_extra_ask"]
+                "qualifying", "email_extra_ask", "link_email_ask"]
 
 
 @dataclass

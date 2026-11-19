@@ -855,6 +855,18 @@ async def test_the_model_starts_with_the_answer_not_a_filler_word() -> None:
     assert "Begin with the answer itself" in system
 
 
+async def test_a_question_the_context_covers_in_other_words_is_answered_not_handed_off(
+        ) -> None:
+    """Live call 2026-11-19: "gaining leads using meta ads" was handed to the expert though the
+    retrieved FAQ answered "Do you run Facebook and Instagram ads?" (replayed: 3 of 5 runs
+    missed; with this rule 5 of 5 answered, and questions the KB can't answer still hand off)."""
+    _, generate = await _answer_with("Sure.")
+    system = generate.call_args.args[0][0].content
+    assert "even in part or in other words" in system
+    assert "Only if the context says nothing about what they asked" in system
+    assert "don't hand the question to our team or their call" in system
+
+
 
 _HANDOFF = ("That's a great question about insurance claims. I believe our marketing expert "
             "will be more precise in answering that.")
