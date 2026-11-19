@@ -26,6 +26,7 @@ from api.auth.dependencies import get_platform_admin_actor, require_roles, resol
 from api.call_agent import realtime, script, service, telnyx
 from api.call_agent import repository as repo
 from api.config import get_api_settings
+from api.rag.service import prefetch_embedding
 from api.voice_agent.agent import SPEAK_AS_WRITTEN
 from api.voice_agent.plivo import (
     NONCE_HEADER,
@@ -250,8 +251,9 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
                                           settings.elevenlabs_model)
         socket = telnyx.TelnyxSocket(websocket) if on_telnyx else websocket
         try:
-            await realtime.RealtimeCall(socket, listener, voice, brain, opening=opening,
-                                        record=record).run()
+            await realtime.RealtimeCall(
+                socket, listener, voice, brain, opening=opening, record=record,
+                prefetch=lambda words: prefetch_embedding(db, claims, words)).run()
         finally:
             if on_telnyx:  # closing the stream doesn't end a Telnyx call: hang up ourselves
                 await _telnyx_hangup(session)

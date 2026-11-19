@@ -4,6 +4,7 @@ task -> call_completed. Plivo's API is a recording fake; the webhook requests ar
 signed exactly as Plivo signs them (X-Plivo-Signature-V3, the tenant's token)."""
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -81,6 +82,7 @@ class _Plivo:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.recording_gate: asyncio.Event | None = None  # holds start_recording back
 
     async def place_call(self, **kw: Any) -> PlacedCall:
         self.calls.append(("place_call", kw))
@@ -88,6 +90,8 @@ class _Plivo:
 
     async def start_recording(self, **kw: Any) -> Recording:
         self.calls.append(("start_recording", kw))
+        if self.recording_gate is not None:
+            await self.recording_gate.wait()
         return Recording(recording_id="rec-1", url="https://plivo/rec-1.mp3")
 
     async def stop_recording(self, **kw: Any) -> None:
@@ -247,6 +251,32 @@ async def _say(env: dict[str, Any], call_id: str, speech: str) -> str:
     return str(r.text)
 
 
+async def _recording_saved(db: Any, call_id: str) -> None:
+    for _ in range(200):
+        if await db.fetchval("SELECT recording_id FROM call_sessions WHERE call_id = $1",
+                             call_id):
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the recording never started")
+
+
+async def test_the_first_answer_never_waits_for_the_recording_to_start(
+        env: dict[str, Any]) -> None:
+    """2026-11-19 (owner: no gap at the start): starting the recording is a request to the
+    phone provider; the first answer goes out without waiting for it, and the recording
+    still starts and is kept on the call."""
+    db, plivo, a = env["db"], env["plivo"], env["a"]
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    plivo.recording_gate = asyncio.Event()  # the provider is slow to start it
+    reply = await asyncio.wait_for(_say(env, call_id, "Sure, how much is a repair?"), 5)
+    assert "two hundred dollars" in reply
+    assert await db.fetchval("SELECT recording_id FROM call_sessions WHERE call_id = $1",
+                             call_id) is None
+    plivo.recording_gate.set()
+    await _recording_saved(db, call_id)
+
+
 async def test_full_call_disclosure_recording_booking_and_settlement(env: dict[str, Any]) -> None:
     db, plivo, a = env["db"], env["plivo"], env["a"]
     call_id, task_id = await _dial(env, a)
@@ -267,6 +297,7 @@ async def test_full_call_disclosure_recording_booking_and_settlement(env: dict[s
 
     reply = await _say(env, call_id, "Sure, how much is a repair?")
     assert "two hundred dollars" in reply
+    await _recording_saved(db, call_id)  # started alongside the answer, not before it
     assert plivo.names().count("start_recording") == 1
 
     await _say(env, call_id, "Please don't record this.")
@@ -1926,8 +1957,9 @@ async def test_the_telnyx_stream_says_the_opening_and_hangs_up_when_she_is_done(
 
     class _Call:
         def __init__(self, socket: Any, listener: Any, voice: Any, brain: Any, *, opening: str,
-                     record: Any) -> None:
+                     record: Any, prefetch: Any) -> None:
             seen.update(socket=socket, opening=opening)
+            assert callable(prefetch)  # 2026-11-19: early words start the knowledge lookup
 
         async def run(self) -> None:
             seen["ran"] = True

@@ -307,6 +307,8 @@ def test_flux_writes_numbers_as_digits_and_listens_for_the_business_name() -> No
     assert (query["encoding"], query["sample_rate"]) == (["mulaw"], ["8000"])
     assert query["numerals"] == ["true"]  # "fifteenth" -> "15th": the date reader needs digits
     assert query["keyterm"] == ["iSN Global Solutions"]
+    # 2026-11-19: an early "they seem done" too (never above the end-of-turn threshold, 0.7)
+    assert 0.3 <= float(query["eager_eot_threshold"][0]) <= 0.7
 
 
 async def test_she_starts_speaking_at_the_first_sentence_and_never_repeats_it() -> None:
@@ -531,5 +533,35 @@ async def test_a_fast_answer_starts_without_a_bridge() -> None:
     await _until(lambda: len(plivo.events("checkpoint")) == 2)
     await asyncio.sleep(0.6)  # past the delay: the bridge must never come late
     assert voice.said == ["Hi, Rebecca here.", "No, we don't do commercial roofs."]
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+async def test_she_starts_looking_up_the_answer_as_soon_as_they_seem_done() -> None:
+    """2026-11-19 (owner: answers must be instant): Flux's EagerEndOfTurn starts the
+    knowledge lookup while Flux makes sure; only EndOfTurn is a turn. Its words are always
+    the EndOfTurn's own, unless they carry on (TurnResumed), which starts a new lookup."""
+    early: list[str] = []
+    heard: list[str] = []
+
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        heard.append(speech)
+        return "Yes, we do both.", False
+
+    call, plivo, flux, voice = _call(brain, prefetch=early.append)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
+    flux.hear("StartOfTurn", "do you")
+    flux.hear("EagerEndOfTurn", "do you fix roofs")
+    await _until(lambda: early == ["do you fix roofs"])
+    assert heard == []  # not a turn yet: they may carry on
+    flux.hear("TurnResumed", "do you fix roofs")
+    flux.hear("EagerEndOfTurn", "do you fix roofs and gutters")
+    flux.hear("EndOfTurn", "do you fix roofs and gutters")
+    await _until(lambda: heard == ["do you fix roofs and gutters"])
+    assert early == ["do you fix roofs", "do you fix roofs and gutters"]
+    assert plivo.events("clearAudio") == []  # carrying on is not talking over her
     plivo.push(event="stop")
     await asyncio.wait_for(task, 1)

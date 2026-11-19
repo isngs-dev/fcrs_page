@@ -9,16 +9,21 @@ empty result rather than an error or a fabricated chunk.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
 
 from common.auth import AuthClaims
 from common.db import Database
 from common.errors import InternalServerError, ValidationError
+from common.logging import get_logger
 
 from api.config import get_api_settings
 from api.llm.config_repository import get_llm_config
 from api.llm.factory import provider_for
 from api.rag.repository import ChunkMatch, KeywordMatch, keyword_search, search_chunks
+
+_log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -104,7 +109,52 @@ async def retrieve(
     return RetrievalResult(chunks=chunks, confidence=confidence)
 
 
+# A call question is embedded as soon as the caller seems done (Deepgram's EagerEndOfTurn),
+# while the speech service makes sure -- embedding was ~0.7-1.2 s of every answer on a call
+# (measured live, 2026-11-19). Keyed by tenant + exact words, so only that tenant's same
+# question ever uses it; used once; dropped after a short while.
+# ponytail: per-process dict, fine for one call's turn on the process that holds its stream.
+_PREFETCH_SECONDS = 30.0
+_PREFETCH_MIN_WORDS = 3  # "yes", "sounds good": not questions worth looking up early
+_prefetched: dict[tuple[str, str], tuple[float, asyncio.Task[list[float]]]] = {}
+
+
+def prefetch_embedding(db: Database, claims: AuthClaims, query: str) -> None:
+    """Start embedding ``query`` now; the turn's own retrieval picks it up if the words match."""
+    text = query.strip()
+    if claims.tenant_id is None or len(text.split()) < _PREFETCH_MIN_WORDS:
+        return
+    now = time.monotonic()
+    for key in [k for k, (at, _) in _prefetched.items() if now - at > _PREFETCH_SECONDS]:
+        _prefetched.pop(key)[1].cancel()
+    key = (claims.tenant_id, text)
+    if key in _prefetched:
+        return
+    task = asyncio.create_task(_embed_now(
+        db, claims, text, embedding_dimension=get_api_settings().embedding_dimension))
+    task.add_done_callback(lambda t: t.cancelled() or t.exception())  # never "unretrieved"
+    _prefetched[key] = (now, task)
+
+
 async def _embed_query(
+    db: Database,
+    claims: AuthClaims,
+    query: str,
+    *,
+    embedding_dimension: int,
+) -> list[float]:
+    """The early embedding of these exact words for this tenant if there is one, else now."""
+    early = _prefetched.pop((claims.tenant_id, query.strip()), None) if claims.tenant_id else None
+    if early is not None and time.monotonic() - early[0] <= _PREFETCH_SECONDS:
+        try:
+            return await early[1]
+        except Exception as exc:  # noqa: BLE001 -- the early try failed: ask again, now
+            _log.warning("early embedding failed; embedding again", extra={
+                "event": "rag_prefetch_failed", "reason": type(exc).__name__})
+    return await _embed_now(db, claims, query, embedding_dimension=embedding_dimension)
+
+
+async def _embed_now(
     db: Database,
     claims: AuthClaims,
     query: str,

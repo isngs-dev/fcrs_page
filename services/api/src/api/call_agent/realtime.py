@@ -7,8 +7,9 @@ audio at once (Flux ``StartOfTurn``). Every turn logs where the time went.
 
 Only for tenants listed in ``REALTIME_VOICE_TENANTS`` with both keys set; everyone else
 keeps the XML calls. ponytail: platform keys for the test -- per-client keys (encrypted,
-like Plivo's) come with the full build. Not yet: transfer to a person (ends the call),
-eager end-of-turn, streaming the model's answer sentence by sentence.
+like Plivo's) come with the full build. Not yet: transfer to a person (ends the call).
+Since 2026-11-12 the answer streams sentence by sentence; since 2026-11-19 Flux's eager
+end-of-turn starts the knowledge lookup early (the turn itself still waits for EndOfTurn).
 """
 from __future__ import annotations
 
@@ -146,7 +147,10 @@ def flux_query(keyterms: list[str]) -> str:
     reader understands); the business's own name as a keyterm so it's heard right."""
     params: list[tuple[str, str]] = [
         ("model", "flux-general-en"), ("encoding", "mulaw"), ("sample_rate", "8000"),
-        ("eot_timeout_ms", "3000"), ("numerals", "true")]
+        ("eot_timeout_ms", "3000"), ("numerals", "true"),
+        # 2026-11-19: an early "they seem done" (EagerEndOfTurn) starts the knowledge lookup
+        # while Flux makes sure; must stay <= eot_threshold (default 0.7).
+        ("eager_eot_threshold", "0.5")]
     params += [("keyterm", term) for term in keyterms if term.strip()]
     return urlencode(params)
 
@@ -209,8 +213,10 @@ class RealtimeCall:
     def __init__(self, plivo: Socket, listener: Listener, voice: Voice, brain: Brain, *,
                  opening: str, record: Record, silence_seconds: float = SILENCE_SECONDS,
                  bridge_delay: float = BRIDGE_DELAY,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 prefetch: Callable[[str], None] | None = None) -> None:
         self._plivo, self._listener, self._voice, self._brain = plivo, listener, voice, brain
+        self._prefetch = prefetch  # EagerEndOfTurn words: look the answer up early
         self._opening, self._record = opening, record
         self._silence_seconds, self._clock = silence_seconds, clock
         self._bridge_delay = bridge_delay
@@ -276,6 +282,9 @@ class RealtimeCall:
                     self._silence.cancel()
                 if self._playing is not None or (self._speech and not self._speech.done()):
                     await self._barge_in()
+            elif heard.event == "EagerEndOfTurn" and heard.transcript.strip():
+                if self._prefetch is not None:  # not a turn: they may carry on (TurnResumed)
+                    self._prefetch(heard.transcript.strip())
             elif heard.event == "EndOfTurn" and heard.transcript.strip():
                 self._turns.put_nowait((heard.transcript.strip(), self._clock()))
 

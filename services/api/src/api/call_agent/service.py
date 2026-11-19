@@ -6,6 +6,7 @@ that session's ``tenant_id``.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import html
@@ -463,6 +464,25 @@ async def _book(db: Database, claims: AuthClaims, session: repo.CallSessionRow, 
     return "booked", meet_url, event.event_id
 
 
+# Started alongside a turn's answer, never in its way (owner 2026-11-19: no gap at the start).
+# Held here so a running task isn't garbage-collected half-way.
+_background: set[asyncio.Task[None]] = set()
+
+
+async def _start_recording(db: Database, claims: AuthClaims, config: repo.CallConfig,
+                           call_id: str, call_uuid: str) -> None:
+    """L4: the recording starts once the disclosure has been heard (the first turn)."""
+    try:
+        provider = await telephony_for(db, str(claims.tenant_id), config)
+        rec = await provider.start_recording(call_uuid=call_uuid,
+                                             time_limit=config.max_call_seconds)
+        await repo.update_session(db, claims, call_id, recording_id=rec.recording_id,
+                                  recording_url=rec.url)
+    except Exception as exc:  # noqa: BLE001 -- the call goes on unrecorded
+        _log.warning("call recording not started", extra={
+            "event": "call_recording_failed", "reason": type(exc).__name__})
+
+
 async def _handoff(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
                    reason: str, **detail: str) -> None:
     await emit_event_safe(db, claims, kind="agent_call_needs_human", category="leads",
@@ -582,15 +602,10 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if (config.recording_enabled and session.recording_consent and not state.recording_started
             and session.provider_call_uuid):
         state.recording_started = True
-        try:
-            provider = await telephony_for(db, str(claims.tenant_id), config)
-            rec = await provider.start_recording(call_uuid=session.provider_call_uuid,
-                                                 time_limit=config.max_call_seconds)
-            await repo.update_session(db, claims, call_id, recording_id=rec.recording_id,
-                                      recording_url=rec.url)
-        except Exception as exc:  # noqa: BLE001 -- the call goes on unrecorded
-            _log.warning("call recording not started", extra={
-                "event": "call_recording_failed", "reason": type(exc).__name__})
+        task = asyncio.create_task(_start_recording(
+            db, claims, config, call_id, session.provider_call_uuid))
+        _background.add(task)
+        task.add_done_callback(_background.discard)
 
     answered = session.answered_at or datetime.now(UTC)
     if (datetime.now(UTC) - answered).total_seconds() > config.max_call_seconds - 30:

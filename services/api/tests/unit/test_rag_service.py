@@ -13,7 +13,9 @@ Covers:
 """
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 from common.auth import AuthClaims, Role
@@ -653,3 +655,73 @@ async def test_retrieve_hybrid_k_clamps_above_maximum() -> None:
     # the requested k only bounds how many fused results come back.
     assert search_mock.await_args.kwargs["top_k"] == settings.rag_hybrid_candidate_k
     assert keyword_mock.await_args.kwargs["top_k"] == settings.rag_hybrid_candidate_k
+
+
+# -- A call question is embedded as soon as they seem done (2026-11-19) ---------------------
+
+
+async def _ask_after_prefetch(prefetched: str, asked: str, *, prefetch_tenant: str = _TENANT_ID,
+                              provider: object | None = None) -> _StubProvider:
+    """prefetch_embedding(prefetched) for ``prefetch_tenant``, then retrieve_hybrid(asked)."""
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.config import get_api_settings  # noqa: PLC0415
+
+        get_api_settings.cache_clear()
+        dim = get_api_settings().embedding_dimension
+        from api.rag.service import prefetch_embedding, retrieve_hybrid  # noqa: PLC0415
+
+        stub = provider or _StubProvider([0.1] * dim)
+        with (
+            patch("api.rag.service.get_llm_config", new=AsyncMock(return_value=_StubConfig())),
+            patch("api.rag.service.provider_for", return_value=stub),
+            patch("api.rag.service.search_chunks", new=AsyncMock(return_value=[])),
+            patch("api.rag.service.keyword_search", new=AsyncMock(return_value=[])),
+        ):
+            prefetch_embedding(object(), _claims(prefetch_tenant), prefetched)  # type: ignore[arg-type]
+            await asyncio.sleep(0.01)  # the early lookup runs while Flux makes sure
+            await retrieve_hybrid(object(), _claims(), asked, k=5)  # type: ignore[arg-type]
+    return stub  # type: ignore[return-value]
+
+
+async def test_a_question_embedded_early_is_not_embedded_again() -> None:
+    q = f"do you fix roofs {uuid4().hex}"
+    provider = await _ask_after_prefetch(q, q)
+    assert provider.embed_calls == [([q], "nomic-embed-text")]  # once, started early
+
+
+async def test_a_different_question_is_embedded_on_its_own() -> None:
+    early, asked = f"do you fix roofs {uuid4().hex}", f"do you fix gutters {uuid4().hex}"
+    provider = await _ask_after_prefetch(early, asked)
+    assert [texts for texts, _ in provider.embed_calls] == [[early], [asked]]
+
+
+async def test_another_tenants_early_lookup_is_never_used() -> None:
+    q = f"how much is a repair {uuid4().hex}"
+    provider = await _ask_after_prefetch(q, q, prefetch_tenant="tenant-other")
+    assert [texts for texts, _ in provider.embed_calls] == [[q], [q]]  # tenant A asks afresh
+
+
+async def test_a_failed_early_lookup_is_simply_tried_again() -> None:
+    _reset_modules()
+    with patch.dict("os.environ", _TEST_ENV, clear=False):
+        from api.config import get_api_settings  # noqa: PLC0415
+
+        get_api_settings.cache_clear()
+        dim = get_api_settings().embedding_dimension
+
+    class _FailsOnce(_StubProvider):
+        async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
+            self.embed_calls.append((texts, model))
+            if len(self.embed_calls) == 1:
+                raise LLMError("upstream hiccup")
+            return [self._vector]
+
+    q = f"what areas do you serve {uuid4().hex}"
+    provider = await _ask_after_prefetch(q, q, provider=_FailsOnce([0.1] * dim))
+    assert [texts for texts, _ in provider.embed_calls] == [[q], [q]]
+
+
+async def test_a_word_or_two_is_not_looked_up_early() -> None:
+    provider = await _ask_after_prefetch("yes please", f"is it free {uuid4().hex}")
+    assert len(provider.embed_calls) == 1  # only the real question
