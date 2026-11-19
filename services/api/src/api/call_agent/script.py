@@ -593,6 +593,63 @@ def needs_asking(details: dict[str, str]) -> bool:
             and not details.get("message"))
 
 
+# -- A form lead: details, then their service (owner, 2026-11-17 / 11-19) -----------------------
+
+DETAILS_FIX_LINE = "Sorry about that. What's your name, and the company you're with?"
+
+
+def service_words(details: dict[str, str]) -> str | None:
+    """The service(s) they picked, as said aloud ("seo, google_ads" -> "SEO and google ads");
+    ``None`` for none or "Other" -- that's never named as their need."""
+    picked = [p.strip().replace("_", " ") for p in re.split(r"[,;/|]", details.get("service", ""))]
+    words = [p.upper() if len(p) <= 3 else p for p in picked
+             if p and not re.match(r"(?:other|something else)\b", p, re.I)]
+    if not words:
+        return None
+    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def form_hook(details: dict[str, str]) -> str | None:
+    """The opening's line about the form when the written one is unusable (live 2026-11-19:
+    the generic "Thanks for reaching out" left the form unmentioned)."""
+    about = service_words(details)
+    return f"Thanks for reaching out about {about}." if about else None
+
+
+def form_about(details: dict[str, str]) -> str:
+    """Leads into her question about their need, once their details are confirmed."""
+    about = service_words(details)
+    return f"You picked {about} on our form." if about else ""
+
+
+def details_line(name: str | None, company: str | None) -> str:
+    """Right after "yes, now's good": the name and company from the form confirmed, or asked
+    for when the form didn't have them."""
+    known = who(name, None)
+    if known and company:
+        return f"Just to make sure I have your details right, you're {known} from {company}?"
+    if known:
+        return (f"Just to make sure I have your details right, you're {known}? "
+                "And which company are you with?")
+    if company:
+        return f"Could I get your name? I have you down as being with {company}."
+    return "Could I get your name, and the company you're with?"
+
+
+# The lead-in in any case; the name itself capitalised (speech-to-text capitalises names).
+_SPOKEN_NAME = re.compile(
+    r"\b(?i:my name is|name's|i'm|i am|this is|it's|call me)\s+([A-Z][a-z]+)")
+_NOT_NAMES = {"Good", "Fine", "Great", "Here", "Not", "Sure", "Just", "Calling", "Busy", "Okay",
+              "Yes", "Yeah", "Well", "The", "From", "With", "Right", "Correct", "Interested"}
+
+
+def spoken_name(text: str) -> str | None:
+    """Their first name from "I'm Kaustubh from GSDS"."""
+    match = _SPOKEN_NAME.search(text)
+    name = match.group(1) if match else None
+    return name if name and name not in _NOT_NAMES else None
+
+
 def booked_line(slot: datetime, timezone: str, *, emailed: bool = True,
                 link: bool = False) -> str:
     when = f"You're booked for {say_time(slot, timezone)}."
@@ -834,7 +891,7 @@ def say_email(email: str) -> str:
 # -- Per-call memory ------------------------------------------------------------------------
 
 Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask", "booked_check",
-                "qualifying", "email_extra_ask", "link_email_ask"]
+                "qualifying", "email_extra_ask", "link_email_ask", "details_check"]
 
 
 @dataclass
@@ -860,6 +917,10 @@ class CallState:
     hold_silences: int = 0
     first_name: str | None = None  # used now and then, never in every line
     who: str | None = None  # "Jane Doe from Lee Roofing" for the final check
+    # A form lead (owner, 2026-11-19): their name + company, confirmed after "yes, now's good";
+    # the question about their need waits for it.
+    details: str | None = None
+    after_details: str | None = None
     # Plan 1.2: questions she may still ask ([key, wording], at most QUALIFY_PER_CALL), the one
     # awaiting an answer, and what was heard -- mapped to a choice after the call, not during.
     qual_todo: list[list[str]] = field(default_factory=list)
@@ -878,6 +939,7 @@ class CallState:
                 "rescheduling": self.rescheduling, "close_offered": self.close_offered,
                 "on_hold": self.on_hold, "hold_silences": self.hold_silences,
                 "answered": self.answered, "first_name": self.first_name, "who": self.who,
+                "details": self.details, "after_details": self.after_details,
                 "qual_todo": self.qual_todo, "qual_key": self.qual_key,
                 "qual_heard": self.qual_heard, "qual_named": self.qual_named,
                 "qual_offer": self.qual_offer}
@@ -901,6 +963,7 @@ class CallState:
                    hold_silences=int(data.get("hold_silences", 0)),
                    answered=bool(data.get("answered", False)),
                    first_name=data.get("first_name"), who=data.get("who"),
+                   details=data.get("details"), after_details=data.get("after_details"),
                    qual_todo=[list(q) for q in data.get("qual_todo", [])],
                    qual_key=data.get("qual_key"),
                    qual_heard=dict(data.get("qual_heard") or {}),

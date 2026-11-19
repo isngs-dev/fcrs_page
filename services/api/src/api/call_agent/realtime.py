@@ -9,7 +9,8 @@ Only for tenants listed in ``REALTIME_VOICE_TENANTS`` with both keys set; everyo
 keeps the XML calls. ponytail: platform keys for the test -- per-client keys (encrypted,
 like Plivo's) come with the full build. Not yet: transfer to a person (ends the call).
 Since 2026-11-12 the answer streams sentence by sentence; since 2026-11-19 Flux's eager
-end-of-turn starts the knowledge lookup early (the turn itself still waits for EndOfTurn).
+end-of-turn starts the knowledge lookup early (the turn itself still waits for EndOfTurn);
+and the opening waits for their hello, or a 2 s silence, so none of it is missed.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ from common.auth import AuthClaims
 from common.db import Database
 from common.logging import get_logger
 
+from api.call_agent.script import is_voicemail_greeting
 from api.config import get_api_settings
 from api.llm.config_repository import LLMConfig, get_llm_config
 
@@ -38,6 +40,10 @@ _log = get_logger(__name__)
 FLUX_URL = "wss://api.deepgram.com/v2/listen"
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream"
 SILENCE_SECONDS = 8.0  # nothing said after she finishes -> a silent turn (as the XML calls)
+# Live 2026-11-19: the line counted as answered before the person could hear (CallHippo's
+# app), and a "Hello?" over the opening cleared it -- they heard only "...is now a good
+# time?". She now waits for their hello, or this long without a word, then says it all.
+OPENING_WAIT = 2.0
 
 
 def enabled_for(tenant_id: str | None) -> bool:
@@ -214,12 +220,16 @@ class RealtimeCall:
                  opening: str, record: Record, silence_seconds: float = SILENCE_SECONDS,
                  bridge_delay: float = BRIDGE_DELAY,
                  clock: Callable[[], float] = time.monotonic,
-                 prefetch: Callable[[str], None] | None = None) -> None:
+                 prefetch: Callable[[str], None] | None = None,
+                 opening_wait: float = OPENING_WAIT) -> None:
         self._plivo, self._listener, self._voice, self._brain = plivo, listener, voice, brain
         self._prefetch = prefetch  # EagerEndOfTurn words: look the answer up early
         self._opening, self._record = opening, record
         self._silence_seconds, self._clock = silence_seconds, clock
         self._bridge_delay = bridge_delay
+        self._opening_wait = opening_wait
+        self._opened = False  # the opening started (or a voicemail greeting took its place)
+        self._waiting: asyncio.Task[None] | None = None  # the short wait for their hello
         self._stream_id = ""
         self._turns: asyncio.Queue[tuple[str, float]] = asyncio.Queue()
         self._speech: asyncio.Task[None] | None = None  # her audio being sent now
@@ -235,7 +245,7 @@ class RealtimeCall:
         tasks = [asyncio.create_task(self._from_plivo()), asyncio.create_task(self._from_flux()),
                  asyncio.create_task(self._think())]
         await self._done.wait()
-        for task in [*tasks, self._speech, self._silence]:
+        for task in [*tasks, self._speech, self._silence, self._waiting]:
             if task is not None:
                 task.cancel()
         with contextlib.suppress(Exception):
@@ -252,12 +262,7 @@ class RealtimeCall:
                 event = message.get("event")
                 if event == "start":
                     self._stream_id = str(message["start"].get("streamId", ""))
-                    lines: asyncio.Queue[str | None] = asyncio.Queue()
-                    for line in (self._opening, None):
-                        lines.put_nowait(line)
-                    started = self._clock()
-                    self._speech = asyncio.create_task(
-                        self._speak(lines, [self._opening], started, started))
+                    self._waiting = asyncio.create_task(self._open_after(self._opening_wait))
                 elif event == "media":
                     await self._listener.send(base64.b64decode(message["media"]["payload"]))
                 elif event == "playedStream" and message.get("name") == self._playing:
@@ -273,9 +278,45 @@ class RealtimeCall:
                 "event": "realtime_stream_closed", "reason": type(exc).__name__})
         self._done.set()
 
+    async def _open_after(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+        self._open()
+
+    def _open(self) -> None:
+        """Say the opening, once."""
+        if self._opened:
+            return
+        self._opened = True
+        if self._waiting is not None and self._waiting is not asyncio.current_task():
+            self._waiting.cancel()
+        lines: asyncio.Queue[str | None] = asyncio.Queue()
+        for line in (self._opening, None):
+            lines.put_nowait(line)
+        started = self._clock()
+        self._speech = asyncio.create_task(self._speak(lines, [self._opening], started, started))
+
+    def _before_opening(self, heard: Heard) -> None:
+        """Before she has spoken: their hello is heard out (never a turn), then the opening;
+        a voicemail greeting goes to the turn logic instead (it leaves the message)."""
+        if heard.event == "StartOfTurn" and self._waiting is not None:
+            self._waiting.cancel()  # they're talking: let them finish
+            # ponytail: a hello Flux never ends (no EndOfTurn) still gets the opening
+            self._waiting = asyncio.create_task(self._open_after(3 * self._opening_wait))
+        elif heard.event == "EndOfTurn":
+            if is_voicemail_greeting(heard.transcript):
+                self._opened = True
+                if self._waiting is not None:
+                    self._waiting.cancel()
+                self._turns.put_nowait((heard.transcript.strip(), self._clock()))
+            else:
+                self._open()
+
     async def _from_flux(self) -> None:
         async for heard in self._listener.events():
             if self._ending:  # her closing line plays out whole; nothing after it is a turn
+                continue
+            if not self._opened:
+                self._before_opening(heard)
                 continue
             if heard.event == "StartOfTurn":
                 if self._silence is not None:

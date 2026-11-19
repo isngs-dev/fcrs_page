@@ -729,14 +729,14 @@ async def test_a_fragment_is_not_taken_as_their_answer(env: dict[str, Any]) -> N
 
 
 async def _form_call(env: dict[str, Any], tenant: str, answers: dict[str, str] | None = None,
-                     ) -> tuple[str, str]:
+                     *, name: str | None = "Jane Doe") -> tuple[str, str]:
     """A website form that asked for a call: call now, then the inbound emails. ``answers``:
     the form's other fields, noted the way intake notes them."""
     db = env["db"]
     claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=tenant)
     settings = AgentSettings(enabled_channels=("call", "email"), physical_address="1 Main St")
     await upsert_agent_settings(db, claims, settings)
-    cid = await create_contact(db, claims, account_id=None, lead_id=None, name="Jane Doe",
+    cid = await create_contact(db, claims, account_id=None, lead_id=None, name=name,
                                email="jane@example.com", phone="2025550123", consent={})
     await add_identity(db, claims, cid, identity_type="phone", identity_value="2025550123")
     await set_contact_timezone(db, claims, cid, env["zone"])
@@ -761,12 +761,82 @@ async def test_a_form_that_picked_other_with_no_message_is_asked_what_they_need(
     claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
     call_id, cid = await _form_call(env, a, {"service": "Other", "company": "Lee Roofing"})
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    details = service.spoken_text(await _say(env, call_id, "yes"))
+    assert details == f"Great. {script.details_line('Jane Doe', 'Lee Roofing')}"
     asked = service.spoken_text(await _say(env, call_id, "yes"))
-    assert asked == f"Great. {script.OTHER_SERVICE_QUESTION}"
+    assert asked == f"Thanks, Jane. {script.OTHER_SERVICE_QUESTION}"
     thanks = service.spoken_text(await _say(env, call_id, "we need a new website for the business"))
     assert thanks == script.qualify_line("Jane", _JOBS)  # plan 1.2: then what she still needs
     notes = await memory.items(db, claims, cid)
     assert notes[-1]["text"] == "we need a new website for the business"
+
+
+# -- A form lead: their details, then their service, then the hot-lead questions -------------
+# Owner, 2026-11-17 / 11-19: live, Rebecca never mentioned the form -- one generic question,
+# then straight to the hot-lead questions. Now: the opening names what they picked, a "yes"
+# gets their name and company confirmed (or asked), then a question about what they picked or
+# wrote, then the hot-lead questions, then the conversation as before.
+
+
+async def test_a_form_lead_confirms_their_details_then_their_service_then_hot_lead_questions(
+        env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    call_id, cid = await _form_call(env, a, {"service": "seo", "company": "Lee Roofing"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    details = service.spoken_text(await _say(env, call_id, "yes"))
+    assert details == "Great. " + script.details_line("Jane Doe", "Lee Roofing")
+    assert "Jane Doe from Lee Roofing" in details
+    about = service.spoken_text(await _say(env, call_id, "yes that's right"))
+    assert about == f"Thanks, Jane. You picked SEO on our form. {_QUESTION}"
+    asked = service.spoken_text(await _say(env, call_id, "we want to rank for roof repair"))
+    assert asked == script.qualify_line("Jane", _JOBS)  # then the hot-lead questions
+    assert (await memory.items(db, claims, cid))[-1]["text"] == "we want to rank for roof repair"
+    assert await db.fetchval("SELECT count(*) FROM call_transcript_turns t JOIN call_sessions s "
+                             "USING (call_id) WHERE s.tenant_id = $1", env["b"]) == 0
+
+
+async def test_a_form_without_a_company_asks_for_it_and_a_spoken_name_is_used(
+        env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    call_id, cid = await _form_call(env, a, {"service": "Google Ads"}, name=None)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    asked = service.spoken_text(await _say(env, call_id, "yes"))
+    assert asked == "Great. " + script.details_line(None, None)
+    said = service.spoken_text(await _say(env, call_id, "I'm Kaustubh from GSDS Roofing"))
+    assert said == f"{script.NOTED_LINE} You picked Google Ads on our form. {_QUESTION}"
+    notes = [n["text"] for n in await memory.items(db, claims, cid)]
+    assert "Their details, given on the call: I'm Kaustubh from GSDS Roofing" in notes
+    need = service.spoken_text(await _say(env, call_id, "we need more calls from Google"))
+    assert need == script.qualify_line("Kaustubh", _JOBS)  # the name they said, now and then
+
+
+async def test_no_at_the_details_check_asks_again_and_never_reads_back_a_wrong_name(
+        env: dict[str, Any]) -> None:
+    call_id, _ = await _form_call(env, env["a"], {"service": "seo", "company": "Lee Roofing"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    again = service.spoken_text(await _say(env, call_id, "no"))
+    assert again == script.DETAILS_FIX_LINE
+    said = service.spoken_text(await _say(env, call_id, "it's John Smith from Smith Roofing"))
+    assert said == f"{script.NOTED_LINE} You picked SEO on our form. {_QUESTION}"
+    state = await env["db"].fetchval("SELECT session FROM call_sessions WHERE call_id = $1",
+                                     call_id)
+    assert state["who"] is None  # the final check won't read "Jane Doe from Lee Roofing"
+
+
+async def test_when_the_written_opening_fails_it_still_names_the_service(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    async def half(*args: Any, **kwargs: Any) -> tuple[str | None, str | None]:
+        return None, _QUESTION  # the model's line was unusable (live 2026-11-19)
+
+    monkeypatch.setattr(service, "opening_lines", half)
+    call_id, _ = await _form_call(env, env["a"], {"service": "seo", "company": "Lee Roofing"})
+    answer = await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    opening = service.spoken_text(answer.text)
+    assert "Thanks for reaching out about SEO." in opening
+    assert script.GENERIC_HOOK not in opening
 
 
 # -- Qualification on the call (plan 1.2, owner 2026-11-17) ------------------------------------
@@ -821,7 +891,10 @@ async def test_rebecca_asks_two_missing_questions_after_their_need_and_scores_th
     claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
     call_id, cid = await _form_call(env, a, {"service": "SEO"})
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
-    assert service.spoken_text(await _say(env, call_id, "yes")) == f"Great. {_QUESTION}"
+    assert service.spoken_text(await _say(env, call_id, "yes")) == (
+        f"Great. {script.details_line('Jane Doe', None)}")  # a form lead: details first
+    assert service.spoken_text(await _say(env, call_id, "with Lee Roofing")) == (
+        f"{script.NOTED_LINE} You picked SEO on our form. {_QUESTION}")
     first = service.spoken_text(await _say(env, call_id, "we want more roof replacement jobs"))
     assert first == script.qualify_line("Jane", _JOBS)
     second = service.spoken_text(await _say(env, call_id, "about fifteen a month"))
@@ -895,6 +968,7 @@ async def test_a_client_with_no_questions_keeps_the_plain_discovery_thanks(
     call_id, _ = await _form_call(env, a, {"service": "SEO"})
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
     await _say(env, call_id, "yes")
+    await _say(env, call_id, "with Lee Roofing")  # a form lead: details first
     thanks = service.spoken_text(await _say(env, call_id, "we want more roof replacement jobs"))
     assert thanks == script.discovery_thanks_line("Jane")
     assert await qrepo.get_config(db, AuthClaims(subject="admin", role=Role.CLIENT_ADMIN,
@@ -906,7 +980,9 @@ async def test_a_form_with_a_real_service_keeps_her_own_follow_up_question(
     call_id, _ = await _form_call(env, env["a"], {"service": "Other",
                                                   "message": "Can you redo our logo?"})
     await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
-    assert service.spoken_text(await _say(env, call_id, "yes")) == f"Great. {_QUESTION}"
+    await _say(env, call_id, "yes")  # a form lead: details first
+    assert service.spoken_text(await _say(env, call_id, "with Lee Roofing")) == (
+        f"{script.NOTED_LINE} {_QUESTION}")
     assert "redo our logo" in (env["hooks"][-1][1] or "")  # the opening is written from it
 
 

@@ -85,6 +85,7 @@ def _call(brain: Any, said: list[tuple[str, int]] | None = None, **kwargs: Any) 
         if said is not None:
             said.append((text, latency_ms))
 
+    kwargs.setdefault("opening_wait", 0)  # most tests: nobody says hello, she opens at once
     call = realtime.RealtimeCall(plivo, flux, voice, brain, opening="Hi, Rebecca here.",
                                  record=record, **kwargs)
     return call, plivo, flux, voice
@@ -292,7 +293,8 @@ async def test_a_voice_that_fails_ends_the_call_instead_of_dead_air() -> None:
     async def record(text: str, latency_ms: int) -> None:
         return None
 
-    call = realtime.RealtimeCall(plivo, flux, refused, brain, opening="Hi.", record=record)
+    call = realtime.RealtimeCall(plivo, flux, refused, brain, opening="Hi.", record=record,
+                                 opening_wait=0)
     task = asyncio.create_task(call.run())
     plivo.push(event="start", start={"streamId": "s-1"})
     await asyncio.wait_for(task, 1)
@@ -564,4 +566,83 @@ async def test_she_starts_looking_up_the_answer_as_soon_as_they_seem_done() -> N
     assert early == ["do you fix roofs", "do you fix roofs and gutters"]
     assert plivo.events("clearAudio") == []  # carrying on is not talking over her
     plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+# -- the opening waits for them (live 2026-11-19) -------------------------------------------
+# The line counted as answered before the person could hear (CallHippo's app), and a "Hello?"
+# over the opening cleared it: they heard only "...is now a good time?". Now she waits for
+# their hello -- or a short silence -- and then says the whole opening.
+
+
+def test_the_wait_for_a_hello_is_short() -> None:
+    assert 1.5 <= realtime.OPENING_WAIT <= 3.5
+
+
+async def test_she_waits_for_their_hello_then_says_the_whole_opening() -> None:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        raise AssertionError("their hello is not a turn")
+
+    call, plivo, flux, voice = _call(brain, opening_wait=5)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await asyncio.sleep(0.05)
+    assert voice.said == [] and plivo.events("playAudio") == []  # nobody there yet
+    flux.hear("StartOfTurn", "hello")
+    flux.hear("EagerEndOfTurn", "Hello?")
+    flux.hear("EndOfTurn", "Hello?")
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    assert voice.said == ["Hi, Rebecca here."]
+    assert plivo.events("clearAudio") == []  # their hello didn't cut anything off
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+async def test_if_they_say_nothing_she_opens_after_a_short_wait() -> None:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        raise AssertionError("nobody spoke")
+
+    call, plivo, flux, voice = _call(brain, opening_wait=0.05)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    assert voice.said == ["Hi, Rebecca here."]
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+async def test_while_they_are_still_talking_the_short_wait_doesnt_cut_in() -> None:
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        raise AssertionError("their hello is not a turn")
+
+    call, plivo, flux, voice = _call(brain, opening_wait=0.05)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    flux.hear("StartOfTurn", "hello")
+    await asyncio.sleep(0.15)
+    assert voice.said == []  # they're mid-hello: she waits for them to finish
+    flux.hear("EndOfTurn", "hello who is this")
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    assert voice.said == ["Hi, Rebecca here."]
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+async def test_a_voicemail_greeting_before_she_speaks_goes_to_the_turn_logic() -> None:
+    heard: list[str] = []
+
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        heard.append(speech)
+        return "Hi, this is Rebecca, please call us back.", True
+
+    call, plivo, flux, voice = _call(brain, opening_wait=5)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    greeting = "You've reached John, please leave a message after the tone"
+    flux.hear("StartOfTurn", "you've")
+    flux.hear("EndOfTurn", greeting)
+    await _until(lambda: heard == [greeting])
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    assert voice.said == ["Hi, this is Rebecca, please call us back."]  # no opening first
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
     await asyncio.wait_for(task, 1)

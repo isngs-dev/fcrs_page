@@ -232,11 +232,20 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
     # Written now, not on answer: the model takes seconds, and that would be dead air.
     hook, question = await _opening_lines(db, claims, task.contact_id, task.intent,
                                           config.voice_model)
-    written: dict[str, Any] = {"hook": hook, "question": question}
     contact = await get_contact(db, claims, task.contact_id)
     details = script.form_details(await memory.items(db, claims, task.contact_id))
+    # A form lead (owner, 2026-11-17 / 11-19): the opening names what they picked even when
+    # the written line is unusable; "yes" gets their name and company confirmed first; then
+    # the question about what they picked or wrote; then the hot-lead questions.
+    hook = hook or script.form_hook(details)
+    if question and script.form_about(details):
+        question = f"{script.form_about(details)} {question}"
+    written: dict[str, Any] = {"hook": hook, "question": question}
     if script.needs_asking(details):  # "Other" and no message: ask what they need
         written["question"] = script.OTHER_SERVICE_QUESTION
+    if details:
+        written["details"] = script.details_line(contact.name if contact else None,
+                                                 details.get("company"))
     written["first_name"] = _first_name(contact)
     written["who"] = script.who(contact.name, details.get("company")) if contact else None
     # Plan 1.2: the questions she may ask on this call -- read now, never mid-call.
@@ -323,7 +332,7 @@ def _starting_state(written: dict[str, Any]) -> dict[str, Any]:
     """The call's state on answer, from what ``place_call`` wrote for this contact."""
     return script.CallState(question=written.get("question"), booked=written.get("booked"),
                             first_name=written.get("first_name"),
-                            who=written.get("who"),
+                            who=written.get("who"), details=written.get("details"),
                             qual_todo=[list(q) for q in written.get("qual") or []]).to_json()
 
 
@@ -810,6 +819,32 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                 return await say(script.DISCOVERY_THANKS_LINE if state.qual_named
                                  else script.discovery_thanks_line(state.first_name))
             return await say(script.QUALIFY_DONE_LINE)
+    if state.stage == "details_check":  # they were asked to confirm their name and company
+        asked, state.after_details = state.after_details, None
+        state.stage = "booked_check" if state.booked else "discovery"
+        if script.time_is_ok(speech) or kind == "no":  # the tail of "yes, it's a good time",
+            state.stage, state.after_details = "details_check", asked  # or a plain "no"
+            if kind == "no":
+                state.who = None
+                return await say(script.DETAILS_FIX_LINE)
+            last = next((text for role, text in reversed(state.history)
+                         if role == "assistant"), None)
+            if last:
+                return await say(last)
+        elif kind == "book" or script.is_question(speech) or script.wants_info(speech):
+            state.stage = "talking"  # answered below; the final check reads their details
+        elif asked:
+            if kind == "yes" or script.agrees(speech):
+                lead = f"Thanks{f', {state.first_name}' if state.first_name else ''}."
+            else:  # their name and company, or a correction: noted, never read back unsure
+                if session.contact_id:
+                    await memory.remember(db, claims, session.contact_id, channel="call",
+                                          kind="need",
+                                          text=f"Their details, given on the call: {speech}")
+                state.who = None
+                state.first_name = script.spoken_name(speech) or state.first_name
+                lead = script.NOTED_LINE
+            return await say(f"{lead} {asked}")
     if state.stage == "discovery":  # they were asked what they need
         state.stage = "talking"
         if kind == "no":
@@ -834,6 +869,10 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             return await say(script.discovery_thanks_line(state.first_name))
     # "Is now a good time?" -> yes (or "yes, this is a good time"): get them talking
     if opening_question and (kind == "yes" or script.time_is_ok(speech)):
+        if state.details:  # a form lead: their name and company first (owner, 2026-11-19)
+            state.stage, state.after_details = "details_check", opening_question
+            line, state.details = state.details, None
+            return await say(f"Great. {line}")
         state.stage = "booked_check" if state.booked else "discovery"
         return await say(f"Great. {opening_question}")
 

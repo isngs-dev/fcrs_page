@@ -14,7 +14,7 @@ from common.db import Database
 
 from api.agents import hooks as agent_hooks
 from api.agents.imports import check_row
-from api.contacts.repository import get_contact, get_contact_id_by_identity
+from api.contacts.repository import get_contact, get_contact_id_by_identity, update_contact
 from api.intake import meta
 from api.intake import repository as repo
 from api.intake.parsers import Normalised, booking_at, infer_timezone, normalise
@@ -32,8 +32,9 @@ def preview(lead: Normalised) -> dict[str, Any]:
 
 
 async def _existing_lead(db: Database, claims: AuthClaims, email: str | None,
-                         phone: str | None) -> str | None:
-    """The lead already linked to this person (by email, then phone), if any (A10 I2)."""
+                         phone: str | None) -> tuple[str, str] | None:
+    """``(lead_id, contact_id)`` already linked to this person (by email, then phone), if any
+    (A10 I2)."""
     for identity_type, value in (("email", email), ("phone", phone)):
         if not value:
             continue
@@ -42,7 +43,7 @@ async def _existing_lead(db: Database, claims: AuthClaims, email: str | None,
         if contact_id is not None:
             contact = await get_contact(db, claims, contact_id)
             if contact is not None and contact.lead_id:
-                return contact.lead_id
+                return contact.lead_id, contact_id
     return None
 
 
@@ -109,8 +110,11 @@ async def ingest(db: Database, claims: AuthClaims, *, source: str, intake_id: st
     answers = {"form": lead.form, "campaign": lead.campaign, "source": source,
                "answers": dict(list(lead.answers.items())[:_MAX_ANSWERS])}
 
-    existing = await _existing_lead(db, claims, row.email, row.phone)
-    if existing is not None:  # a known person: same lead, same contact, no second plan
+    found = await _existing_lead(db, claims, row.email, row.phone)
+    if found is not None:  # a known person: same lead, same contact, no second plan
+        existing, contact_id = found
+        if row.name:  # the name they just typed wins (live 2026-11-19: it was dropped)
+            await update_contact(db, claims, contact_id, name=row.name)
         await add_activity(db, claims, existing, type="intake_form_answers", payload=answers,
                            actor="system:intake")
         await _record_booking(db, claims, lead, lead_id=existing, intake_id=intake_id,

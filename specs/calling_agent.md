@@ -348,6 +348,12 @@ of a reply; dropped when she is talked over).
 `repo.claim_answered` marks the call answered and writes the opening in one transaction, once. The stream
 route calls `service.answered` itself, so the opening never waits for the event.
 
+**D-T4b — the opening waits for their hello (2026-11-19).** Live: the line counted as answered before
+the person could hear (CallHippo's app), and a "Hello?" over the opening cleared it -- they heard only
+"...is now a good time?". `RealtimeCall` now says the opening once they finish their first words
+(never a turn) or after `OPENING_WAIT` (2 s) without a word; while they're talking it waits (capped
+at 3x). A voicemail greeting heard first goes to the turn logic instead, which leaves the message.
+
 **D-T5 — we hang up.** When `RealtimeCall` ends, the stream route sends Telnyx's hangup (a failure is logged;
 the call's own time limit still ends it). A `streaming.failed` event hangs up too.
 
@@ -505,3 +511,14 @@ main one is unchanged). `parse_spoken_email` strips lead-ins ("send the meeting 
 is") and refuses ordinary words before "at" (`_NOT_EMAIL_WORDS`) — a domain with no clear address gets
 `EMAIL_RETRY_LINE` (spell it). The same final check is never read twice in a row: the second time she asks
 `CONFIRM_CLARIFY_LINE` instead.
+
+**R-form (owner, 2026-11-17 / 11-19) — a form lead's call order.** Live 2026-11-19 the form went unmentioned
+(the written opening line was unusable, so the generic hook played) and the hot-lead questions came straight
+after one question. Now, for a contact with form answers: the opening names the service they picked
+(`script.form_hook` when the written line is unusable; "Other" is never named); "yes, now's good" gets their
+name and company confirmed, or asked for when the form lacked them (`script.details_line`, stage
+`details_check`); a "no" asks again (`DETAILS_FIX_LINE`); what they say is noted for the team ("Their details,
+given on the call: ...", never an agenda topic) and a spoken first name is used now and then; then the
+question about what they picked or wrote ("You picked SEO on our form. ..."); then the hot-lead questions,
+then the call as before. Intake: a known person's resubmitted form updates the contact's name (the name they
+typed was being dropped).

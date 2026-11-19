@@ -242,6 +242,25 @@ async def test_duplicates_never_make_a_second_lead_or_plan(env: dict[str, Any]) 
                              "AND external_id = 's-4'", a) == "EXISTING_LEAD"
 
 
+async def test_a_known_person_filling_the_form_again_keeps_the_name_they_typed(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-19: the form matched their earlier lead, and the name they typed was
+    dropped -- Rebecca could neither use nor confirm it. The newest name wins (as _adopt)."""
+    db, a = env["db"], env["a"]
+    await _form(env, a, name="J", email="jane@example.com", submission_id="s-5")
+    await dispatch.dispatch_events(db, limit=10)
+    again = await _form(env, a, name="Jane Doe", email="jane@example.com", submission_id="s-6")
+    assert again.json()["status"] == "accepted"
+    await dispatch.dispatch_events(db, limit=10)
+    assert [r["name"] for r in await db.fetch(
+        "SELECT name FROM contacts WHERE tenant_id = $1", a)] == ["Jane Doe"]
+    nameless = await _form(env, a, email="jane@example.com", submission_id="s-7")
+    assert nameless.json()["status"] == "accepted"  # no name on the form: the name stays
+    assert await db.fetchval("SELECT name FROM contacts WHERE tenant_id = $1", a) == "Jane Doe"
+    assert await db.fetchval("SELECT count(*) FROM contacts WHERE tenant_id = $1",
+                             env["b"]) == 0  # only the form's own tenant
+
+
 async def test_unusable_leads_go_to_the_queue_for_a_person(env: dict[str, Any]) -> None:
     db, client, a = env["db"], env["client"], env["a"]
     r = await _form(env, a, name="No Contact", form="Roof quote")

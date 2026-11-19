@@ -735,3 +735,41 @@ def test_saying_now_is_a_good_time(text: str) -> None:
     "Now is a good time to grow our roofing business with more leads every single month"])
 def test_not_saying_now_is_a_good_time(text: str) -> None:
     assert not script.time_is_ok(text)
+
+
+# -- A form lead's details and service (owner, 2026-11-17 / 11-19) ---------------------------
+
+
+def test_the_details_line_confirms_what_we_know_and_asks_for_the_rest() -> None:
+    assert script.details_line("Jane Doe", "Lee Roofing") == (
+        "Just to make sure I have your details right, you're Jane Doe from Lee Roofing?")
+    assert script.details_line("Jane Doe", None) == (
+        "Just to make sure I have your details right, you're Jane Doe? "
+        "And which company are you with?")
+    assert script.details_line(None, "Lee Roofing") == (
+        "Could I get your name? I have you down as being with Lee Roofing.")
+    assert script.details_line("J0hn_99", None) == script.details_line(None, None)  # no real name
+    assert script.details_line(None, None) == "Could I get your name, and the company you're with?"
+
+
+@pytest.mark.parametrize(("service", "spoken"), [
+    ("seo", "SEO"), ("google_ads", "google ads"), ("SEO, Google Ads", "SEO and Google Ads"),
+    ("seo, ppc, meta_ads", "SEO, PPC and meta ads")])
+def test_the_service_they_picked_is_said_the_way_it_sounds(service: str, spoken: str) -> None:
+    assert script.service_words({"service": service}) == spoken
+    assert script.form_hook({"service": service}) == f"Thanks for reaching out about {spoken}."
+    assert script.form_about({"service": service}) == f"You picked {spoken} on our form."
+
+
+def test_other_or_no_service_is_never_named() -> None:
+    for details in ({"service": "Other"}, {"service": "other", "message": "a new logo"}, {}):
+        assert script.service_words(details) is None
+        assert script.form_hook(details) is None and script.form_about(details) == ""
+
+
+@pytest.mark.parametrize(("text", "name"), [
+    ("I'm Kaustubh from GSDS Roofing", "Kaustubh"), ("my name is Jane", "Jane"),
+    ("it's John Smith from Smith Roofing", "John"), ("this is Maria", "Maria"),
+    ("I'm good thanks", None), ("I'm not sure", None), ("Lee Roofing", None)])
+def test_a_spoken_name(text: str, name: str | None) -> None:
+    assert script.spoken_name(text) == name

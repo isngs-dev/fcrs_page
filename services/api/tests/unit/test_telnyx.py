@@ -361,7 +361,7 @@ async def test_a_whole_streamed_call_runs_on_telnyx_unchanged() -> None:
         return None
 
     call = realtime.RealtimeCall(telnyx.TelnyxSocket(ws), flux, voice, brain,
-                                 opening="Hi, Rebecca here.", record=record)
+                                 opening="Hi, Rebecca here.", record=record, opening_wait=0)
     task = asyncio.create_task(call.run())
     ws.push(event="connected", version="1.0.0")
     ws.push(event="start", stream_id="s-1", start={"call_control_id": "v2:abc"})
