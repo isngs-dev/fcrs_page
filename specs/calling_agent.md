@@ -351,8 +351,16 @@ route calls `service.answered` itself, so the opening never waits for the event.
 **D-T4b — the opening waits for their hello (2026-11-19).** Live: the line counted as answered before
 the person could hear (CallHippo's app), and a "Hello?" over the opening cleared it -- they heard only
 "...is now a good time?". `RealtimeCall` now says the opening once they finish their first words
-(never a turn) or after `OPENING_WAIT` (2 s) without a word; while they're talking it waits (capped
-at 3x). A voicemail greeting heard first goes to the turn logic instead, which leaves the message.
+(never a turn) or after `OPENING_WAIT` (2 s) without a word, and never later than `OPENING_CAP`
+(4 s) after the answer (live 2026-11-20: every "hello?" restarted the wait -- 12-15 s of silence).
+The opening is never talked over (it carries the AI disclosure and recording notice): a "hello"
+during it is dropped, anything else is answered right after it. A voicemail greeting heard first
+goes to the turn logic instead, which leaves the message.
+
+**D-T4c — turn-taking (2026-11-20).** Flux `eot_threshold` stays at its 0.7 default (0.8 was rarely
+reached on Indian lines, so every turn waited out the timeout). A turn that ends mid-sentence
+(`realtime.is_cut_off`: "So", "I was saying that") waits `FRAGMENT_WAIT` (1.5 s) for the rest and is
+joined with it; if nothing follows it is answered as it is.
 
 **D-T5 — we hang up.** When `RealtimeCall` ends, the stream route sends Telnyx's hangup (a failure is logged;
 the call's own time limit still ends it). A `streaming.failed` event hangs up too.

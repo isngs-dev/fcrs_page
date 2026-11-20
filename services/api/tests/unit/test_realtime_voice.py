@@ -141,17 +141,20 @@ async def test_talking_over_her_stops_her_at_once() -> None:
         return "A long answer that goes on and on.", False
 
     call, plivo, flux, voice = _call(brain)
-    voice.hold = asyncio.Event()  # she's mid-sentence until released
     task = asyncio.create_task(call.run())
     plivo.push(event="start", start={"streamId": "s-1"})
-    await _until(lambda: len(plivo.events("playAudio")) == 1)
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)  # the opening (never cut off)
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
+    voice.hold = asyncio.Event()  # her reply is mid-sentence until released
+    flux.hear("EndOfTurn", "tell me about repairs")
+    await _until(lambda: len(plivo.events("playAudio")) == 3)
     flux.hear("StartOfTurn", "sorry, wait")
     await _until(lambda: len(plivo.events("clearAudio")) == 1)
     assert plivo.events("clearAudio")[0] == {"event": "clearAudio", "streamId": "s-1"}
     voice.hold.set()
     await asyncio.sleep(0.02)
-    assert len(plivo.events("playAudio")) == 1  # the rest of that sentence is never sent
-    assert plivo.events("checkpoint") == []
+    assert len(plivo.events("playAudio")) == 3  # the rest of that sentence is never sent
+    assert len(plivo.events("checkpoint")) == 1
     plivo.push(event="stop")
     await asyncio.wait_for(task, 1)
 
@@ -655,5 +658,130 @@ def test_flux_waits_for_more_certainty_before_it_ends_their_turn() -> None:
     from urllib.parse import parse_qs
 
     params = parse_qs(realtime.flux_query([]))
+    # Live 2026-11-20 (Indian lines): 0.8 was rarely reached -- every turn waited out the 3 s
+    # timeout and replies came late. Back to Flux's 0.7; cut-offs are joined in code instead.
     eot, eager = float(params["eot_threshold"][0]), float(params["eager_eot_threshold"][0])
-    assert 0.8 <= eot <= 0.9 and eager < eot
+    assert eot == 0.7 and eager < eot
+
+
+# -- Live 2026-11-20: 12-15 s of silence at the start; her opening cut off by "Hello?" ------
+
+
+def test_the_opening_never_waits_long() -> None:
+    assert realtime.OPENING_WAIT < realtime.OPENING_CAP <= 5
+
+
+async def test_the_opening_starts_within_the_cap_even_if_the_line_never_goes_quiet() -> None:
+    """Every StartOfTurn (a "hello?", line noise) used to restart the wait: 12-15 s live."""
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        raise AssertionError("nothing was a turn")
+
+    call, plivo, flux, voice = _call(brain, opening_wait=5, opening_cap=0.15)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    for _ in range(5):
+        flux.hear("StartOfTurn", "hello")
+        await asyncio.sleep(0.04)
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    assert voice.said == ["Hi, Rebecca here."]
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+async def test_hello_during_the_opening_never_cuts_it_off() -> None:
+    """The opening carries the AI disclosure and recording notice: it is always heard whole."""
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        raise AssertionError("a hello over the opening is not a turn")
+
+    call, plivo, flux, voice = _call(brain)
+    voice.hold = asyncio.Event()  # the opening is mid-sentence
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("playAudio")) == 1)
+    flux.hear("StartOfTurn", "hello")
+    flux.hear("EndOfTurn", "Hello?")
+    await asyncio.sleep(0.05)
+    assert plivo.events("clearAudio") == []
+    voice.hold.set()
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    assert len(plivo.events("playAudio")) == 2  # the whole opening went out
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+async def test_a_question_during_the_opening_is_answered_right_after_it() -> None:
+    heard: list[str] = []
+
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        heard.append(speech)
+        return "We charge two hundred dollars.", False
+
+    call, plivo, flux, voice = _call(brain)
+    voice.hold = asyncio.Event()
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("playAudio")) == 1)
+    flux.hear("StartOfTurn", "how much")
+    flux.hear("EndOfTurn", "how much is a repair")
+    await asyncio.sleep(0.05)
+    assert voice.said == ["Hi, Rebecca here."]  # her reply waits for the opening
+    voice.hold.set()
+    await _until(lambda: len(plivo.events("checkpoint")) == 2)
+    assert heard == ["how much is a repair"]
+    assert voice.said == ["Hi, Rebecca here.", "We charge two hundred dollars."]
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+# -- Live 2026-11-20: "So" and "I was saying that" were answered as whole turns -------------
+
+
+async def _opened(brain: Any, **kwargs: Any) -> tuple[Any, _Plivo, _Flux, _Voice, Any]:
+    call, plivo, flux, voice = _call(brain, **kwargs)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
+    return call, plivo, flux, voice, task
+
+
+async def test_a_cut_off_turn_waits_for_the_rest_and_is_answered_whole() -> None:
+    heard: list[str] = []
+
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        heard.append(speech)
+        return "Yes, they are real homeowners.", False
+
+    _, plivo, flux, _, task = await _opened(brain, fragment_wait=0.3)
+    flux.hear("StartOfTurn", "so")
+    flux.hear("EndOfTurn", "So")
+    await asyncio.sleep(0.1)
+    assert heard == []  # held: they're probably not done
+    flux.hear("StartOfTurn", "will")
+    flux.hear("EndOfTurn", "will the generated leads be genuine?")
+    await _until(lambda: heard != [])
+    assert heard == ["So will the generated leads be genuine?"]
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+async def test_a_cut_off_turn_with_nothing_after_it_is_still_answered() -> None:
+    heard: list[str] = []
+
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        heard.append(speech)
+        return "Sorry, could you say it again?", False
+
+    _, plivo, flux, _, task = await _opened(brain, fragment_wait=0.1)
+    flux.hear("EndOfTurn", "I was saying that")
+    await _until(lambda: heard == ["I was saying that"])
+    plivo.push(event="stop")
+    await asyncio.wait_for(task, 1)
+
+
+@pytest.mark.parametrize(("text", "cut_off"), [
+    ("So", True), ("I was saying that", True), ("Um,", True), ("and the", True),
+    ("Yes.", False), ("No thanks.", False), ("How much is a repair?", False),
+    ("I want to know about Google Ads.", False)])
+def test_what_counts_as_cut_off(text: str, cut_off: bool) -> None:
+    assert realtime.is_cut_off(text) is cut_off

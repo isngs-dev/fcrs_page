@@ -44,6 +44,31 @@ SILENCE_SECONDS = 8.0  # nothing said after she finishes -> a silent turn (as th
 # app), and a "Hello?" over the opening cleared it -- they heard only "...is now a good
 # time?". She now waits for their hello, or this long without a word, then says it all.
 OPENING_WAIT = 2.0
+# Live 2026-11-20: every "hello?" or bit of line noise restarted that wait -- 12-15 s of
+# silence. However much they talk, the opening starts this soon after the call is answered.
+OPENING_CAP = 4.0
+# A turn that ends mid-sentence ("So", "I was saying that") waits this long for the rest.
+FRAGMENT_WAIT = 1.5
+_GREETING = {"hello", "hi", "hey", "hallo", "yes", "yeah", "yep", "ok", "okay", "haan"}
+_DANGLING = {"so", "and", "but", "because", "that", "the", "a", "an", "to", "of", "or", "if",
+             "like", "um", "uh", "umm", "er", "i", "my", "with", "for", "about", "is", "was",
+             "in", "on", "at", "mean", "well"}
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in "".join(c if c.isalnum() or c in " '" else " "
+                               for c in text.lower()).split() if w]
+
+
+def is_cut_off(text: str) -> bool:
+    """Ends mid-sentence ("So", "I was saying that", "and the") -- more is coming."""
+    words = _words(text)
+    return bool(words) and words[-1] in _DANGLING and not text.rstrip().endswith("?")
+
+
+def _just_hello(text: str) -> bool:
+    words = _words(text)
+    return bool(words) and len(words) <= 3 and all(w in _GREETING for w in words)
 
 
 def enabled_for(tenant_id: str | None) -> bool:
@@ -154,9 +179,10 @@ def flux_query(keyterms: list[str]) -> str:
     params: list[tuple[str, str]] = [
         ("model", "flux-general-en"), ("encoding", "mulaw"), ("sample_rate", "8000"),
         ("eot_timeout_ms", "3000"), ("numerals", "true"),
-        # 2026-11-20: a pause after "So..." ended their turn at the default 0.7 -- she answered
-        # half a sentence. 0.8 waits for the whole one (a little later on some turns).
-        ("eot_threshold", "0.8"),
+        # Live 2026-11-20: 0.8 was rarely reached on Indian lines -- every turn waited out the
+        # timeout and replies came late. Flux's 0.7; a cut-off turn is joined in code instead
+        # (``is_cut_off``).
+        ("eot_threshold", "0.7"),
         # 2026-11-19: an early "they seem done" (EagerEndOfTurn) starts the knowledge lookup
         # while Flux makes sure; must stay below eot_threshold.
         ("eager_eot_threshold", "0.5")]
@@ -224,15 +250,22 @@ class RealtimeCall:
                  bridge_delay: float = BRIDGE_DELAY,
                  clock: Callable[[], float] = time.monotonic,
                  prefetch: Callable[[str], None] | None = None,
-                 opening_wait: float = OPENING_WAIT) -> None:
+                 opening_wait: float = OPENING_WAIT, opening_cap: float = OPENING_CAP,
+                 fragment_wait: float = FRAGMENT_WAIT) -> None:
         self._plivo, self._listener, self._voice, self._brain = plivo, listener, voice, brain
         self._prefetch = prefetch  # EagerEndOfTurn words: look the answer up early
         self._opening, self._record = opening, record
         self._silence_seconds, self._clock = silence_seconds, clock
         self._bridge_delay = bridge_delay
-        self._opening_wait = opening_wait
+        self._opening_wait, self._opening_cap = opening_wait, opening_cap
         self._opened = False  # the opening started (or a voicemail greeting took its place)
         self._waiting: asyncio.Task[None] | None = None  # the short wait for their hello
+        self._deadline: asyncio.Task[None] | None = None  # the opening starts by then anyway
+        self._opening_task: asyncio.Task[None] | None = None  # sending the opening
+        self._opening_mark: str | None = None  # its checkpoint, until it has played
+        self._fragment_wait = fragment_wait
+        self._fragment = ""  # a cut-off turn waiting for the rest
+        self._holding: asyncio.Task[None] | None = None
         self._stream_id = ""
         self._turns: asyncio.Queue[tuple[str, float]] = asyncio.Queue()
         self._speech: asyncio.Task[None] | None = None  # her audio being sent now
@@ -248,7 +281,8 @@ class RealtimeCall:
         tasks = [asyncio.create_task(self._from_plivo()), asyncio.create_task(self._from_flux()),
                  asyncio.create_task(self._think())]
         await self._done.wait()
-        for task in [*tasks, self._speech, self._silence, self._waiting]:
+        for task in [*tasks, self._speech, self._silence, self._waiting, self._deadline,
+                     self._holding]:
             if task is not None:
                 task.cancel()
         with contextlib.suppress(Exception):
@@ -266,10 +300,13 @@ class RealtimeCall:
                 if event == "start":
                     self._stream_id = str(message["start"].get("streamId", ""))
                     self._waiting = asyncio.create_task(self._open_after(self._opening_wait))
+                    self._deadline = asyncio.create_task(self._open_after(self._opening_cap))
                 elif event == "media":
                     await self._listener.send(base64.b64decode(message["media"]["payload"]))
                 elif event == "playedStream" and message.get("name") == self._playing:
                     self._playing = None
+                    if message.get("name") == self._opening_mark:
+                        self._opening_mark = None  # the opening has been heard
                     if self._ending:
                         await self._plivo.close()
                         break
@@ -290,26 +327,34 @@ class RealtimeCall:
         if self._opened:
             return
         self._opened = True
-        if self._waiting is not None and self._waiting is not asyncio.current_task():
-            self._waiting.cancel()
+        self._stop_waiting()
         lines: asyncio.Queue[str | None] = asyncio.Queue()
         for line in (self._opening, None):
             lines.put_nowait(line)
         started = self._clock()
+        self._opening_mark = f"reply-{self._replies + 1}"
         self._speech = asyncio.create_task(self._speak(lines, [self._opening], started, started))
+        self._opening_task = self._speech
+
+    def _stop_waiting(self) -> None:
+        for timer in (self._waiting, self._deadline):
+            if timer is not None and timer is not asyncio.current_task():
+                timer.cancel()
+
+    def _in_opening(self) -> bool:
+        """Her opening is still going out or still playing: it isn't talked over (B)."""
+        return self._opening_task is not None and (
+            not self._opening_task.done() or self._opening_mark is not None)
 
     def _before_opening(self, heard: Heard) -> None:
         """Before she has spoken: their hello is heard out (never a turn), then the opening;
         a voicemail greeting goes to the turn logic instead (it leaves the message)."""
         if heard.event == "StartOfTurn" and self._waiting is not None:
-            self._waiting.cancel()  # they're talking: let them finish
-            # ponytail: a hello Flux never ends (no EndOfTurn) still gets the opening
-            self._waiting = asyncio.create_task(self._open_after(3 * self._opening_wait))
+            self._waiting.cancel()  # they're talking: let them finish -- the cap still holds
         elif heard.event == "EndOfTurn":
             if is_voicemail_greeting(heard.transcript):
                 self._opened = True
-                if self._waiting is not None:
-                    self._waiting.cancel()
+                self._stop_waiting()
                 self._turns.put_nowait((heard.transcript.strip(), self._clock()))
             else:
                 self._open()
@@ -324,13 +369,38 @@ class RealtimeCall:
             if heard.event == "StartOfTurn":
                 if self._silence is not None:
                     self._silence.cancel()
+                if self._holding is not None:  # they're carrying on: the cut-off waits for it
+                    self._holding.cancel()
+                if self._in_opening():
+                    continue  # the opening is never talked over (B)
                 if self._playing is not None or (self._speech and not self._speech.done()):
                     await self._barge_in()
             elif heard.event == "EagerEndOfTurn" and heard.transcript.strip():
                 if self._prefetch is not None:  # not a turn: they may carry on (TurnResumed)
                     self._prefetch(heard.transcript.strip())
             elif heard.event == "EndOfTurn" and heard.transcript.strip():
-                self._turns.put_nowait((heard.transcript.strip(), self._clock()))
+                said = heard.transcript.strip()
+                if self._in_opening() and _just_hello(said) and not self._fragment:
+                    continue  # "Hello?" over the opening: it's answering them already
+                self._end_of_turn(said)
+
+    def _end_of_turn(self, said: str) -> None:
+        """Their turn -- or, if it stops mid-sentence, held a moment for the rest (C)."""
+        if self._holding is not None:
+            self._holding.cancel()
+        said = f"{self._fragment} {said}".strip() if self._fragment else said
+        if is_cut_off(said):
+            self._fragment = said
+            self._holding = asyncio.create_task(self._release_fragment())
+            return
+        self._fragment = ""
+        self._turns.put_nowait((said, self._clock()))
+
+    async def _release_fragment(self) -> None:
+        await asyncio.sleep(self._fragment_wait)
+        said, self._fragment = self._fragment, ""
+        if said:  # nothing more came: it's their turn as it is
+            self._turns.put_nowait((said, self._clock()))
 
     async def _barge_in(self) -> None:
         self._cut_off = True
@@ -351,6 +421,8 @@ class RealtimeCall:
 
     async def _answer(self, speech: str, heard_at: float) -> bool:
         """One caller turn: the turn logic, her reply as it's written. ``False`` = call over."""
+        if self._opening_task is not None and not self._opening_task.done():
+            await asyncio.wait({self._opening_task})  # her reply follows the whole opening
         self._cut_off = False
         lines: asyncio.Queue[str | None] = asyncio.Queue()
         said: list[str] = []
