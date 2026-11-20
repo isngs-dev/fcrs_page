@@ -547,7 +547,7 @@ def test_a_voicemail_greeting_is_recognised(text: str, voicemail: bool) -> None:
      "Are you asking whether your father could be involved?"),
     ("Meta ads reach homeowners. Is there anything else you'd like to know?", None),
     ("Results vary. Would you like to know anything more about it?", None),
-    (f"{script.MISS_LINES[0]} Would you like me to find a time with them?", None),
+    (f"{script.MISS_LINES[0]} {script.ANYTHING_ELSE_AFTER_PAUSE}", None),
     ("Great, you're all set. " + script.INVITE, None),
     ("We charge two hundred dollars for that.", None),
 ])
@@ -773,3 +773,13 @@ def test_other_or_no_service_is_never_named() -> None:
     ("I'm good thanks", None), ("I'm not sure", None), ("Lee Roofing", None)])
 def test_a_spoken_name(text: str, name: str | None) -> None:
     assert script.spoken_name(text) == name
+
+
+
+def test_no_line_after_their_need_or_a_no_pushes_a_booking() -> None:
+    """Owner, 2026-11-20: their questions first; the call is offered when they're done."""
+    for line in (script.DISCOVERY_THANKS_LINE, script.discovery_thanks_line("Jane"),
+                 script.DISCOVERY_NO_LINE, script.WHAT_QUESTIONS_LINE):
+        assert "find a time" not in line and "book" not in line
+    assert script.her_question(script.DISCOVERY_THANKS_LINE) is None  # "yes" -> their questions
+    assert "find a time" in script.CLOSE_OFFER_LINE  # the one offer, at the end

@@ -365,7 +365,7 @@ async def test_yes_to_the_opening_gets_a_question_about_what_they_need(
     remembered = await memory.items(db, claims, str(contact_id))  # the team sees what they said
     assert remembered[-1]["text"] == "the roof leaks over the kitchen"
     ask = service.spoken_text(await _say(env, call_id, "yes"))
-    assert ask == script.ASK_TIME_LINE
+    assert ask == script.WHAT_QUESTIONS_LINE  # their questions first, never a booking push
     # asked once only: a later "yes" never repeats the question
     assert _QUESTION not in ask
 
@@ -496,7 +496,8 @@ async def test_a_time_she_cant_make_out_doesnt_loop_forever(env: dict[str, Any])
 async def test_a_time_given_with_a_yes_is_kept(env: dict[str, Any]) -> None:
     """Live: "yes 6:30 p.m. EST" to "find a time?" counted as a bare yes and the time was lost."""
     call_id = await _answered(env, env["a"])
-    assert "find a time" in service.spoken_text(await _say(env, call_id, "what's the warranty"))
+    await _say(env, call_id, "what's the warranty")  # no booking push on a miss (owner, 11-20)
+    assert "find a time" in service.spoken_text(await _say(env, call_id, "no, that's all"))
     assert service.spoken_text(await _say(env, call_id, "yes 6:30 p.m. EST")) == script.ASK_DAY_LINE
     day = (datetime.now(_NY) + timedelta(days=2)).date()
     final = service.spoken_text(await _say(env, call_id, f"{day:%B} {day.day}"))
@@ -2514,7 +2515,7 @@ async def test_a_miss_uses_the_models_own_hand_off_for_that_question(
     monkeypatch.setattr(service, "answer_from_knowledge", answer)
     call_id = await _answered(env, env["a"])
     said = service.spoken_text(await _say(env, call_id, "Does storm insurance cover this?"))
-    assert said == f"{handoff} Would you like me to find a time with them?"
+    assert said == f"{handoff} {script.ANYTHING_ELSE_AFTER_PAUSE}"  # no booking push
     assert seen[-1] is True
 
 
@@ -2576,3 +2577,35 @@ async def test_same_time_answers_the_what_time_question(env: dict[str, Any]) -> 
     assert final == _final(new, "America/New_York", "jane@example.com")
     assert await db.fetchval("SELECT outcome FROM call_sessions WHERE call_id = $1",
                              call_id) != "escalated"
+
+
+# -- Their questions first, then the booking offer (owner, 2026-11-20) -------------------------
+# Live 2026-11-19: right after the hot-lead questions she asked "Would you like me to find a
+# time with our team?", and a question she couldn't answer got "our marketing expert ... Would
+# you like me to find a time with them?". Now she invites their questions and answers them;
+# the booking is offered once, when they're done -- unless they ask to book themselves.
+
+
+async def test_after_their_need_she_invites_questions_and_offers_the_call_only_when_done(
+        env: dict[str, Any]) -> None:
+    await _no_questions(env, env["a"])
+    call_id, _ = await _dial(env, env["a"])
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    thanks = service.spoken_text(await _say(env, call_id, "the roof leaks over the kitchen"))
+    assert "find a time" not in thanks and "anything you'd like to know" in thanks
+    answer = service.spoken_text(await _say(env, call_id, "how much is a repair"))
+    assert "two hundred dollars" in answer and "find a time" not in answer
+    offer = service.spoken_text(await _say(env, call_id, "no, that's all"))
+    assert offer == script.CLOSE_OFFER_LINE  # now, once they're done
+    assert service.spoken_text(await _say(env, call_id, "yes")) == script.ASK_TIME_LINE
+
+
+async def test_they_can_still_ask_to_book_at_any_time(env: dict[str, Any]) -> None:
+    await _no_questions(env, env["a"])
+    call_id, _ = await _dial(env, env["a"])
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    await _say(env, call_id, "the roof leaks over the kitchen")
+    said = service.spoken_text(await _say(env, call_id, "can I book a call with your team"))
+    assert said == script.ASK_TIME_LINE

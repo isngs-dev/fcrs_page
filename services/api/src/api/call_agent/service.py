@@ -952,10 +952,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     held = bool(state.booked) and not state.rescheduling  # a booking stands: no booking offers
     # "Yes." to a question she wrote for this conversation is answered, with that question.
     her_own = script.her_question(said) if kind == "yes" else None
-    if kind == "yes" and not her_own:
-        return await say("Great! What questions can I answer?" if held else
-                         "Great! What questions can I answer, or would you like me to find a "
-                         "time with our team?")
+    if kind == "yes" and not her_own:  # their questions first (owner, 2026-11-20)
+        return await say(script.WHAT_QUESTIONS_LINE)
     if kind == "no":
         if len(state.history) <= 2:  # "no" to "is now a good time?"
             return await bye(script.CALLBACK_LINE, "callback")
@@ -998,7 +996,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                                   text=speech)
         back = back or (script.on_your_call_line(datetime.fromisoformat(state.booked["at"]),
                                                  state.booked["tz"]) if held and state.booked
-                        else "Would you like me to find a time with them?")
+                        else script.ANYTHING_ELSE_AFTER_PAUSE)  # no booking push (11-20)
     else:  # the answer alone: they speak when ready; a pause gets one follow-up
         state.answered = back is None and not reply.rstrip().endswith("?")
     return await say(f"{reply} {back}" if back else reply)

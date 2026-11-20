@@ -345,8 +345,11 @@ INVITE = ("In the meantime, is there anything you'd like to know about our servi
 ANYTHING_ELSE_AFTER_PAUSE = "Is there anything else you'd like to know?"
 CLOSE_OFFER_LINE = ("Before you go, our team can walk you through this in more detail on a "
                     "short call. Would you like me to find a time with them?")
-DISCOVERY_THANKS_LINE = ("Thanks, that's really helpful. Would you like me to find a time with "
-                         "our team to talk it through?")
+# Owner, 2026-11-20: their questions first -- the call with the team is offered once they're
+# done (CLOSE_OFFER_LINE), or when they ask for it; never right after their need or a miss.
+DISCOVERY_THANKS_LINE = ("Thanks, that's really helpful. Is there anything you'd like to know "
+                         "about how we can help with that?")
+WHAT_QUESTIONS_LINE = "Great! What questions can I answer?"
 
 
 def discovery_thanks_line(first_name: str | None) -> str:
@@ -372,8 +375,7 @@ def pause_question(ask: str) -> str:
 QUALIFY_DONE_LINE = f"Got it, thanks. {ANYTHING_ELSE_AFTER_PAUSE}"
 QUALIFY_PER_CALL = 2  # at most this many qualification questions in one call
 
-DISCOVERY_NO_LINE = ("No problem. Would you like me to find a time with our team, or is there "
-                     "anything I can answer for you?")
+DISCOVERY_NO_LINE = "No problem. Is there anything I can answer for you about our services?"
 WHICH_TIME = "What day and time works best for you?"
 ASK_TIME_LINE = f"Sure. {WHICH_TIME}"
 ASK_DAY_LINE = "And which day would you like?"
