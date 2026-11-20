@@ -380,6 +380,13 @@ WHICH_TIME = "What day and time works best for you?"
 ASK_TIME_LINE = f"Sure. {WHICH_TIME}"
 ASK_DAY_LINE = "And which day would you like?"
 TIME_AGAIN = "Sorry, I didn't catch the time."
+# Live 2026-11-20: the same "What day and time works best for you?" twice, then a hand-off.
+TIME_EXAMPLE_LINE = ("Sorry, I didn't catch that. Could you tell me a day and a time, for "
+                     "example, Monday at 2 PM?")
+TIME_LINK_LINE = ("I'm having trouble catching the time over the phone, so I'll have our team "
+                  "email you a link to pick one that suits you. Is there anything else I can "
+                  "help with?")
+TIME_TRIES = 3  # times she didn't catch a day or time before the link is offered
 TAKEN_LINE = ("I'm sorry, we already have a meeting scheduled at that time. "
               "What other time would suit you?")
 DAY_FULL = "I'm sorry, we're not available that day. What other day would suit you?"
@@ -906,6 +913,7 @@ class CallState:
     email: str | None = None  # where the meeting details go
     extra_email: str | None = None  # a second address that gets a copy (2026-11-18)
     email_tries: int = 0
+    time_tries: int = 0  # a day/time she didn't catch (never counted as an unanswered question)
     silences: int = 0
     misses: int = 0
     recording_started: bool = False
@@ -934,7 +942,7 @@ class CallState:
     def to_json(self) -> dict[str, Any]:
         return {"stage": self.stage, "day": self.day, "at": self.at, "zone": self.zone,
                 "chosen": self.chosen, "email": self.email, "extra_email": self.extra_email,
-                "email_tries": self.email_tries,
+                "email_tries": self.email_tries, "time_tries": self.time_tries,
                 "silences": self.silences, "misses": self.misses,
                 "recording_started": self.recording_started, "question": self.question,
                 "history": self.history[-12:], "booked": self.booked,
@@ -953,6 +961,7 @@ class CallState:
                    zone=data.get("zone"), chosen=data.get("chosen"), email=data.get("email"),
                    extra_email=data.get("extra_email"),
                    email_tries=int(data.get("email_tries", 0)),
+                   time_tries=int(data.get("time_tries", 0)),
                    silences=int(data.get("silences", 0)),
                    misses=int(data.get("misses", 0)),
                    recording_started=bool(data.get("recording_started", False)),

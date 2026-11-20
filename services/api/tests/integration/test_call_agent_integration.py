@@ -488,8 +488,8 @@ async def test_a_time_she_cant_make_out_doesnt_loop_forever(env: dict[str, Any])
     again = service.spoken_text(await _say(env, call_id, "30 p.m. EST"))
     assert again == f"{script.TIME_AGAIN} {script.ask_hour_line(day)}"
     await _say(env, call_id, "30 p.m. EST")
-    end = await _say(env, call_id, "30 p.m. EST")  # the team takes over
-    assert service.spoken_text(end) == script.TEAM_LINE and "<Hangup" in end
+    end = await _say(env, call_id, "30 p.m. EST")  # a link is emailed; the call goes on (11-20)
+    assert service.spoken_text(end) == script.TIME_LINK_LINE and "<Hangup" not in end
     assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1", a) == 0
 
 
@@ -2609,3 +2609,44 @@ async def test_they_can_still_ask_to_book_at_any_time(env: dict[str, Any]) -> No
     await _say(env, call_id, "the roof leaks over the kitchen")
     said = service.spoken_text(await _say(env, call_id, "can I book a call with your team"))
     assert said == script.ASK_TIME_LINE
+
+
+# -- A time she can't catch (live call 2026-11-20) --------------------------------------------
+# "20" and "3 4 9 1" (misheard) got the same "What day and time works best for you?" twice, and
+# then a good "2 30 PM" got "Someone from our team will get back to you" -- the misheard tries
+# had counted as unanswered questions. Now a retry gives an example, a good answer after it is
+# used, and after three tries she has a link emailed instead of hanging up.
+
+
+async def test_a_time_she_cannot_catch_gets_an_example_and_a_later_good_answer_still_books(
+        env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    assert service.spoken_text(await _say(env, call_id, "I'd like to book a time")) == (
+        script.ASK_TIME_LINE)
+    assert service.spoken_text(await _say(env, call_id, "20")) == script.TIME_EXAMPLE_LINE
+    assert service.spoken_text(await _say(env, call_id, "3 4 9 1.")) == script.TIME_EXAMPLE_LINE
+    assert service.spoken_text(await _say(env, call_id, "2 30 PM.")) == script.ASK_DAY_LINE
+    day = (datetime.now(_NY) + timedelta(days=1)).date()
+    final = service.spoken_text(await _say(env, call_id, "tomorrow"))
+    assert final == _final(datetime.combine(day, dtime(14, 30), tzinfo=_NY),
+                           "America/New_York", "jane@example.com")
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
+                             "AND kind = 'agent_call_needs_human'", a) == 0
+
+
+async def test_after_three_tries_a_link_is_emailed_and_the_call_goes_on(
+        env: dict[str, Any]) -> None:
+    db, a = env["db"], env["a"]
+    call_id = await _answered(env, a)
+    await _say(env, call_id, "I'd like to book a time")
+    await _say(env, call_id, "20")
+    await _say(env, call_id, "3 4 9 1.")
+    r = await _webhook(env, call_id, "turn", {"Speech": "the uh the one", "CallUUID": "uuid-1"})
+    assert service.spoken_text(r.text) == script.TIME_LINK_LINE
+    assert "<Hangup" not in r.text  # she stays on the line for their questions
+    alert = await db.fetchrow("SELECT payload FROM notification_events WHERE tenant_id = $1 "
+                              "AND kind = 'agent_call_needs_human'", a)
+    assert alert is not None and alert["payload"]["reason"] == "booking_link_requested"
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
+                             "AND kind = 'agent_call_needs_human'", env["b"]) == 0

@@ -760,8 +760,14 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         state.stage = "email_ask"
         return await say(script.EMAIL_ASK_LINE)
 
+    async def give_link() -> TurnResult:
+        """Three tries and still no day or time: the team emails a link; the call goes on."""
+        state.stage, state.day, state.at, state.time_tries = "talking", None, None, 0
+        await _handoff(db, claims, session, "booking_link_requested")
+        return await say(script.TIME_LINK_LINE)
+
     async def pick_time() -> TurnResult:
-        return await _pick_time(db, claims, state, say, bye, ready, tz, when, speech)
+        return await _pick_time(db, claims, state, say, bye, ready, tz, when, speech, give_link)
 
     async def finish_booking(email: str | None) -> TurnResult:
         chosen = datetime.fromisoformat(state.chosen or "")
@@ -1032,12 +1038,16 @@ def _today(tz: str) -> date:
 
 async def _pick_time(db: Database, claims: AuthClaims, state: script.CallState, say: Any, bye: Any,
                      ready: Any, tz: str, when: tuple[date | None, tuple[int, int] | None],
-                     speech: str) -> TurnResult:
+                     speech: str, give_link: Any) -> TurnResult:
     """Collect the day and time the caller wants and check exactly that slot. Open -> on to
     the final check; taken or closed -> say so and ask for another. Rebecca proposes a time
     only when they ask what's open."""
     now, (day, at) = datetime.now(UTC), when
     repeated = state.stage == "asking_time" and day is None and at is None
+    if repeated:  # live 2026-11-20: an example, then a link -- never a hand-off for a mishearing
+        state.time_tries += 1
+        if state.time_tries >= script.TIME_TRIES:
+            return await give_link()  # type: ignore[no-any-return]
     state.stage, state.chosen = "asking_time", None
     state.day = day.isoformat() if day else state.day
     state.at = list(at) if at else state.at
@@ -1053,13 +1063,11 @@ async def _pick_time(db: Database, claims: AuthClaims, state: script.CallState, 
         state.chosen = slots[0].isoformat()
         return await ready()  # type: ignore[no-any-return]
     if asked is None:
-        state.misses += repeated  # two blanks -> the team takes over
         return await say(  # type: ignore[no-any-return]
             script.ASK_DAY_LINE if state.at else
-            script.WHICH_TIME if repeated else script.ASK_TIME_LINE)
+            script.TIME_EXAMPLE_LINE if repeated else script.ASK_TIME_LINE)
     if state.at is None:
         if slots:
-            state.misses += repeated
             line = script.ask_hour_line(asked.date())
             return await say(  # type: ignore[no-any-return]
                 f"{script.TIME_AGAIN} {line}" if repeated else line)

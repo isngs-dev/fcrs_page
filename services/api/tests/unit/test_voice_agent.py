@@ -899,3 +899,53 @@ async def test_without_hand_offs_a_miss_is_still_none() -> None:
     """The website's "Call us" agent: unchanged."""
     reply, _ = await _answer_with(f"NO_ANSWER_FOUND | {_HANDOFF}")
     assert reply is None
+
+
+# -- An answer ends when it has answered (owner, 2026-11-20) -----------------------------------
+# Live call 2026-11-20: answers ended "Would you like to set up a time to talk with our team
+# about it?" and "Our marketing expert can walk you through how this would work for your area."
+# The call is offered once their questions are done -- an answer never pushes it.
+
+
+@pytest.mark.parametrize("sentence", [
+    "Would you like to set up a time to talk with our team about it?",
+    "Our marketing expert can walk you through how this would work for your area.",
+    "Our marketing expert can help you decide which mix fits your business.",
+    "I'd be happy to book a call with our team for you.",
+    "Shall I schedule a quick call?"])
+def test_a_sentence_that_pushes_a_call_is_dropped(sentence: str) -> None:
+    from api.voice_agent.agent import without_call_pushes
+
+    assert without_call_pushes(f"Google Ads reach searching homeowners. {sentence}") == (
+        "Google Ads reach searching homeowners.")
+
+
+@pytest.mark.parametrize("sentence", [
+    "Campaigns can drive calls, form submissions, or visits to a landing page.",
+    "Homeowners can book inspections straight from the ad.",
+    "Our team sets up the tracking for every campaign."])
+def test_ordinary_answers_are_kept(sentence: str) -> None:
+    from api.voice_agent.agent import without_call_pushes
+
+    assert without_call_pushes(sentence) == sentence
+
+
+async def test_a_streamed_answer_never_says_the_push_and_never_repeats_itself() -> None:
+    reply, spoken, _ = await _streamed([
+        "We repair roofs for $200. ", "Our marketing expert can walk you through it. ",
+        "It takes a week."])
+    assert "marketing expert" not in " ".join(spoken) and "marketing expert" not in (reply or "")
+    assert reply == "We repair roofs for $200. It takes a week."
+
+
+def test_the_prompt_says_an_answer_ends_without_offering_a_call() -> None:
+    from api.voice_agent.agent import _VOICE_SYSTEM_PROMPT
+
+    assert "never end an answer by offering a call" in _VOICE_SYSTEM_PROMPT
+
+
+def test_she_may_still_describe_what_she_can_do() -> None:
+    from api.voice_agent.agent import without_call_pushes
+
+    line = "I can explain how booking inspections works with Roof Engine."
+    assert without_call_pushes(line) == line

@@ -154,8 +154,11 @@ def flux_query(keyterms: list[str]) -> str:
     params: list[tuple[str, str]] = [
         ("model", "flux-general-en"), ("encoding", "mulaw"), ("sample_rate", "8000"),
         ("eot_timeout_ms", "3000"), ("numerals", "true"),
+        # 2026-11-20: a pause after "So..." ended their turn at the default 0.7 -- she answered
+        # half a sentence. 0.8 waits for the whole one (a little later on some turns).
+        ("eot_threshold", "0.8"),
         # 2026-11-19: an early "they seem done" (EagerEndOfTurn) starts the knowledge lookup
-        # while Flux makes sure; must stay <= eot_threshold (default 0.7).
+        # while Flux makes sure; must stay below eot_threshold.
         ("eager_eot_threshold", "0.5")]
     params += [("keyterm", term) for term in keyterms if term.strip()]
     return urlencode(params)

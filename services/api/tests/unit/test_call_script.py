@@ -783,3 +783,10 @@ def test_no_line_after_their_need_or_a_no_pushes_a_booking() -> None:
         assert "find a time" not in line and "book" not in line
     assert script.her_question(script.DISCOVERY_THANKS_LINE) is None  # "yes" -> their questions
     assert "find a time" in script.CLOSE_OFFER_LINE  # the one offer, at the end
+
+
+def test_a_time_said_alone_is_read_and_the_retry_line_gives_an_example() -> None:
+    """Live 2026-11-20: "2 30 PM" came after two misheard tries and got a hand-off."""
+    assert script.parse_when("2 30 PM.", date(2026, 11, 20)) == (None, (14, 30))
+    assert "for example" in script.TIME_EXAMPLE_LINE
+    assert "link" in script.TIME_LINK_LINE and script.TIME_LINK_LINE.endswith("?")

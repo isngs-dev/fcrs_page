@@ -646,3 +646,14 @@ async def test_a_voicemail_greeting_before_she_speaks_goes_to_the_turn_logic() -
     assert voice.said == ["Hi, this is Rebecca, please call us back."]  # no opening first
     plivo.push(event="playedStream", name=plivo.events("checkpoint")[0]["name"])
     await asyncio.wait_for(task, 1)
+
+
+def test_flux_waits_for_more_certainty_before_it_ends_their_turn() -> None:
+    """Live 2026-11-20: a pause after "So..." or "I was saying that..." ended their turn and she
+    answered half a sentence. A higher end-of-turn threshold waits for the whole sentence; the
+    early ("eager") one still starts the knowledge lookup and must stay below it."""
+    from urllib.parse import parse_qs
+
+    params = parse_qs(realtime.flux_query([]))
+    eot, eager = float(params["eot_threshold"][0]), float(params["eager_eot_threshold"][0])
+    assert 0.8 <= eot <= 0.9 and eager < eot

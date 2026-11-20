@@ -96,7 +96,10 @@ _VOICE_SYSTEM_PROMPT = (
     "will be able to answer it more precisely -- in your own words, offering no call, time "
     "or price. "
     "Never guess, never promise, never say anything is booked, and never "
-    "invent prices, dates or commitments."
+    "invent prices, dates or commitments. "
+    # Owner, 2026-11-20: the call with the team is offered once their questions are done.
+    "When you have answered, stop: never end an answer by offering a call, a meeting or a "
+    "time, or by saying our team or marketing expert can walk them through it."
 )
 _NO_ANSWER = "NO_ANSWER_FOUND"
 BOOK_A_TIME = "BOOK_A_TIME"  # the Calling Agent's booking flow takes over from the model
@@ -257,6 +260,33 @@ def _streamed_effort(model: str) -> str:
     return "none" if model.startswith(_NO_REASONING_MODELS) else "low"
 
 
+# Owner, 2026-11-20 (live: "Would you like to set up a time to talk with our team about it?",
+# "Our marketing expert can walk you through how this would work"): an answer never pushes the
+# call -- it's offered once their questions are done. Such a sentence is left out, said or not.
+_CALL_PUSH = re.compile(
+    r"\b(?:would you like|shall i|should i|do you want|want me to|(?:i'?d|i would) be happy to)"
+    r"\b.{0,60}\b(?:set up|book|schedule|arrange|find a time)\b"
+    r"|\b(?:our|the) (?:marketing )?(?:experts?|team|specialists?)\b.{0,40}"
+    r"\b(?:can|will|could|would)\b.{0,30}"
+    r"\b(?:walk you through|help you decide|go over|talk you through|discuss|explain)\b",
+    re.IGNORECASE)
+
+
+def _pushes_a_call(sentence: str) -> bool:
+    return bool(_CALL_PUSH.search(sentence))
+
+
+def without_call_pushes(text: str) -> str:
+    """The reply without its call-pushing sentences (split as the streamed call splits it)."""
+    kept, rest = [], text.strip()
+    while rest:
+        end = _SENTENCE_END.search(rest)
+        sentence, rest = ((rest[:end.end()], rest[end.end():].strip()) if end else (rest, ""))
+        if not _pushes_a_call(sentence):
+            kept.append(sentence.strip())
+    return " ".join(kept)
+
+
 def _sayable(sentence: str, context: str, pricing: str | None = None) -> bool:
     """The whole reply's checks, on one sentence: no model signal, nothing the output
     guardrails block, no price or promise the knowledge base doesn't state -- and, once the
@@ -282,6 +312,8 @@ async def _speak_as_written(chunks: AsyncIterator[Chunk], speak: LiveVoice, cont
             if not _sayable(sentence, context, pricing) or (can_book and BOOK_A_TIME in text):
                 stopped = True
                 break
+            if _pushes_a_call(sentence):  # left out of the final reply too
+                continue
             await speak.sentence(sentence)
     return text
 
@@ -391,6 +423,8 @@ async def answer_from_knowledge(
     finally:
         await provider.aclose()
     reply = text.strip()
+    if _NO_ANSWER not in reply and BOOK_A_TIME not in reply:
+        reply = without_call_pushes(reply)  # as spoken early: nothing is said twice
     if can_book and BOOK_A_TIME in reply:
         return BOOK_A_TIME
     if not reply:
