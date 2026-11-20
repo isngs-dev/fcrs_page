@@ -12,6 +12,9 @@
  * silently dropped rather than accepted and left unformatted.
  */
 export function formatUsPhoneInput(raw: string): string {
+  // A number with a country code ("+91 98765 43210") is left as typed -- the US format cut
+  // an Indian number to 10 digits (live 2026-11-20).
+  if (raw.trimStart().startsWith("+")) return raw.replace(/[^\d+\s()-]/g, "").slice(0, 24);
   const digits = raw.replace(/\D/g, "").slice(0, 10);
   if (digits.length === 0) return "";
   if (digits.length < 4) return `(${digits}`;

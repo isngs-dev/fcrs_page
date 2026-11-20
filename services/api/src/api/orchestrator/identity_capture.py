@@ -50,7 +50,7 @@ ASK_EMAIL_INTENT = "ask_email"  # our own email ask, after their first answered 
 PHONE_ASK_INTENTS = (ASK_PHONE_INTENT, WRAP_UP_PHONE_INTENT)
 CHAT_EMAIL_CONSENT_VERSION = "chat-2026-10-a"  # see api.agents.consent_wording
 
-ASK_NAME_REPLY = "Happy to help with that! Before we dive in, what's your name?"
+ASK_NAME_REPLY = "Hi there! Before we dive in, may I have your name?"
 # The call-consent disclosure: code-owned and exact (the model never writes it).
 # Stored as the consent wording (agents.consent_wording, chat-2026-10-a "call") --
 # a number shared right after this is AI-call consent (A1 D5); one shared

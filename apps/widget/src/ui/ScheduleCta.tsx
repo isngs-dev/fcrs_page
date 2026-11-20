@@ -48,6 +48,7 @@ import {
   type Slot,
 } from "../schedule";
 import { isVoiceCallEnabled } from "../session";
+import { CALL_CONSENT_TEXT, CHANNEL_CONSENT_VERSION, browserTimeZone, channelConsentOffer } from "../channelConsent";
 import type { BookingPrefill } from "../turn";
 import { formatUsPhoneInput } from "../phoneFormat";
 
@@ -301,6 +302,11 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   // consent wording covers the call (sent as voiceCallConsent with the booking).
   const callOn = isVoiceCallEnabled();
   const consentText = callOn ? SCHEDULE_CALL_CONSENT_TEXT : SCHEDULE_CONSENT_TEXT;
+  // Owner, 2026-11-20 (option A): Rebecca's own call, offered with the same optional AI-call
+  // consent as the lead form (never with the older confirmation call, which has its own).
+  const callOffer = !callOn && (channelConsentOffer()?.call ?? false);
+  const [callConsent, setCallConsent] = useState(false);
+  const hasPhone = phone.replace(/\D/g, "").length >= 8;
   const phoneOk = !callOn || phone.replace(/\D/g, "").length >= 10;
   // A name typed into the email box used to reach the server and come back
   // as a generic "couldn't confirm" -- check the shape here and say so.
@@ -413,6 +419,22 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
     }
   }, [step.name, calendarVisible, existingDecisionPending, monthIndex]);
 
+  const callConsentRow = (submitting: boolean) => callOffer ? (
+    <div className="cw-sched-consent-row">
+      <input
+        id="cw-sched-call-consent"
+        className="cw-sched-checkbox"
+        type="checkbox"
+        checked={callConsent && hasPhone}
+        disabled={submitting || !hasPhone}
+        onChange={(e) => setCallConsent(e.target.checked)}
+      />
+      <label className="cw-sched-consent-label" htmlFor="cw-sched-call-consent">
+        {CALL_CONSENT_TEXT}
+      </label>
+    </div>
+  ) : null;
+
   function selectSlot(slot: Slot) {
     setConsentChecked(false);
     setStep({ name: "confirm", slot });
@@ -420,12 +442,19 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
 
   async function confirmBooking(slot: Slot) {
     setStep({ name: "booking", slot });
+    const visitorZone = browserTimeZone();
 
     const result = await bookSlot(config, {
       startsAt: slot.startsAt,
       timezone: timeZone,
       consent: { granted: true, purpose: SCHEDULE_CONSENT_PURPOSE, text: consentText },
       ...(callOn ? { voiceCallConsent: true } : {}),
+      ...(callOffer && callConsent && hasPhone
+        ? {
+            channelConsents: { email: false, call: true, version: CHANNEL_CONSENT_VERSION },
+            ...(visitorZone ? { visitorTimezone: visitorZone } : {}),
+          }
+        : {}),
       ...(prefill?.reschedule ? { reschedule: true } : {}),
       ...(leadId ? { leadId } : {}),
       ...(email.trim() ? { email: email.trim() } : {}),
@@ -707,6 +736,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
               {consentText}
             </label>
           </div>
+          {callConsentRow(submitting)}
 
           {step.name === "book-error" && <div className="cw-sched-error" role="alert">{step.message}</div>}
 
@@ -740,14 +770,14 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
         <p>{label}</p>
         {prefill?.reschedule && <p className="cw-sched-reschedule-note">This replaces your current booking.</p>}
 
-        {(prefill || callOn) && (
+        {(prefill || callOn || callOffer) && (
           <>
             {/* Details the visitor typed in chat -- shown so they can check or fix them. */}
             <input className="cw-input cw-sched-name-input" type="text" value={name} onChange={(e) => setName(e.target.value)} disabled={submitting} aria-label="Name" placeholder="Name" autoComplete="name" />
             <input className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
             {emailHint}
-            {(callOn || prefill?.phone) && (
-              <input className="cw-input cw-sched-phone-input" type="tel" inputMode="numeric" value={phone} onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))} disabled={submitting} required aria-label="Phone" placeholder="(555) 123-4567" autoComplete="tel" />
+            {(callOn || prefill?.phone || callOffer) && (
+              <input className="cw-input cw-sched-phone-input" type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))} disabled={submitting} required={callOn} aria-label={callOn ? "Phone" : "Phone, optional"} placeholder="(555) 123-4567" autoComplete="tel" />
             )}
           </>
         )}
@@ -765,6 +795,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             {consentText}
           </label>
         </div>
+        {callConsentRow(submitting)}
 
         {step.name === "book-error" && (
           <div className="cw-sched-error" role="alert">

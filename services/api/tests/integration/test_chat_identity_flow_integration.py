@@ -100,14 +100,12 @@ async def test_name_first_then_answers_by_name_then_asks_for_email(chat: dict[st
     assert await db.fetchval("SELECT name FROM leads WHERE visitor_id = $1",
                              visitor.subject) == "Jane"
 
-    # 2026-11-04: their first answered question ends with our own email ask (the model's
-    # was too easy to skip), and that turn the model isn't told to ask as well.
-    assert second.reply == "A grounded answer.\n\n" + ic.EMAIL_ASK
-    assert ic.EMAIL_GUIDANCE not in provider.prompts[-1][0].content
+    # Owner, 2026-11-20: an answer is never followed by a forced email ask; the model may ask
+    # when it genuinely helps them (a price, a quote, a next step).
+    assert second.reply == "A grounded answer."
+    assert ic.EMAIL_GUIDANCE in provider.prompts[-1][0].content
     gutters = await say("Do you also do gutters?", conv)
-    assert ic.EMAIL_ASK not in gutters.reply  # asked once
-    # Live 2026-11-18: and the model isn't told to ask again either (it did, two turns on).
-    assert ic.EMAIL_GUIDANCE not in provider.prompts[-1][0].content
+    assert ic.EMAIL_ASK not in gutters.reply
 
     ack = await say("sure, jane@example.com", conv)
     assert ack.reply == ic.email_ack_reply("Jane", "jane@example.com", ask_phone=True)
@@ -521,21 +519,21 @@ async def test_email_only_before_an_email_asks_for_the_email_then_never_for_a_nu
 # -- The email ask after an answer (2026-11-04) ---------------------------------------------
 
 
-async def test_the_first_answered_question_asks_for_the_email_and_chitchat_does_not(
+async def test_an_answered_question_is_never_followed_by_a_forced_email_ask(
     chat: dict[str, Any],
 ) -> None:
-    """A real chat answered two questions and never asked for an email."""
+    """Owner, 2026-11-20 (live: a full answer about services ended "What's the best email to
+    reach you?"). Their questions first; an email they give is still taken."""
     db, visitor, provider = chat["db"], chat["visitor"], chat["provider"]
     say = _sayer(db, visitor)
     await say("Is it just Google and Facebook advertising?")
     provider.label = "chitchat"
-    hello = await say("Aastha")
-    assert ic.EMAIL_ASK not in hello.reply
+    await say("Aastha")
     provider.label = "question"
     answered = await say("So what's included beyond the advertising?")
-    assert answered.reply.endswith(ic.EMAIL_ASK)
+    assert answered.reply == "A grounded answer."
     assert await db.fetchval("SELECT count(*) FROM messages WHERE conversation_id = $1 "
-                             "AND intent = $2", answered.conversation_id, ic.ASK_EMAIL_INTENT) == 1
+                             "AND intent = $2", answered.conversation_id, ic.ASK_EMAIL_INTENT) == 0
     ack = await say("aastha@example.com")
     assert ack.reply == ic.email_ack_reply("Aastha", "aastha@example.com", ask_phone=True)
 
@@ -682,16 +680,16 @@ async def test_without_details_yes_asks_only_for_what_is_missing(chat: dict[str,
 # -- Live chat 2026-11-18: the email asked twice; "Nothing" not heard as a goodbye ------------
 
 
-async def test_once_the_email_is_asked_for_the_model_is_not_told_to_ask_again(
+async def test_until_there_is_an_email_only_the_model_may_ask_when_it_helps(
     chat: dict[str, Any],
 ) -> None:
     db, visitor, provider = chat["db"], chat["visitor"], chat["provider"]
     say = _sayer(db, visitor)
     await say("Do you fix leaks?")
-    answered = await say("Vinith")  # the deferred question, answered with our own email ask
-    assert answered.reply.endswith(ic.EMAIL_ASK)
+    answered = await say("Vinith")  # the deferred question, answered -- nothing tacked on
+    assert answered.reply == "A grounded answer."
     await say("So how can roofengine help me get roofers?")
-    assert ic.EMAIL_GUIDANCE not in provider.prompts[-1][0].content  # no second ask from it
+    assert ic.EMAIL_GUIDANCE in provider.prompts[-1][0].content
 
 
 async def test_nothing_after_what_else_is_a_goodbye_and_rings_the_waiting_call(
@@ -843,3 +841,82 @@ async def test_a_chat_contact_that_was_already_emailed_is_not_folded_in(
     task, _ = await _chat_call(db, tenant)
     assert task.contact_id != old
     assert await _dialled(db, tenant) == "+17868233553"
+
+
+
+# -- Live chat 2026-11-20: details asked for, given, then ignored; asked for again -----------
+
+
+async def test_details_given_after_the_booking_ask_open_the_card_the_first_time(
+    chat: dict[str, Any],
+) -> None:
+    """Harshal gave his email and +91 number when asked; the bot answered an earlier question
+    instead (the details had just been saved as follow-up contact), then asked again."""
+    db, visitor, provider = chat["db"], chat["visitor"], chat["provider"]
+    say = _sayer(db, visitor)
+    await say("Do you fix leaks?")
+    await say("Jane")
+    provider.label = "scheduling_request"
+    asked = await say("Can you share your sales team contact?")
+    assert asked.action is None and "email and phone number" in asked.reply
+    assert "name" not in asked.reply.split("share")[-1]  # her name is already known
+    provider.label = "other"
+    card = await say("jane@example.com this is my email and +91 98765 43210 this is my number")
+    assert card.action in ("schedule_cta", "lead_form")
+    assert card.prefill is not None
+    assert (card.prefill["name"], card.prefill["email"]) == ("Jane", "jane@example.com")
+    # as they typed it; the booking stores it as +919876543210
+    assert card.prefill["phone"].replace(" ", "") == "+919876543210"
+
+
+async def test_a_booking_request_uses_what_they_already_gave(chat: dict[str, Any]) -> None:
+    say = await _detailed_visitor(chat)
+    chat["provider"].label = "scheduling_request"
+    card = await say("I've shared my information earlier, can't you schedule a call with that?")
+    assert card.action in ("schedule_cta", "lead_form")
+    assert card.prefill is not None and {k: card.prefill[k] for k in ("name", "email", "phone")} == {
+        "name": "Jane", "email": "jane@example.com", "phone": "+17868233553"}
+    assert "share your name" not in card.reply
+
+
+async def test_a_hello_gets_a_greeting_before_the_name_question(chat: dict[str, Any]) -> None:
+    first = await _sayer(chat["db"], chat["visitor"])("Hello")
+    assert first.reply == ic.ASK_NAME_REPLY
+    assert ic.ASK_NAME_REPLY.startswith("Hi there!") and "Happy to help with that" not in first.reply
+
+
+# -- Option A (owner, 2026-11-20): a chat booking with call consent is rung now ----------------
+
+
+async def test_a_booking_with_call_consent_is_rung_now_for_that_tenant_only(
+    chat: dict[str, Any],
+) -> None:
+    from api.agents import hooks as agent_hooks
+    from api.agents.consent_wording import WORDING, widget_consent
+    from api.leads.repository import create_lead
+
+    db, visitor, tenant = chat["db"], chat["visitor"], chat["tenant"]
+    await _agents_on(db, tenant)
+    lead_id = await create_lead(db, visitor, visitor_id=visitor.subject, name="Harshal",
+                                email="h@example.com", phone="+919876543210",
+                                consent={"granted": True}, source="booking")
+    await agent_hooks.inbound_lead_created(
+        db, visitor, lead_id=lead_id, channels=["call"], version="2026-10-a",
+        timezone="Asia/Kolkata", form="booking",
+        consents=[widget_consent("call", "2026-10-a", lead_id=lead_id)])
+    await dispatch.dispatch_events(db, limit=50)
+    contact_id = await db.fetchval("SELECT contact_id FROM contacts WHERE tenant_id = $1 "
+                                   "AND lead_id = $2", tenant, lead_id)
+    first = await db.fetchrow("SELECT t.channel, t.scheduled_at <= now() AS due FROM "
+                              "outreach_tasks t JOIN outreach_plans p USING (tenant_id, plan_id) "
+                              "WHERE p.contact_id = $1 ORDER BY t.step_index LIMIT 1", contact_id)
+    assert first is not None and first["channel"] == "call" and first["due"]
+    consent = await db.fetchrow("SELECT basis, wording FROM contact_consents WHERE "
+                                "contact_id = $1 AND channel = 'call'", contact_id)
+    assert consent is not None and tuple(consent) == ("express_written_consent",
+                                                      WORDING["2026-10-a"]["call"])
+    assert await db.fetchval("SELECT timezone FROM contacts WHERE contact_id = $1",
+                             contact_id) == "Asia/Kolkata"
+    assert await db.fetchval("SELECT count(*) FROM outreach_tasks WHERE tenant_id <> $1 AND "
+                             "plan_id IN (SELECT plan_id FROM outreach_plans WHERE contact_id = $2)",
+                             tenant, contact_id) == 0

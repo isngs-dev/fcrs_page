@@ -268,8 +268,9 @@ _GROUNDING_SYSTEM_PROMPT = (
     "their market are done by our team, so say the team can do that and offer to connect "
     "them. If the context does not contain the answer, reply with `NO_ANSWER_FOUND | ` "
     "followed by one or two short sentences to the visitor in your own words: acknowledge "
-    "what they asked or shared, say our team can help with exactly that, and offer to "
-    "connect them -- no prices, numbers, promises or facts beyond the context. Never "
+    "what they asked or shared and say our team can help with exactly that -- offer to "
+    "connect them only if you haven't already offered in this conversation -- no prices, "
+    "numbers, promises or facts beyond the context. Never "
     "ask for their phone number yourself. Never apologize, never invent facts, prices, or "
     "commitments."
     + _FORMATTING_RULES
@@ -454,6 +455,17 @@ def _name_from_messages(messages: list[str]) -> str | None:
             if _NAME_PART_RE.match(part) and not words & _NOT_NAME_WORDS:
                 return part.rstrip(".")
     return None
+
+
+async def _lead_details(db: Database, claims: AuthClaims, enabled: bool) -> dict[str, str]:
+    """The name, email and number this visitor already gave (their lead), for the card --
+    only where the chat captures them (the identity gate); else nothing is looked up."""
+    if not enabled:
+        return {}
+    lead = await identity_capture.visitor_lead(db, claims)
+    return {key: str(value) for key, value in (
+        ("name", lead.name if lead else None), ("email", lead.email if lead else None),
+        ("phone", lead.phone if lead else None)) if value}
 
 
 def _missing_details_reply(prefill: dict[str, str], missing: list[str]) -> str:
@@ -1022,8 +1034,11 @@ async def _resolve_turn(
     # reschedule instead. Pre-empts the turn cap. The card is the existing
     # consent-gated booking flow, pre-filled: nothing is booked from chat text.
     # An email just captured as follow-up contact (Step 5.5) isn't a booking request.
-    has_email = _EMAIL_RE.search(message) is not None and not captured_email
-    has_phone = _find_phone(message) is not None and not captured_phone
+    # Live 2026-11-20: an email + number sent right after our booking ask were saved as
+    # follow-up contact, then ignored here -- the bot answered an earlier question instead.
+    booking_ask = last_intent == "scheduling_request"
+    has_email = _EMAIL_RE.search(message) is not None and (not captured_email or booking_ask)
+    has_phone = _find_phone(message) is not None and (not captured_phone or booking_ask)
     after_ask = (
         last_intent == "scheduling_request"
         and await get_last_assistant_decision(db, claims, conversation_id) == "escalate"
@@ -1039,12 +1054,13 @@ async def _resolve_turn(
         visitor_messages = [m.content for m in wm["messages"] if m.role == "user"]
         if not visitor_messages or visitor_messages[-1] != message:
             visitor_messages.append(message)
-        prefill = await _extract_booking_prefill(
+        prefill = {**await _lead_details(db, claims, cfg.identity_gate_enabled),
+                   **await _extract_booking_prefill(
             provider,
             config.model,
             "\n".join(visitor_messages[-_BOOKING_CONTEXT_MESSAGES:]),
             datetime.now(UTC).date(),
-        )
+        )}  # what they gave before (or just now) fills in what the messages don't say
         if "name" not in prefill:
             fallback_name = _name_from_messages(visitor_messages[-_BOOKING_CONTEXT_MESSAGES:])
             if fallback_name:
@@ -1159,13 +1175,9 @@ async def _resolve_turn(
                                             threshold=cfg.escalate_threshold)
         intent = "question" if known else intent
 
-    # Step 7.5 (2026-11-04): their first real question that gets a clean answer ends with our
-    # own email ask (once) -- the model's (6.5) was too easy to skip -- and that turn the
-    # model isn't told to ask as well.
-    if (ask_email and intent == "question" and suffix is None
-            and identity_capture.ASK_EMAIL_INTENT not in recent_bot):
-        suffix, suffix_intent = identity_capture.EMAIL_ASK, identity_capture.ASK_EMAIL_INTENT
-        ask_email = False
+    # (Step 7.5, our own email ask after the first clean answer, was removed by the owner on
+    # 2026-11-20: their questions first. The model still asks when it genuinely helps them --
+    # Step 6.5 -- and a question it can't answer brings up the lead/booking card.)
 
     # Step 7.55 (plan 1.5): a ready visitor (getting started, a quote, a start date, a price
     # for their business) is offered a time, once a conversation, never over a booking.
@@ -1264,10 +1276,21 @@ async def _resolve_turn(
         upcoming = await get_upcoming_booking(db, claims, claims.subject)
         if upcoming is not None:
             return _reschedule_offer(conversation_id, assistant_id, upcoming)
+        # Live 2026-11-20: name, email and number were all known, and all asked for again.
+        given = await _lead_details(db, claims, cfg.identity_gate_enabled)
+        missing = [key for key, _ in _REQUIRED_DETAILS if key not in given]
+        if given and not missing:
+            action = await _schedule_action(db, claims)
+            return _FixedOutcome(
+                conversation_id=conversation_id, assistant_id=assistant_id,
+                reply=(_BOOKING_DETAILS_REPLY if action == "schedule_cta"
+                       else _BOOKING_DETAILS_LEAD_REPLY),
+                decision="answer", confidence=None, sources=[], intent=intent, action=action,
+                grounded=False, tokens=None, prefill=given)
         return _FixedOutcome(
             conversation_id=conversation_id,
             assistant_id=assistant_id,
-            reply=_SCHEDULING_REPLY,
+            reply=_missing_details_reply(given, missing) if given else _SCHEDULING_REPLY,
             decision="escalate",
             confidence=None,
             sources=[],

@@ -571,7 +571,7 @@ async def get_upcoming_for_contact(db: Database, claims: AuthClaims, *, lead_id:
     _reject_global(claims)
     row = await db.fetchrow(
         "SELECT event_id, lead_id, visitor_id, email, name, starts_at, ends_at, timezone, "
-        "status, calendar_ref, consent, created_at FROM schedule_events "
+        "status, calendar_ref, consent, created_at, source FROM schedule_events "
         "WHERE tenant_id = $1 AND status = 'booked' AND starts_at > now() "
         "AND (($2::text IS NOT NULL AND lead_id = $2) "
         "     OR ($3::text IS NOT NULL AND lower(email) = lower($3))) "
@@ -582,4 +582,4 @@ async def get_upcoming_for_contact(db: Database, claims: AuthClaims, *, lead_id:
         event_id=str(row["event_id"]), lead_id=row["lead_id"], visitor_id=row["visitor_id"],
         email=row["email"], name=row["name"], starts_at=row["starts_at"], ends_at=row["ends_at"],
         timezone=str(row["timezone"]), status=str(row["status"]), calendar_ref=row["calendar_ref"],
-        consent=row["consent"], created_at=row["created_at"])
+        consent=row["consent"], created_at=row["created_at"], source=str(row["source"]))

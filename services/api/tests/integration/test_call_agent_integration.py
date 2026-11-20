@@ -2650,3 +2650,36 @@ async def test_after_three_tries_a_link_is_emailed_and_the_call_goes_on(
     assert alert is not None and alert["payload"]["reason"] == "booking_link_requested"
     assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
                              "AND kind = 'agent_call_needs_human'", env["b"]) == 0
+
+
+# -- Option A (owner, 2026-11-20): they just booked in the chat and ticked the call ----------
+
+
+async def test_a_visitor_who_just_booked_in_the_chat_is_thanked_and_asked_about_their_need(
+        env: dict[str, Any]) -> None:
+    """Not "would you like to keep that time, or reschedule?" a minute after booking it: a
+    thank-you for the booking, then her question about their need -- the booking still
+    stands (no second one)."""
+    from api.scheduling import booking
+
+    db, a = env["db"], env["a"]
+    claims = AuthClaims(subject="admin", role=Role.CLIENT_ADMIN, tenant_id=a)
+    await _no_questions(env, a)
+    found = await booking.next_open_slots(db, claims, datetime.now(UTC), count=1)
+    assert found is not None and found[0]
+    start = found[0][0]
+    status, event, _, _ = await booking.book_slot(
+        db, claims, start=start, timezone="America/New_York", email="jane@example.com",
+        name="Jane Doe", lead_id=None, visitor_id=None, attendee_phone=None,
+        consent={"granted": True, "purpose": "booking", "text": "test"})
+    assert status == "booked" and event is not None
+    call_id, _ = await _dial(env, a)
+    answer = await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    opening = service.spoken_text(answer.text)
+    assert "Thanks for booking a call with our team for " in opening
+    assert script.say_time(start, "America/New_York") in opening
+    assert service.spoken_text(await _say(env, call_id, "yes")) == f"Great. {_QUESTION}"
+    thanks = service.spoken_text(await _say(env, call_id, "we want more roof replacement jobs"))
+    assert thanks == script.discovery_thanks_line("Jane")
+    assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1 "
+                             "AND status = 'booked'", a) == 1

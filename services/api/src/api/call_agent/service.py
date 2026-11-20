@@ -256,11 +256,18 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
     upcoming = (await get_upcoming_for_contact(db, claims, lead_id=contact.lead_id,
                                                email=contact.email) if contact else None)
     if upcoming is not None:  # booked already (e.g. on the website form): keep or move it
-        written["question"] = script.booked_question(upcoming.starts_at, upcoming.timezone)
         written["booked"] = {
             "event_id": upcoming.event_id, "tz": upcoming.timezone,
             "at": upcoming.starts_at.astimezone(UTC).isoformat(),
             "minutes": str(int((upcoming.ends_at - upcoming.starts_at).total_seconds() // 60))}
+        # Option A (owner, 2026-11-20): booked in the chat a moment ago -> thanked, then asked
+        # about their need; never "keep it or reschedule?" a minute after they chose it.
+        if (upcoming.source == "native"
+                and datetime.now(UTC) - upcoming.created_at < JUST_BOOKED):
+            written["hook"] = script.just_booked_line(upcoming.starts_at, upcoming.timezone)
+            written["booked"]["fresh"] = "true"
+        else:
+            written["question"] = script.booked_question(upcoming.starts_at, upcoming.timezone)
     await repo.update_session(db, claims, call_id, session=written)
     try:
         if on_telnyx:  # no answer XML there: the events URL and the audio stream go with the dial
@@ -283,6 +290,8 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
         **({"provider_call_uuid": placed.call_uuid} if placed.call_uuid else {}))
     return ExecutorResult(status="pending", result={"call_id": call_id})
 
+
+JUST_BOOKED = timedelta(minutes=15)  # a chat booking this recent was just made
 
 # -- Turns ----------------------------------------------------------------------------------
 
@@ -879,7 +888,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             state.stage, state.after_details = "details_check", opening_question
             line, state.details = state.details, None
             return await say(f"Great. {line}")
-        state.stage = "booked_check" if state.booked else "discovery"
+        fresh = bool(state.booked and state.booked.get("fresh"))
+        state.stage = "booked_check" if state.booked and not fresh else "discovery"
         return await say(f"Great. {opening_question}")
 
     # Booking (L6, 2026-10-30): the caller's day and time -> their email if we don't have it ->

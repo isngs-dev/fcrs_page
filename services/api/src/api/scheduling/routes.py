@@ -21,16 +21,23 @@ from zoneinfo import ZoneInfo
 from common.auth import AuthClaims
 from common.errors import ValidationError
 from common.logging import get_logger
+from common.phone import to_e164
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, field_validator
 
 from api.agents import hooks as agent_hooks
+from api.agents.consent_wording import ChannelConsentsIn, granted_channels, widget_consent
 from api.calls.voice import schedule_booking_call
 from api.calls.voice_tasks import place_voice_call
 from api.config import ApiSettings, get_api_settings
 from api.gateway.dependencies import get_visitor_claims
 from api.leads.assignment import assign_lead_fail_open
-from api.leads.repository import add_activity, create_lead, get_lead_id_by_visitor_id
+from api.leads.repository import (
+    add_activity,
+    create_lead,
+    get_lead_id_by_visitor_id,
+    update_lead_phone,
+)
 from api.leads.tasks import classify_lead_email
 from api.notifications.emit import emit_event_safe
 from api.notifications.recipients import resolve_event_recipient
@@ -84,6 +91,17 @@ class ConsentPayload(BaseModel):
     text: str
 
 
+def _valid_zone(name: str | None) -> str | None:
+    """The browser's IANA zone if real, else ``None`` (the call then waits for a known zone)."""
+    if not name:
+        return None
+    try:
+        ZoneInfo(name)
+    except Exception:  # noqa: BLE001 -- any bad name: unknown, never a guess
+        return None
+    return name
+
+
 class BookRequest(BaseModel):
     """Body for POST /public/schedule/book."""
 
@@ -98,6 +116,10 @@ class BookRequest(BaseModel):
     # call to `phone` (the widget only offers it when the chatbot has calls on).
     # No consent -> no call, whatever else is configured.
     voice_call_consent: bool = False
+    # Owner, 2026-11-20 (option A): the same optional AI-call consent box as the lead form
+    # (server-owned wording per version) -> Rebecca calls them, on their local hours.
+    channel_consents: ChannelConsentsIn | None = None
+    visitor_timezone: str | None = None
     # Move the visitor's current upcoming booking to this slot: the new one is
     # booked first (same checks/emails), then the old one is cancelled.
     reschedule: bool = False
@@ -393,6 +415,11 @@ async def book_slot(
             "Consent to store contact information is required.",
             code="CONSENT_REQUIRED",
         )
+    # Option A (owner, 2026-11-20): checked before anything is stored -- an unknown wording
+    # version or call consent without a diallable number is a 422, not a silent no-call.
+    ai_call_phone = to_e164(body.phone or "")
+    ai_call = "call" in granted_channels(body.channel_consents,
+                                         has_phone=ai_call_phone is not None)
 
     db = request.app.state.db
     settings = get_api_settings()
@@ -798,6 +825,24 @@ async def book_slot(
                 "tenant_id": claims.tenant_id,
             },
         )
+
+    # Option A: they ticked the AI-call box -> Rebecca rings them now (explicit evidence, like a
+    # website form), on their own local hours. Sent after meeting_booked above, so stopping
+    # their old follow-ups never stops this call. Never fails the booking.
+    if ai_call and ai_call_phone and lead_id is not None and body.channel_consents is not None:
+        try:
+            await update_lead_phone(db, claims, lead_id, ai_call_phone)
+            await agent_hooks.inbound_lead_created(
+                db, claims, lead_id=lead_id, channels=["call"],
+                version=body.channel_consents.version,
+                timezone=_valid_zone(body.visitor_timezone), form="booking",
+                consents=[widget_consent("call", body.channel_consents.version, lead_id=lead_id,
+                                         event_id=event.event_id,
+                                         captured_at=datetime.now(UTC).isoformat())])
+        except Exception:
+            _log.warning("booking_ai_call_degraded", extra={
+                "event": "booking_ai_call_degraded", "event_id": event.event_id,
+                "tenant_id": claims.tenant_id})
 
     return BookResponse(
         event_id=event.event_id,

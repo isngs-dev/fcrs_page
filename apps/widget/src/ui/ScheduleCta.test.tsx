@@ -20,10 +20,15 @@ vi.mock("../schedule", async () => {
 });
 
 let voiceCallOn = false;
-vi.mock("../session", () => ({ isVoiceCallEnabled: () => voiceCallOn }));
+let outreach: { email: boolean; call: boolean; version: string } | null = null;
+vi.mock("../session", () => ({
+  isVoiceCallEnabled: () => voiceCallOn,
+  getOutreachConsent: () => outreach,
+}));
 
 import { ScheduleCta } from "./ScheduleCta";
 import { SCHEDULE_CALL_CONSENT_TEXT, SCHEDULE_CONSENT_TEXT } from "../schedule";
+import { CALL_CONSENT_TEXT, CHANNEL_CONSENT_VERSION } from "../channelConsent";
 
 const baseConfig: WidgetConfig = {
   clientKey: "pk_test_123",
@@ -1249,5 +1254,90 @@ describe("ScheduleCta opened from chat with a day map", () => {
     expect(fetchSlotsMock.mock.calls[0]![1]).toEqual({ dateFrom: "2026-07-20", dateTo: "2026-07-20" });
     expect(container.querySelector(".cw-sched-day-strip")).toBeNull();
     expect(container.querySelectorAll(".cw-sched-time-slot")).toHaveLength(2);
+  });
+});
+
+// Owner, 2026-11-20 (option A): a visitor who books from the chat can tick the same AI-call
+// consent the lead form shows -- then Rebecca calls (live: an Indian number on the card, no call).
+describe("ScheduleCta with Rebecca's calls offered", () => {
+  beforeEach(() => {
+    outreach = { email: true, call: true, version: CHANNEL_CONSENT_VERSION };
+  });
+  afterEach(() => {
+    outreach = null;
+  });
+
+  async function openConfirm(prefill: { name: string; email: string; phone?: string }) {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+    bookSlotMock.mockResolvedValueOnce({
+      ok: true,
+      booking: { eventId: "evt-1", startsAt: SLOT_A.startsAt, endsAt: SLOT_A.endsAt, status: "booked" },
+    });
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={prefill} />);
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+  }
+
+  function callBox(): HTMLInputElement {
+    const input = container.querySelector<HTMLInputElement>("#cw-sched-call-consent");
+    if (!input) throw new Error("call consent box not found");
+    return input;
+  }
+
+  it("shows the approved call wording, unticked, and books with it only when ticked", async () => {
+    await openConfirm({ name: "Harshal", email: "h@example.com", phone: "+919876543210" });
+    expect(container.textContent).toContain(CALL_CONSENT_TEXT);
+    expect(callBox().checked).toBe(false); // optional -- never pre-ticked
+    act(() => {
+      getConsentCheckbox().click();
+      callBox().click();
+    });
+    act(() => {
+      getConfirmButton().click();
+    });
+    await flush();
+    const [, input] = bookSlotMock.mock.calls[0]!;
+    expect(input).toMatchObject({
+      phone: "+919876543210",
+      channelConsents: { email: false, call: true, version: CHANNEL_CONSENT_VERSION },
+    });
+    expect(input).not.toHaveProperty("voiceCallConsent");
+  });
+
+  it("without the tick the booking never claims call consent", async () => {
+    await openConfirm({ name: "Harshal", email: "h@example.com", phone: "+919876543210" });
+    act(() => {
+      getConsentCheckbox().click();
+    });
+    act(() => {
+      getConfirmButton().click();
+    });
+    await flush();
+    const [, input] = bookSlotMock.mock.calls[0]!;
+    expect(input).not.toHaveProperty("channelConsents");
+  });
+
+  it("the call box waits for a phone number", async () => {
+    await openConfirm({ name: "Harshal", email: "h@example.com" });
+    expect(callBox().disabled).toBe(true);
+  });
+});
+
+describe("ScheduleCta without Rebecca's calls", () => {
+  it("shows no call box", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={{ name: "J", email: "j@example.com" }} />);
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+    expect(container.querySelector("#cw-sched-call-consent")).toBeNull();
+    expect(container.textContent).not.toContain(CALL_CONSENT_TEXT);
   });
 });

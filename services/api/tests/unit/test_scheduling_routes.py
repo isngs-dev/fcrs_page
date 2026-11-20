@@ -2019,3 +2019,59 @@ async def test_post_book_without_reschedule_never_touches_an_existing_booking() 
     assert response.status_code == 201
     mock_upcoming.assert_not_awaited()
     mock_cancel.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Option A (owner, 2026-11-20): the booking card's AI-call consent -> Rebecca calls
+# ---------------------------------------------------------------------------
+
+
+async def _book_with(body: dict[str, Any]) -> tuple[Any, AsyncMock, AsyncMock, _StubDatabase]:
+    db = _StubDatabase()
+    db.seed_availability(tenant_id=_TENANT_ID)
+    app = _build_app(db)
+    with (
+        patch("api.scheduling.routes.agent_hooks.inbound_lead_created",
+              new=AsyncMock()) as hook,
+        patch("api.scheduling.routes.update_lead_phone", new=AsyncMock()) as set_phone,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/public/schedule/book", json={**_book_body(), **body},
+                                         headers={"Authorization": f"Bearer {_visitor_token()}"})
+    return response, hook, set_phone, db
+
+
+async def test_post_book_with_call_consent_hands_the_lead_to_rebecca() -> None:
+    from api.agents.consent_wording import WORDING
+
+    response, hook, set_phone, _ = await _book_with({
+        "phone": "+91 98765 43210", "visitor_timezone": "Asia/Kolkata",
+        "channel_consents": {"email": False, "call": True, "version": "2026-10-a"}})
+    assert response.status_code == 201
+    kwargs = hook.await_args.kwargs
+    assert kwargs["channels"] == ["call"] and kwargs["form"] == "booking"
+    assert kwargs["timezone"] == "Asia/Kolkata"
+    [given] = kwargs["consents"]
+    assert given["channel"] == "call" and given["basis"] == "express_written_consent"
+    assert given["wording"] == WORDING["2026-10-a"]["call"]  # the server's text, not the client's
+    assert set_phone.await_args.args[-1] == "+919876543210"  # the number Rebecca will ring
+
+
+async def test_post_book_without_call_consent_never_hands_the_lead_to_rebecca() -> None:
+    response, hook, _, _ = await _book_with({"phone": "+91 98765 43210"})
+    assert response.status_code == 201
+    hook.assert_not_awaited()
+
+
+async def test_post_book_call_consent_is_checked_before_anything_is_booked() -> None:
+    response, hook, _, db = await _book_with({
+        "phone": "+91 98765 43210",
+        "channel_consents": {"email": False, "call": True, "version": "made-up"}})
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "CONSENT_VERSION_UNKNOWN"
+    response2, _, _, db2 = await _book_with({
+        "channel_consents": {"email": False, "call": True, "version": "2026-10-a"}})
+    assert response2.status_code == 422
+    assert response2.json()["error_code"] == "CALL_CONSENT_NEEDS_PHONE"
+    hook.assert_not_awaited()
+    assert not db._events and not db2._events  # nothing booked

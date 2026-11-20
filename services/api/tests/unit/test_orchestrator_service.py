@@ -1614,9 +1614,10 @@ async def test_name_reply_is_saved_and_the_original_question_answered_by_name() 
     prompt = p.provider.generate.await_args.args[0]
     assert "first name is Jane" in prompt[0].content
     assert prompt[-1].content == "My name is Jane. How much does it cost?"
-    # 2026-11-04: their first answered question carries our own email ask instead.
-    assert identity_capture.EMAIL_GUIDANCE not in prompt[0].content
-    assert result.reply.endswith(identity_capture.EMAIL_ASK)
+    # Owner, 2026-11-20: no forced email ask after the answer -- the model may ask when it
+    # genuinely helps them, so it gets the guidance.
+    assert identity_capture.EMAIL_GUIDANCE in prompt[0].content
+    assert result.reply == "The grounded answer."  # nothing tacked on
 
 
 async def test_a_non_name_reply_is_just_answered_and_never_re_asked() -> None:

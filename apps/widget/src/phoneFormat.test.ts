@@ -33,3 +33,14 @@ describe("formatUsPhoneInput", () => {
     expect(formatUsPhoneInput(once)).toBe(once);
   });
 });
+
+// Live 2026-11-20: an Indian number on the booking card was cut to 10 digits in US format.
+describe("formatUsPhoneInput with a country code", () => {
+  it("leaves an international number as typed", () => {
+    expect(formatUsPhoneInput("+91 98765 43210")).toBe("+91 98765 43210");
+    expect(formatUsPhoneInput("+919876543210")).toBe("+919876543210");
+  });
+  it("drops letters but keeps the plus, digits, spaces and dashes", () => {
+    expect(formatUsPhoneInput("+44 (20) 7946-0958x")).toBe("+44 (20) 7946-0958");
+  });
+});

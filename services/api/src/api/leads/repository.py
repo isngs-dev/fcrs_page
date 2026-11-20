@@ -329,6 +329,14 @@ async def update_lead_email_verdict(
     return await get_lead(db, claims, lead_id)
 
 
+async def update_lead_phone(db: Database, claims: AuthClaims, lead_id: str, phone: str) -> None:
+    """Set the lead's phone (E.164), tenant-scoped -- the number they agreed to be called on
+    when booking (owner, 2026-11-20). Name, email and consent are left as they are."""
+    _reject_global(claims)
+    await db.execute("UPDATE leads SET phone = $3, updated_at = now() "
+                     "WHERE tenant_id = $1 AND lead_id = $2", claims.tenant_id, lead_id, phone)
+
+
 async def update_lead_contact(
     db: Database,
     claims: AuthClaims,

@@ -420,6 +420,11 @@ def say_time(at: datetime, timezone: str) -> str:
             f"{'AM' if local.hour < 12 else 'PM'} {_ZONE_NAMES.get(timezone, timezone)} time")
 
 
+def just_booked_line(at: datetime, timezone: str) -> str:
+    """Option A (owner, 2026-11-20): they booked in the chat a moment ago and ticked the call."""
+    return f"Thanks for booking a call with our team for {say_time(at, timezone)}."
+
+
 def booked_question(at: datetime, timezone: str) -> str:
     """They already booked (e.g. on the website form): keep it or move it, never book again."""
     return (f"I see you've booked a call with our team for {say_time(at, timezone)}. "

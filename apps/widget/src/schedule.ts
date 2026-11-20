@@ -140,6 +140,11 @@ export interface BookSlotInput {
   email?: string;
   name?: string;
   phone?: string;
+  /** The visitor ticked the AI-call consent box (CALL_CONSENT_TEXT, owner 2026-11-20): Rebecca
+   * calls them. The server records ITS wording for the version. */
+  channelConsents?: { email: boolean; call: boolean; version: string };
+  /** The browser's IANA zone -- Rebecca's calling hours are the visitor's local hours. */
+  visitorTimezone?: string;
   /** The visitor ticked SCHEDULE_CALL_CONSENT_TEXT -- the server only calls when true. */
   voiceCallConsent?: boolean;
   /** Move the visitor's current upcoming booking to this slot (server cancels the old one). */
@@ -404,6 +409,8 @@ export async function bookSlot(config: WidgetConfig, input: BookSlotInput): Prom
         ...(input.name ? { name: input.name } : {}),
         ...(input.phone ? { phone: input.phone } : {}),
         ...(input.voiceCallConsent ? { voice_call_consent: true } : {}),
+        ...(input.channelConsents ? { channel_consents: input.channelConsents } : {}),
+        ...(input.visitorTimezone ? { visitor_timezone: input.visitorTimezone } : {}),
         ...(input.reschedule ? { reschedule: true } : {}),
       }),
     });

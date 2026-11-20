@@ -56,6 +56,13 @@ def granted_channels(consents: ChannelConsentsIn | None, *, has_phone: bool) -> 
     return [ch for ch in ("email", "call") if getattr(consents, ch)]
 
 
+def widget_consent(channel: str, version: str, **evidence: Any) -> dict[str, Any]:
+    """A box the visitor ticked in the widget, as explicit consent evidence (the ``consents``
+    of ``inbound_lead_created``): the server's wording for the version, never the client's.
+    Explicit evidence means "ring now", like a website form (owner, 2026-11-20)."""
+    return {**consent_record(channel, version), "source": "widget", "evidence": evidence}
+
+
 def consent_record(channel: str, version: str) -> dict[str, Any]:
     # A number typed in the chat after the disclosure is express (not written) consent --
     # still enough for AI calls under A1 D5 (express_consent from the widget).

@@ -207,3 +207,12 @@ def test_a_short_no(text: str, no: bool) -> None:
 ])
 def test_what_counts_as_asking_what_else(reply: str, asked: bool) -> None:
     assert ic.asked_what_else(reply) is asked
+
+
+
+def test_the_no_answer_hand_off_offers_the_team_once_not_every_time() -> None:
+    """Live chat 2026-11-20: "I can connect you with them." on two replies in a row."""
+    from api.orchestrator.service import _GROUNDING_SYSTEM_PROMPT
+
+    no_answer = _GROUNDING_SYSTEM_PROMPT.split("If the context does not contain the answer")[1]
+    assert "only if you haven't already offered" in no_answer
