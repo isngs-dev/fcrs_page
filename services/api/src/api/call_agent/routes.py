@@ -208,7 +208,7 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
     settings = get_api_settings()
     on_telnyx = telnyx.enabled_for(session.tenant_id)
     if on_telnyx:  # the stream may beat the "answered" event: the opening can't wait for it
-        await service.answered(db, claims, session)
+        await service.answered(db, claims, session, picked_up=False)  # it connects while ringing
     turns = await repo.list_turns(db, claims, call_id)
     opening = next((t["text"] for t in turns if t["speaker"] == "rebecca"), "")
     recorded = {"opening": False}
@@ -290,7 +290,7 @@ async def telnyx_events(call_id: str, request: Request) -> Response:
         return Response(status_code=200)
     claims = system_claims(session.tenant_id)
     if event.kind == "answered":
-        await service.answered(db, claims, session)
+        await service.answered(db, claims, session, picked_up=True)
     elif event.kind == "machine":
         await service.on_machine(db, claims, session)
     elif event.kind == "recording_saved":

@@ -212,16 +212,25 @@ async def update_session(db: Database, claims: AuthClaims, call_id: str, **field
 
 
 async def claim_answered(db: Database, claims: AuthClaims, call_id: str, *,
-                         session: dict[str, Any], opening: str) -> bool:
-    """Mark the call answered and write her opening -- once, whoever gets here first (on
-    Telnyx the audio stream and the "answered" event race). ``False`` = already answered."""
+                         session: dict[str, Any], opening: str, picked_up: bool) -> bool:
+    """Write her opening and the call's starting state -- once, whoever gets here first (on
+    Telnyx the audio stream and the "answered" event race; the row's 'dialing' status is the
+    guard). ``picked_up``: Telnyx said they answered -- only then is ``answered_at`` set (the
+    stream connects while it still rings, live 2026-11-20). ``False`` = already claimed."""
     _reject_global(claims)
     async with db.acquire() as conn, conn.transaction():
         claimed = await conn.fetchval(
-            "UPDATE call_sessions SET status = 'in_progress', answered_at = now(), session = $3 "
-            "WHERE tenant_id = $1 AND call_id = $2 AND answered_at IS NULL "
-            "AND ended_at IS NULL RETURNING call_id", claims.tenant_id, call_id, session)
+            "UPDATE call_sessions SET status = 'in_progress', session = $3, "
+            "answered_at = CASE WHEN $4 THEN now() ELSE answered_at END "
+            "WHERE tenant_id = $1 AND call_id = $2 AND status = 'dialing' "
+            "AND ended_at IS NULL RETURNING call_id", claims.tenant_id, call_id, session,
+            picked_up)
         if claimed is None:
+            if picked_up:  # the stream got here first, while it rang: now they've answered
+                await conn.execute(
+                    "UPDATE call_sessions SET answered_at = now() WHERE tenant_id = $1 "
+                    "AND call_id = $2 AND answered_at IS NULL AND ended_at IS NULL",
+                    claims.tenant_id, call_id)
             return False
         await conn.execute(
             "INSERT INTO call_transcript_turns (tenant_id, call_id, turn_index, speaker, text) "

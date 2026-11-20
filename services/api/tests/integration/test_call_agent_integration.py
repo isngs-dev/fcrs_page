@@ -2151,11 +2151,17 @@ async def test_the_telnyx_stream_says_the_opening_and_hangs_up_when_she_is_done(
     assert seen["opening"].startswith("Hi Jane, Rebecca here") and _HOOK in seen["opening"]
     assert fake.calls[-1] == ("hangup", {"call_uuid": "v2:call-1"})
     row = await _row(env, call_id)
-    assert row["status"] == "in_progress" and row["answered_at"] is not None
+    # Live 2026-11-20: Telnyx connects the stream when it starts ringing -- that isn't the
+    # answer (it was recorded 18 s early). Only Telnyx's own "answered" event sets the time.
+    assert row["status"] == "in_progress" and row["answered_at"] is None
 
     await _telnyx_event(env, key, call_id, "call.answered")  # arrives late: nothing twice
     turns = await db.fetch("SELECT text FROM call_transcript_turns WHERE call_id = $1", call_id)
     assert [t["text"] for t in turns] == [seen["opening"]]
+    first = (await _row(env, call_id))["answered_at"]
+    assert first is not None
+    await _telnyx_event(env, key, call_id, "call.answered")  # repeated: the time is kept
+    assert (await _row(env, call_id))["answered_at"] == first
 
 
 # -- Missed-call alert emails to the team (owner, 2026-11-16) -----------------------------------
@@ -2683,3 +2689,46 @@ async def test_a_visitor_who_just_booked_in_the_chat_is_thanked_and_asked_about_
     assert thanks == script.discovery_thanks_line("Jane")
     assert await db.fetchval("SELECT count(*) FROM schedule_events WHERE tenant_id = $1 "
                              "AND status = 'booked'", a) == 1
+
+
+
+async def test_a_telnyx_call_that_rings_out_is_never_answered_and_has_no_talk_time(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stream connected while it rang; nobody picked up: no answered time, no duration
+    counted from the ringing, and it's retried like any unanswered call."""
+    a, db = env["a"], env["db"]
+    _, key = _on_telnyx(env, monkeypatch, a)
+    call_id, task_id = await _dial(env, a)
+    session = await repo.get_session_system(db, call_id)
+    assert session is not None
+    await service.answered(db, AuthClaims(subject="system", role=Role.CLIENT_ADMIN, tenant_id=a),
+                           session, picked_up=False)  # what the stream does on connect
+    await _telnyx_event(env, key, call_id, "call.hangup", hangup_cause="timeout",
+                        hangup_source="unknown")
+    row = await _row(env, call_id)
+    assert row["answered_at"] is None and (row["duration_s"] or 0) == 0
+    assert row["outcome"] == "no_answer"
+    task = await db.fetchrow("SELECT status, last_error FROM outreach_tasks WHERE task_id = $1",
+                             task_id)
+    assert (task["status"], task["last_error"]) == ("scheduled", "CALL_NO_ANSWER")
+
+
+async def test_a_telnyx_call_they_spoke_on_is_answered_even_if_the_event_never_came(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Their voice proves the answer: a lost or late "answered" event never turns a real
+    conversation into a no-answer that gets them called again."""
+    a, db = env["a"], env["db"]
+    _, key = _on_telnyx(env, monkeypatch, a)
+    call_id, task_id = await _dial(env, a)
+    claims = AuthClaims(subject="system", role=Role.CLIENT_ADMIN, tenant_id=a)
+    session = await repo.get_session_system(db, call_id)
+    assert session is not None
+    await service.answered(db, claims, session, picked_up=False)
+    session = await repo.get_session_system(db, call_id)
+    assert session is not None
+    await service.handle_turn(db, claims, session, "how much is a repair")
+    await _telnyx_event(env, key, call_id, "call.hangup", hangup_cause="normal_clearing",
+                        hangup_source="callee")
+    assert (await _row(env, call_id))["outcome"] == "completed"
+    assert (await db.fetchval("SELECT status FROM outreach_tasks WHERE task_id = $1",
+                              task_id)) == "completed"

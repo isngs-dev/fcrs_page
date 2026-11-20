@@ -345,8 +345,11 @@ shared. It sends her audio in whole 20 ms frames (the remainder is held, and pad
 of a reply; dropped when she is talked over).
 
 **D-T4 — "answered" is idempotent.** The stream and the `call.answered` event race and events repeat:
-`repo.claim_answered` marks the call answered and writes the opening in one transaction, once. The stream
-route calls `service.answered` itself, so the opening never waits for the event.
+`repo.claim_answered` writes the opening and starting state in one transaction, once (guard: the row's
+`dialing` status). The stream route calls `service.answered(picked_up=False)` itself, so the opening never
+waits for the event; only Telnyx's `call.answered` (`picked_up=True`) sets `answered_at` -- the stream
+connects while the phone still rings (live 2026-11-20: answered times were 18 s early). At hang-up a call
+the caller spoke on counts as answered even if that event never came.
 
 **D-T4b — the opening waits for their hello (2026-11-19).** Live: the line counted as answered before
 the person could hear (CallHippo's app), and a "Hello?" over the opening cleared it -- they heard only

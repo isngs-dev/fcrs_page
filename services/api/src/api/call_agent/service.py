@@ -353,17 +353,24 @@ async def _opening_line(db: Database, claims: AuthClaims, session: repo.CallSess
                           hook=(session.session or {}).get("hook"))
 
 
-async def answered(db: Database, claims: AuthClaims, session: repo.CallSessionRow) -> None:
-    """Telnyx: the call was answered. Idempotent -- the audio stream and the "answered" event
-    both land here, in either order, and Telnyx may repeat an event: the opening (with the AI
-    disclosure, L4) and the call's starting state are written exactly once."""
+async def answered(db: Database, claims: AuthClaims, session: repo.CallSessionRow, *,
+                   picked_up: bool) -> None:
+    """Telnyx: the audio stream connected (``picked_up=False`` -- it connects while the phone
+    still rings) or Telnyx said they answered (``picked_up=True``). Idempotent, in either
+    order, events repeated: the opening (with the AI disclosure, L4) and the starting state
+    are written exactly once, and the answered time is Telnyx's "answered", never the ringing."""
     config = await repo.get_call_config(db, claims)
-    if config is None or session.answered_at is not None or session.ended_at is not None:
+    if config is None or session.ended_at is not None:
+        return
+    if session.status != "dialing":  # already claimed: at most the answered time is new
+        if picked_up and session.answered_at is None:
+            await repo.update_session(db, claims, session.call_id,
+                                      answered_at=datetime.now(UTC))
         return
     written = session.session or {}
     await repo.claim_answered(
         db, claims, session.call_id, opening=await _opening_line(db, claims, session, config),
-        session=_starting_state(written))
+        session=_starting_state(written), picked_up=picked_up)
 
 
 async def recording_saved(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
@@ -1183,7 +1190,11 @@ async def on_hangup(db: Database, claims: AuthClaims, session: repo.CallSessionR
     if session.ended_at is not None:
         return
     outcome = session.outcome
-    if session.answered_at is None and outcome != "voicemail":
+    # Their voice proves the answer: a lost or late Telnyx "answered" event (the stream
+    # connects while it rings, so only that event sets answered_at) never makes a real
+    # conversation a no-answer that gets them called again.
+    spoke = any(role == "user" for role, _ in script.CallState.from_json(session.session).history)
+    if session.answered_at is None and outcome != "voicemail" and not spoke:
         outcome = "no_answer" if params.get("CallStatus", "").lower() in (
             "no-answer", "busy", "cancel", "timeout", "") else "failed"
     outcome = outcome or "completed"
