@@ -2732,3 +2732,11 @@ async def test_a_telnyx_call_they_spoke_on_is_answered_even_if_the_event_never_c
     assert (await _row(env, call_id))["outcome"] == "completed"
     assert (await db.fetchval("SELECT status FROM outreach_tasks WHERE task_id = $1",
                               task_id)) == "completed"
+
+
+async def test_a_different_one_at_the_final_check_asks_for_the_new_email(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-23: "use a different 1." got "I didn't quite catch that"."""
+    call_id, _, _ = await _at_final_check(env, env["a"])
+    asked = service.spoken_text(await _say(env, call_id, "use a different 1."))
+    assert asked == script.EMAIL_ASK_LINE

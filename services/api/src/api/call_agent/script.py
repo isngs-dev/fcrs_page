@@ -511,6 +511,7 @@ _MENTIONS_EMAIL = re.compile(r"\b(?:e-?mails?|mails?)\b|\bmail (?:address|id)\b"
 _ADD_EMAIL = re.compile(r"\b(?:also|as well|too|both|copy|cc|additional|second)\b", re.I)
 _REPLACE_EMAIL = re.compile(r"\b(?:instead|different|change|another|other|wrong|new|use)\b",
                             re.I)
+_DIFFERENT_ONE = re.compile(r"\b(?:different|another|other|new)\s+(?:one|1)\b", re.I)
 EXTRA_EMAIL_ASK = "Sure. What's the other email? Please spell it for me, letter by letter."
 
 # Live call 2026-11-19: "can you once again send me the link" got "I don't have a link to
@@ -558,7 +559,9 @@ def email_change(text: str) -> str | None:
     """At the final check: ``"add"`` (a copy to another address too), ``"replace"`` (a
     different address), or ``None`` when they aren't asking about the email."""
     if not _MENTIONS_EMAIL.search(text):
-        return None
+        # "...or would you like to use a different one?" -> "a different one" (Flux writes
+        # "1"): the email is what she just asked about (live 2026-11-23).
+        return "replace" if _DIFFERENT_ONE.search(text) else None
     if _ADD_EMAIL.search(text):
         return "add"
     return "replace" if _REPLACE_EMAIL.search(text) else None

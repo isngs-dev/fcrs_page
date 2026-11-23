@@ -790,3 +790,14 @@ def test_a_time_said_alone_is_read_and_the_retry_line_gives_an_example() -> None
     assert script.parse_when("2 30 PM.", date(2026, 11, 20)) == (None, (14, 30))
     assert "for example" in script.TIME_EXAMPLE_LINE
     assert "link" in script.TIME_LINK_LINE and script.TIME_LINK_LINE.endswith("?")
+
+
+@pytest.mark.parametrize(("text", "change"), [
+    # Live 2026-11-23: "use a different 1." (Flux writes numbers as digits) to "...or would you
+    # like to use a different one?" got "Sorry, I didn't quite catch that."
+    ("use a different 1.", "replace"), ("Use a different one", "replace"),
+    ("another one please", "replace"), ("No, a different one.", "replace"),
+    ("send it to my other mail as well", "add"),
+    ("a different time", None), ("Yes, that's right.", None), ("one moment", None)])
+def test_a_different_one_at_the_final_check_is_a_new_email(text: str, change: str | None) -> None:
+    assert script.email_change(text) == change
