@@ -548,6 +548,7 @@ def test_a_voicemail_greeting_is_recognised(text: str, voicemail: bool) -> None:
     ("Meta ads reach homeowners. Is there anything else you'd like to know?", None),
     ("Results vary. Would you like to know anything more about it?", None),
     (f"{script.MISS_LINES[0]} {script.ANYTHING_ELSE_AFTER_PAUSE}", None),
+    (f"{script.MISS_LINES[0]} {script.EXPERT_CALL_OFFER}", None),  # a yes books it
     ("Great, you're all set. " + script.INVITE, None),
     ("We charge two hundred dollars for that.", None),
 ])

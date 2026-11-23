@@ -496,8 +496,7 @@ async def test_a_time_she_cant_make_out_doesnt_loop_forever(env: dict[str, Any])
 async def test_a_time_given_with_a_yes_is_kept(env: dict[str, Any]) -> None:
     """Live: "yes 6:30 p.m. EST" to "find a time?" counted as a bare yes and the time was lost."""
     call_id = await _answered(env, env["a"])
-    await _say(env, call_id, "what's the warranty")  # no booking push on a miss (owner, 11-20)
-    assert "find a time" in service.spoken_text(await _say(env, call_id, "no, that's all"))
+    assert "find a time" in service.spoken_text(await _say(env, call_id, "what's the warranty"))
     assert service.spoken_text(await _say(env, call_id, "yes 6:30 p.m. EST")) == script.ASK_DAY_LINE
     day = (datetime.now(_NY) + timedelta(days=2)).date()
     final = service.spoken_text(await _say(env, call_id, f"{day:%B} {day.day}"))
@@ -2518,11 +2517,31 @@ async def test_a_miss_uses_the_models_own_hand_off_for_that_question(
         seen.append(kwargs.get("handoff"))
         return MissReply(handoff)
 
+    call_id = await _answered(env, env["a"])  # its own question is answered
     monkeypatch.setattr(service, "answer_from_knowledge", answer)
-    call_id = await _answered(env, env["a"])
     said = service.spoken_text(await _say(env, call_id, "Does storm insurance cover this?"))
-    assert said == f"{handoff} {script.ANYTHING_ELSE_AFTER_PAUSE}"  # no booking push
+    # Owner, 2026-11-23: the expert who can answer it is offered -- once a call.
+    assert said == f"{handoff} {script.EXPERT_CALL_OFFER}"
     assert seen[-1] is True
+    assert service.spoken_text(await _say(env, call_id, "yes")) == script.ASK_TIME_LINE
+
+
+async def test_the_expert_call_is_offered_once_and_a_no_is_respected(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 2026-11-23: "Can I do it for $500?" -> "our marketing expert will be more precise"
+    -> "Is there anything else you'd like to know?" -- half a conversation. Now the expert's
+    call is offered; a no ends it politely, never a second offer at the goodbye."""
+    from api.voice_agent.agent import MissReply
+
+    async def answer(db: Any, claims: Any, question: str, *args: Any, **kwargs: Any) -> Any:
+        return MissReply("Good question. Our marketing expert will be more precise on that.")
+
+    call_id = await _answered(env, env["a"])  # its own question is answered
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    offered = service.spoken_text(await _say(env, call_id, "Can I do it for 500 dollars?"))
+    assert offered.endswith(script.EXPERT_CALL_OFFER)
+    bye = service.spoken_text(await _say(env, call_id, "No. Nothing."))
+    assert bye == script.GOODBYE_LINE and script.CLOSE_OFFER_LINE not in bye
 
 
 

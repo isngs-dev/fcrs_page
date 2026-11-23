@@ -343,6 +343,10 @@ INVITE = ("In the meantime, is there anything you'd like to know about our servi
 # Asked once, only after a pause that follows an answer -- never tacked onto every answer
 # (owner, 2026-11-16: the caller had no room to talk).
 ANYTHING_ELSE_AFTER_PAUSE = "Is there anything else you'd like to know?"
+# Owner, 2026-11-23: after "our marketing expert will be more precise on that", the expert's
+# call is offered -- once a call (it is the same one offer as CLOSE_OFFER_LINE).
+EXPERT_CALL_OFFER = ("They can walk you through this in more detail on a short call. Would "
+                     "you like me to find a time with them?")
 CLOSE_OFFER_LINE = ("Before you go, our team can walk you through this in more detail on a "
                     "short call. Would you like me to find a time with them?")
 # Owner, 2026-11-20: their questions first -- the call with the team is offered once they're

@@ -1017,9 +1017,14 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         if has_booking and session.contact_id:  # the team sees it before their call
             await memory.remember(db, claims, session.contact_id, channel="call", kind="asked",
                                   text=speech)
-        back = back or (script.on_your_call_line(datetime.fromisoformat(state.booked["at"]),
-                                                 state.booked["tz"]) if held and state.booked
-                        else script.ANYTHING_ELSE_AFTER_PAUSE)  # no booking push (11-20)
+        if back is None and held and state.booked:  # their booked call is where it's answered
+            back = script.on_your_call_line(datetime.fromisoformat(state.booked["at"]),
+                                            state.booked["tz"])
+        elif back is None and not state.close_offered and not has_booking:
+            # Owner, 2026-11-23: the expert who can answer it -- offered once a call.
+            back, state.close_offered = script.EXPERT_CALL_OFFER, True
+        elif back is None:
+            back = script.ANYTHING_ELSE_AFTER_PAUSE
     else:  # the answer alone: they speak when ready; a pause gets one follow-up
         state.answered = back is None and not reply.rstrip().endswith("?")
     return await say(f"{reply} {back}" if back else reply)
