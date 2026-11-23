@@ -377,7 +377,7 @@ def pause_question(ask: str) -> str:
 
 
 QUALIFY_DONE_LINE = f"Got it, thanks. {ANYTHING_ELSE_AFTER_PAUSE}"
-QUALIFY_PER_CALL = 2  # at most this many qualification questions in one call
+QUALIFY_PER_CALL = 3  # at most this many qualification questions in one call (owner, 11-23)
 
 DISCOVERY_NO_LINE = "No problem. Is there anything I can answer for you about our services?"
 WHICH_TIME = "What day and time works best for you?"

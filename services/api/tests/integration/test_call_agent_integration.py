@@ -843,6 +843,7 @@ async def test_when_the_written_opening_fails_it_still_names_the_service(
 
 _JOBS = "Roughly how many roofing jobs do you do a month?"
 _SPEND = "What do you spend on marketing a month?"
+_DECIDER = "Do you make the marketing decisions?"
 
 
 class _Picker:
@@ -880,10 +881,11 @@ def _model_after_the_call(monkeypatch: pytest.MonkeyPatch) -> _Picker:
     return picker
 
 
-async def test_rebecca_asks_two_missing_questions_after_their_need_and_scores_them_after(
+async def test_rebecca_asks_three_missing_questions_after_their_need_and_scores_them_after(
         env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
-    """One question at a time, at most two a call, after they've said what they need; the
-    answers are mapped and scored after the call, so the live call never waits on a model."""
+    """One question at a time, at most three a call (owner, 2026-11-23: was two), after they've
+    said what they need; the answers are mapped and scored after the call, so the live call
+    never waits on a model."""
     from api.qualification import repository as qrepo
     from api.qualification.scoring import DEFAULT_CONFIG, engagement, score
 
@@ -899,7 +901,9 @@ async def test_rebecca_asks_two_missing_questions_after_their_need_and_scores_th
     assert first == script.qualify_line("Jane", _JOBS)
     second = service.spoken_text(await _say(env, call_id, "about fifteen a month"))
     assert second == f"Got it. {_SPEND}"
-    done = service.spoken_text(await _say(env, call_id, "around three thousand dollars"))
+    third = service.spoken_text(await _say(env, call_id, "around three thousand dollars"))
+    assert third == f"Got it. {_DECIDER}"
+    done = service.spoken_text(await _say(env, call_id, "yes I do, with my partner"))
     assert done == script.DISCOVERY_THANKS_LINE  # the name is used only once in a while
     assert await qrepo.get_record(db, claims, cid) == qrepo.Record()  # nothing yet: no waiting
 
