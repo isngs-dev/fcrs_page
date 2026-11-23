@@ -376,6 +376,13 @@ class ApiSettings(Settings):
     telnyx_api_key: str | None = None
     telnyx_public_key: str | None = None  # base64 Ed25519, verifies their webhooks
     telnyx_connection_id: str | None = None  # the Call Control application's id
+    # India route (owner, 2026-11-23): +91 numbers are called from this Indian number on the
+    # client's Indian Plivo account -- a domestic Indian call (Telnyx's international route
+    # lost the audio). ponytail: platform settings, like Telnyx's, until per-client routes.
+    plivo_india_tenants: str | None = None  # comma-separated: only their calls use it
+    plivo_india_auth_id: str | None = None
+    plivo_india_auth_token: str | None = None
+    plivo_india_from_number: str | None = None
     # Plivo <Speak> voice: WOMAN or MAN.
     voice_agent_tts_voice: str = "WOMAN"
     # Max "Call Us" calls per visitor, and per IP, per hour -- each call costs

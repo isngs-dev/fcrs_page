@@ -103,6 +103,21 @@ telephony_factory: TelephonyFactory = PlivoTelephony
 telnyx_factory: Callable[[str, str], TelnyxTelephony] = TelnyxTelephony
 
 
+def india_route(tenant_id: str | None, to_e164: str | None) -> bool:
+    """This tenant's call to this number goes on the India route: a listed tenant (the account
+    and its caller ID are that client's -- never another's), a +91 number, all configured."""
+    s = get_api_settings()
+    tenants = {t.strip() for t in (s.plivo_india_tenants or "").split(",") if t.strip()}
+    return bool(tenant_id and tenant_id in tenants and to_e164 and to_e164.startswith("+91")
+                and s.plivo_india_auth_id and s.plivo_india_auth_token
+                and s.plivo_india_from_number)
+
+
+def plivo_india() -> TelephonyProvider:
+    s = get_api_settings()
+    return telephony_factory(str(s.plivo_india_auth_id), str(s.plivo_india_auth_token))
+
+
 def telnyx_for(tenant_id: str) -> TelnyxTelephony:
     """The tenant's Telnyx connection (only for tenants ``telnyx.enabled_for``)."""
     s = get_api_settings()
@@ -117,14 +132,20 @@ async def recording_provider(db: Database, tenant_id: str, config: repo.CallConf
     if (recording_url or "").startswith(TELNYX_RECORDING) or (recording_id or "").startswith(
             "pending:"):
         return telnyx_for(tenant_id)
+    india_id = get_api_settings().plivo_india_auth_id
+    if india_id and india_id in (recording_url or ""):  # Plivo's URLs carry their account id
+        return plivo_india()
     token = await repo.get_auth_token(db, tenant_id)
     if not token:
         raise ValidationError("The Plivo auth token is missing.", code="CALL_NOT_READY")
     return telephony_factory(config.plivo_auth_id, token)
 
 
-async def telephony_for(db: Database, tenant_id: str, config: repo.CallConfig
-                        ) -> TelephonyProvider:
+async def telephony_for(db: Database, tenant_id: str, config: repo.CallConfig,
+                        to_e164: str | None = None) -> TelephonyProvider:
+    """The provider for a call to ``to_e164`` (the India route for +91 numbers)."""
+    if india_route(tenant_id, to_e164):
+        return plivo_india()
     if telnyx.enabled_for(tenant_id):  # recordings (start/stop/delete/fetch) go there too
         return telnyx_for(tenant_id)
     token = await repo.get_auth_token(db, tenant_id)
@@ -149,7 +170,7 @@ async def recording_audio(db: Database, claims: AuthClaims, call_id: str) -> byt
         raise NotFoundError("No recording for this call.", code="RECORDING_NOT_FOUND")
     if not url or not (on_telnyx or is_plivo_url(url)) or config is None:
         raise NotFoundError("No recording for this call.", code="RECORDING_NOT_FOUND")
-    provider = await telephony_for(db, str(claims.tenant_id), config)
+    provider = await recording_provider(db, str(claims.tenant_id), config, url, None)
     try:
         return await provider.fetch_recording(url=url)
     except TransientExecutorError as exc:
@@ -221,8 +242,10 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
     if phone is None:
         raise ValidationError("The contact has no dialable phone number.",
                               code="CONTACT_NO_PHONE")
-    on_telnyx = telnyx.enabled_for(claims.tenant_id)
-    from_number = config.from_number  # each tenant's own number (Plivo or Telnyx)
+    india = india_route(claims.tenant_id, phone)  # owner, 2026-11-23: a domestic Indian call
+    on_telnyx = telnyx.enabled_for(claims.tenant_id) and not india
+    # each tenant's own number (Plivo or Telnyx); the Indian number on the India route
+    from_number = str(get_api_settings().plivo_india_from_number) if india else config.from_number
     call_id = await repo.create_session(db, claims, task_id=task.task_id, plan_id=task.plan_id,
                                         contact_id=task.contact_id,
                                         from_e164=from_number, to_e164=phone,
@@ -276,9 +299,9 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
                 webhook_url=telnyx.events_url(call_id, ticket(call_id)),
                 stream_url=telnyx.stream_url(call_id, ticket(call_id)))
         else:
-            provider = await telephony_for(db, str(claims.tenant_id), config)
+            provider = await telephony_for(db, str(claims.tenant_id), config, phone)
             placed = await provider.place_call(
-                to_e164=phone, from_e164=config.from_number,
+                to_e164=phone, from_e164=from_number,
                 answer_url=call_url(call_id, "answer"), hangup_url=call_url(call_id, "hangup"),
                 machine_url=call_url(call_id, "machine"), time_limit=config.max_call_seconds)
     except Exception:
@@ -537,10 +560,10 @@ _background: set[asyncio.Task[None]] = set()
 
 
 async def _start_recording(db: Database, claims: AuthClaims, config: repo.CallConfig,
-                           call_id: str, call_uuid: str) -> None:
+                           call_id: str, call_uuid: str, to_e164: str | None = None) -> None:
     """L4: the recording starts once the disclosure has been heard (the first turn)."""
     try:
-        provider = await telephony_for(db, str(claims.tenant_id), config)
+        provider = await telephony_for(db, str(claims.tenant_id), config, to_e164)
         rec = await provider.start_recording(call_uuid=call_uuid,
                                              time_limit=config.max_call_seconds)
         await repo.update_session(db, claims, call_id, recording_id=rec.recording_id,
@@ -656,7 +679,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     provider = None
     if kind == "recording_objection":
         if state.recording_started and session.recording_id:
-            provider = await telephony_for(db, str(claims.tenant_id), config)
+            provider = await telephony_for(db, str(claims.tenant_id), config, session.to_e164)
             if session.provider_call_uuid:
                 await provider.stop_recording(call_uuid=session.provider_call_uuid)
             await provider.delete_recording(recording_id=session.recording_id)
@@ -670,7 +693,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             and session.provider_call_uuid):
         state.recording_started = True
         task = asyncio.create_task(_start_recording(
-            db, claims, config, call_id, session.provider_call_uuid))
+            db, claims, config, call_id, session.provider_call_uuid,
+            session.to_e164))
         _background.add(task)
         task.add_done_callback(_background.discard)
 

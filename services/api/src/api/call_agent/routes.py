@@ -180,7 +180,10 @@ async def _verified(request: Request, call_id: str) -> tuple[
     session = await repo.get_session_system(db, call_id)
     if session is None:
         raise PlivoSignatureInvalidError()
-    token = await repo.get_auth_token(db, session.tenant_id)
+    # India route: its calls are signed by the Indian Plivo account (owner, 2026-11-23)
+    token = (get_api_settings().plivo_india_auth_token
+             if service.india_route(session.tenant_id, session.to_e164)
+             else await repo.get_auth_token(db, session.tenant_id))
     form = await request.form()
     params = {key: str(value) for key, value in form.items()}
     base = (get_api_settings().public_api_base_url or "").rstrip("/")
@@ -206,7 +209,8 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
     claims = system_claims(session.tenant_id)
     await websocket.accept()
     settings = get_api_settings()
-    on_telnyx = telnyx.enabled_for(session.tenant_id)
+    on_telnyx = telnyx.enabled_for(session.tenant_id) and not service.india_route(
+        session.tenant_id, session.to_e164)  # India route: Plivo's own stream
     if on_telnyx:  # the stream may beat the "answered" event: the opening can't wait for it
         await service.answered(db, claims, session, picked_up=False)  # it connects while ringing
     turns = await repo.list_turns(db, claims, call_id)

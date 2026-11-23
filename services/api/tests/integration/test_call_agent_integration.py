@@ -2759,3 +2759,98 @@ async def test_a_different_one_at_the_final_check_asks_for_the_new_email(
     call_id, _, _ = await _at_final_check(env, env["a"])
     asked = service.spoken_text(await _say(env, call_id, "use a different 1."))
     assert asked == script.EMAIL_ASK_LINE
+
+
+# -- India route (owner, 2026-11-23): Indian numbers through the Indian Plivo account ------------
+# Live 2026-11-20..23: through Telnyx's international route, Indian mobiles often heard nothing.
+# A +91 number is now called from the client's Indian number on its Indian Plivo account -- a
+# domestic Indian call; everyone else stays on Telnyx.
+
+_INDIA_ID = "MAINDIAINDIAINDIA001"
+_INDIA_FROM = "+912264233234"
+
+
+def _india_on(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], str]:
+    """Sets the India route; returns (the Auth IDs Plivo clients were made with, its token)."""
+    token = uuid4().hex
+    monkeypatch.setenv("PLIVO_INDIA_TENANTS", env["a"])  # only the listed client's calls
+    monkeypatch.setenv("PLIVO_INDIA_AUTH_ID", _INDIA_ID)
+    monkeypatch.setenv("PLIVO_INDIA_AUTH_TOKEN", token)
+    monkeypatch.setenv("PLIVO_INDIA_FROM_NUMBER", _INDIA_FROM)
+    get_api_settings.cache_clear()
+    used: list[str] = []
+
+    def factory(auth_id: str, auth_token: str) -> Any:
+        used.append(auth_id)
+        return env["plivo"]
+
+    monkeypatch.setattr(service, "telephony_factory", factory)
+    return used, token
+
+
+async def _dial_to(env: dict[str, Any], tenant: str, phone: str) -> str:
+    _, task_id = await _contact_with_call_task(env, tenant, phone=phone)
+    await dispatch.dispatch_due_tasks(env["db"], limit=10)
+    call_id = await env["db"].fetchval("SELECT call_id FROM call_sessions WHERE task_id = $1",
+                                       task_id)
+    assert call_id is not None
+    return str(call_id)
+
+
+async def test_an_indian_number_is_called_on_the_india_plivo_account_and_others_on_telnyx(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a, db = env["a"], env["db"]
+    telnyx_fake, _ = _on_telnyx(env, monkeypatch, a)
+    used, _ = _india_on(env, monkeypatch)
+    india_call = await _dial_to(env, a, "+919876543210")
+    placed = [kw for name, kw in env["plivo"].calls if name == "place_call"]
+    assert placed and placed[-1]["to_e164"] == "+919876543210"
+    assert placed[-1]["from_e164"] == _INDIA_FROM and used[-1] == _INDIA_ID
+    assert placed[-1]["answer_url"].startswith(f"{_BASE}/public/call-agent/calls/{india_call}/")
+    assert await db.fetchval("SELECT from_e164 FROM call_sessions WHERE call_id = $1",
+                             india_call) == _INDIA_FROM
+    assert [c for c in telnyx_fake.calls if c[0] == "dial"] == []
+    await db.execute("UPDATE call_sessions SET status = 'completed', ended_at = now() "
+                     "WHERE call_id = $1", india_call)  # frees the concurrency slot
+    await _dial_to(env, a, "2025550123")  # a US number: Telnyx, as before
+    assert [c for c in telnyx_fake.calls if c[0] == "dial"][-1][1]["to_e164"] == "+12025550123"
+
+
+async def test_an_india_calls_webhooks_need_the_india_accounts_signature(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a = env["a"]
+    _on_telnyx(env, monkeypatch, a)
+    used, india_token = _india_on(env, monkeypatch)
+    call_id = await _dial_to(env, a, "+919876543210")
+    forged = await _webhook(env, call_id, "answer", {"CallUUID": "uuid-in"}, token=_TOKENS["a"])
+    assert forged.status_code in (401, 403)  # signed with the tenant's other Plivo account
+    answer = await _webhook(env, call_id, "answer", {"CallUUID": "uuid-in"}, token=india_token)
+    assert answer.status_code == 200
+    turn = await _webhook(env, call_id, "turn", {"Speech": "how much is a repair",
+                                                 "CallUUID": "uuid-in"}, token=india_token)
+    assert turn.status_code == 200
+    await _recording_saved(env["db"], call_id)
+    assert used[-1] == _INDIA_ID  # the recording is started on the India account too
+
+
+async def test_without_the_india_settings_indian_numbers_stay_on_telnyx(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a = env["a"]
+    telnyx_fake, _ = _on_telnyx(env, monkeypatch, a)
+    await _dial_to(env, a, "+919876543210")
+    assert [c for c in telnyx_fake.calls if c[0] == "dial"][-1][1]["to_e164"] == "+919876543210"
+
+
+
+async def test_another_clients_indian_numbers_never_use_this_india_account(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The India account and its caller ID belong to the listed client only (like Telnyx's
+    TELNYX_TENANTS): tenant B's +91 call keeps B's own route and B's own number."""
+    b = env["b"]
+    used, _ = _india_on(env, monkeypatch)  # lists tenant A only
+    call_id = await _dial_to(env, b, "+919876543210")
+    placed = [kw for name, kw in env["plivo"].calls if name == "place_call"]
+    assert placed and placed[-1]["from_e164"] == "+17865550000"  # B's own number
+    assert _INDIA_ID not in used
+    assert await env["db"].fetchval("SELECT from_e164 FROM call_sessions WHERE call_id = $1",
+                                    call_id) == "+17865550000"

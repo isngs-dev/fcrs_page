@@ -533,3 +533,13 @@ given on the call: ...", never an agenda topic) and a spoken first name is used 
 question about what they picked or wrote ("You picked SEO on our form. ..."); then the hot-lead questions,
 then the call as before. Intake: a known person's resubmitted form updates the contact's name (the name they
 typed was being dropped).
+
+**D-T6 — India route (owner, 2026-11-23).** Live 2026-11-20..23: through Telnyx's international route,
+Indian mobiles often heard nothing (one-way audio) or broken audio, while US numbers were excellent. With
+`PLIVO_INDIA_TENANTS`, `PLIVO_INDIA_AUTH_ID`, `PLIVO_INDIA_AUTH_TOKEN` and `PLIVO_INDIA_FROM_NUMBER` set, a
+listed tenant's `+91` number is called (never another client's -- the account and caller ID are that
+client's)
+from that Indian number on the Indian Plivo account (`service.india_route`): a domestic Indian call over the
+Plivo answer XML + stream path. The route is decided from the call's own number, so placing it, its
+webhook signatures (the Indian account's token), its recording and the stream all follow it; every other
+number keeps its usual route (Telnyx). ponytail: platform settings, like Telnyx's, until per-client routes.
