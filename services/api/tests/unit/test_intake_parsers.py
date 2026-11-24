@@ -85,6 +85,9 @@ def test_gmail_forwarding_confirmation_code() -> None:
     ("+18884810711", None),   # toll-free: no single zone
     ("+12085550100", None),   # Idaho spans two zones: don't guess
     ("+442079460958", None),  # outside the US market
+    # Owner, 2026-11-24: India is the test market and has one zone -- a +91 form lead with no
+    # zone of its own was never called (CONTACT_TIMEZONE_UNKNOWN).
+    ("+919876543210", "Asia/Kolkata"),
     (None, None),
 ])
 def test_timezone_only_when_unambiguous(e164: str | None, zone: str | None) -> None:
@@ -153,3 +156,32 @@ def test_the_roof_engine_inquiry_email() -> None:
     assert lead.booking == (datetime(2026, 11, 3, 18, 58, tzinfo=UTC), "America/Anchorage")
     assert lead.answers["Meet link"] == "https://meet.google.com/jtm-rjfr-khr"
     assert lead.call_consent is False  # no consent line yet: email only, no AI call
+
+
+# -- Country code chosen on the form (owner, 2026-11-24) -----------------------------------------
+# The landing form now has a country-code picker: +1 is called on Telnyx, +91 on the Indian
+# Plivo number. Sent apart from the number, a bare 10-digit Indian number was read as American.
+
+
+@pytest.mark.parametrize(("code", "phone", "e164"), [
+    ("+91", "98765 43210", "+919876543210"),
+    ("91", "9876543210", "+919876543210"),
+    ("India (+91)", "98765-43210", "+919876543210"),
+    ("IN +91", "(987) 654-3210", "+919876543210"),
+    ("+1", "(786) 823-3553", "+17868233553"),
+    ("US (+1)", "7868233553", "+17868233553"),
+    ("+91", "+91 98765 43210", "+919876543210"),   # the number already carries it
+    ("+91", "919876543210", "+919876543210"),      # ...without the plus
+])
+def test_a_country_code_field_is_joined_to_the_number(code: str, phone: str, e164: str) -> None:
+    from common.phone import to_e164
+
+    for label in ("Country code", "country_code", "Phone country code", "Dial code"):
+        out = parsers.normalise({"Name": "Jane", "Phone": phone, label: code})
+        assert to_e164(out.values["phone"]) == e164, (label, code, phone)
+        assert not any("code" in key.lower() for key in out.answers)  # not a form answer
+
+
+def test_without_a_country_code_field_the_number_is_read_as_before() -> None:
+    out = parsers.normalise({"Name": "Jane", "Phone": "(202) 555-0123"})
+    assert out.values["phone"] == "(202) 555-0123"

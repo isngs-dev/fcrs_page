@@ -543,3 +543,9 @@ from that Indian number on the Indian Plivo account (`service.india_route`): a d
 Plivo answer XML + stream path. The route is decided from the call's own number, so placing it, its
 webhook signatures (the Indian account's token), its recording and the stream all follow it; every other
 number keeps its usual route (Telnyx). ponytail: platform settings, like Telnyx's, until per-client routes.
+
+**D-T6b — the form's country code (owner, 2026-11-24).** The landing form has a country-code picker: a
+separate `country_code`-type field (`Country code`, `Dial code`, `Phone country code`, ...) is joined onto
+the number by `intake.parsers.normalise` (a bare 10-digit number was read as US). So +1 is called on Telnyx
+and +91 on the India route (D-T6). A +91 form lead without a zone of its own gets `Asia/Kolkata` from
+`infer_timezone` (India is the test market and has one zone); other non-US numbers still get none.

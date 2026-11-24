@@ -444,3 +444,30 @@ async def test_a_past_or_clashing_form_booking_is_not_recorded_but_the_lead_stil
     assert await db.fetchval("SELECT count(*) FROM leads WHERE tenant_id = $1", a) == 2
     # nothing recorded -> no reminders for it (the clashing slot's own booking has none either)
     assert await db.fetchval("SELECT count(*) FROM reminder_jobs WHERE tenant_id = $1", a) == 0
+
+
+async def test_the_forms_country_code_reaches_the_contact_and_india_gets_its_own_hours(
+        env: dict[str, Any]) -> None:
+    """Owner, 2026-11-24: the form's country-code picker. +91 with a 10-digit number is an
+    Indian contact (called on the India route, on India hours); +1 stays American."""
+    db, a = env["db"], env["a"]
+    await upsert_agent_settings(db, _claims(a), AgentSettings(
+        enabled_channels=("call", "email"), inbound_auto_enabled=True,
+        physical_address="1 Main St", call_window_start=time(0, 0), call_window_end=time(23, 59)))
+    assert (await _config(env, a, call_consent_wording=_CALL_WORDING)).status_code == 200
+    await _form(env, a, name="Harshal", email="harshal@example.com", phone="98765 43210",
+                **{"Country code": "+91"}, consent_to_call="on", submission_id="s-in")
+    await _form(env, a, name="Ana Ruiz", email="ana@example.com", phone="(415) 555-0100",
+                **{"Country code": "+1"}, consent_to_call="on", submission_id="s-us")
+    await dispatch.dispatch_events(db, limit=20)
+    rows = {r["email"]: (r["phone"], r["timezone"]) for r in await db.fetch(
+        "SELECT email, phone, timezone FROM contacts WHERE tenant_id = $1", a)}
+    assert rows["harshal@example.com"] == ("+919876543210", "Asia/Kolkata")
+    assert rows["ana@example.com"] == ("+14155550100", "America/Los_Angeles")
+    due = await db.fetch("SELECT c.email FROM outreach_tasks t JOIN outreach_plans p "
+                         "USING (tenant_id, plan_id) JOIN contacts c ON c.contact_id = p.contact_id "
+                         "WHERE t.tenant_id = $1 AND t.channel = 'call' AND t.step_index = 0 "
+                         "AND t.scheduled_at <= now()", a)
+    assert {r["email"] for r in due} == {"harshal@example.com", "ana@example.com"}
+    assert await db.fetchval("SELECT count(*) FROM contacts WHERE tenant_id = $1",
+                             env["b"]) == 0

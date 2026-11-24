@@ -28,6 +28,9 @@ _EXTRA_ALIASES = {
 _SUBMISSION = {"submission_id", "lead_id", "leadgen_id", "entry_id", "response_id"}
 _FORM = {"form", "form_name"}
 _CAMPAIGN = {"campaign", "campaign_name", "utm_campaign"}
+# Owner, 2026-11-24: the form's country-code picker, when it is sent apart from the number.
+_COUNTRY_CODE = {"country_code", "phone_country_code", "dial_code", "calling_code",
+                 "country_calling_code", "phone_code", "country_dial_code", "isd_code"}
 _CONSENT_YES = {*_YES, "on", "agree", "agreed", "i agree", "checked", "accepted"}
 
 
@@ -173,9 +176,22 @@ def _is_call_consent(key: str) -> bool:
         "call" in key or "phone" in key)
 
 
+def _with_country_code(phone: str, code: str) -> str:
+    """The number with the picked country code in front ("+91", "India (+91)" -> +91...),
+    unless it already starts with one -- a bare 10-digit number is otherwise read as US."""
+    digits = re.findall(r"\d+", code)
+    if not digits or len(digits[-1]) > 3 or phone.strip().startswith("+"):
+        return phone
+    cc, number = digits[-1], re.sub(r"\D", "", phone)
+    if number.startswith(cc) and len(number) > 10:  # "919876543210": already carries it
+        return f"+{number}"
+    return f"+{cc}{number}"
+
+
 def normalise(fields: dict[str, str]) -> Normalised:
     out = Normalised()
     first = last = None
+    country_code = ""
     for label, raw in fields.items():
         value = str(raw).strip()
         key = _key(label)
@@ -188,6 +204,8 @@ def normalise(fields: dict[str, str]) -> Normalised:
             out.form = value or None
         elif key in _CAMPAIGN:
             out.campaign = value or None
+        elif key in _COUNTRY_CODE:
+            country_code = value
         elif canonical == "first_name":
             first = value
         elif canonical == "last_name":
@@ -196,6 +214,8 @@ def normalise(fields: dict[str, str]) -> Normalised:
             out.values.setdefault(canonical, value)
         elif canonical is None and value:
             out.answers[label] = value[:500]
+    if country_code and out.values.get("phone"):
+        out.values["phone"] = _with_country_code(out.values["phone"], country_code)
     if "name" not in out.values and (first or last):
         out.values["name"] = " ".join(p for p in (first, last) if p)
     _read_booking(out, fields)
@@ -223,7 +243,10 @@ def infer_timezone(e164: str | None) -> str | None:
         number = phonenumbers.parse(e164)
     except phonenumbers.NumberParseException:
         return None
-    if phonenumbers.region_code_for_number(number) != "US":
+    region = phonenumbers.region_code_for_number(number)
+    if region == "IN":  # the test market (owner, 2026-11-24): one zone, so never a guess
+        return "Asia/Kolkata"
+    if region != "US":
         return None
     zones = phone_timezone.time_zones_for_number(number)
     return zones[0] if len(zones) == 1 and zones[0] != "Etc/Unknown" else None
