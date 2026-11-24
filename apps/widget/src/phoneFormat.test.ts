@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatUsPhoneInput } from "./phoneFormat";
+import { formatPhoneInput, formatUsPhoneInput, splitDialCode, withDialCode } from "./phoneFormat";
 
 describe("formatUsPhoneInput", () => {
   it("returns an empty string for empty input", () => {
@@ -42,5 +42,29 @@ describe("formatUsPhoneInput with a country code", () => {
   });
   it("drops letters but keeps the plus, digits, spaces and dashes", () => {
     expect(formatUsPhoneInput("+44 (20) 7946-0958x")).toBe("+44 (20) 7946-0958");
+  });
+});
+
+describe("the country-code picker (owner, 2026-11-24)", () => {
+  it("formats an Indian number as 5 + 5 digits, capped at 10", () => {
+    expect(formatPhoneInput("98765", "+91")).toBe("98765");
+    expect(formatPhoneInput("987654321099", "+91")).toBe("98765 43210");
+  });
+
+  it("formats a US number as before", () => {
+    expect(formatPhoneInput("7867756768", "+1")).toBe("(786) 775-6768");
+  });
+
+  it("puts +91 in front of an Indian number, and leaves a US one as typed", () => {
+    expect(withDialCode("98765 43210", "+91")).toBe("+919876543210");
+    expect(withDialCode("(786) 775-6768", "+1")).toBe("(786) 775-6768");
+    expect(withDialCode("+44 20 7946 0958", "+91")).toBe("+44 20 7946 0958");
+    expect(withDialCode("  ", "+91")).toBe("");
+  });
+
+  it("splits a known number back into the picker and the field", () => {
+    expect(splitDialCode("+919876543210")).toEqual({ dial: "+91", number: "98765 43210" });
+    expect(splitDialCode("+17867756768")).toEqual({ dial: "+1", number: "(786) 775-6768" });
+    expect(splitDialCode("(786) 775-6768")).toEqual({ dial: "+1", number: "(786) 775-6768" });
   });
 });

@@ -50,7 +50,7 @@ import {
 import { isVoiceCallEnabled } from "../session";
 import { CALL_CONSENT_TEXT, CHANNEL_CONSENT_VERSION, browserTimeZone, channelConsentOffer } from "../channelConsent";
 import type { BookingPrefill } from "../turn";
-import { formatUsPhoneInput } from "../phoneFormat";
+import { DIAL_CODES, type DialCode, formatPhoneInput, splitDialCode, withDialCode } from "../phoneFormat";
 
 const LOG_PREFIX = "[chatbot-widget]";
 
@@ -297,7 +297,8 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
   const [consentChecked, setConsentChecked] = useState(false);
   const [email, setEmail] = useState(prefill?.email ?? "");
   const [name, setName] = useState(prefill?.name ?? "");
-  const [phone, setPhone] = useState(prefill?.phone ?? "");
+  const [dial, setDial] = useState<DialCode>(() => splitDialCode(prefill?.phone ?? "").dial);
+  const [phone, setPhone] = useState(() => splitDialCode(prefill?.phone ?? "").number);
   // AI confirmation call on for this chatbot: phone becomes required and the
   // consent wording covers the call (sent as voiceCallConsent with the booking).
   const callOn = isVoiceCallEnabled();
@@ -419,6 +420,36 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
     }
   }, [step.name, calendarVisible, existingDecisionPending, monthIndex]);
 
+  const phoneField = (submitting: boolean) => (
+    <div className="cw-sched-phone-row">
+      <select
+        className="cw-sched-dial-select"
+        value={dial}
+        disabled={submitting}
+        aria-label="Country code"
+        onChange={(e) => {
+          const next = e.target.value as DialCode;
+          setDial(next);
+          setPhone((p) => formatPhoneInput(p, next));
+        }}
+      >
+        {DIAL_CODES.map((d) => <option key={d.code} value={d.code}>{d.label}</option>)}
+      </select>
+      <input
+        className="cw-input cw-sched-phone-input"
+        type="tel"
+        inputMode="tel"
+        value={phone}
+        onChange={(e) => setPhone(formatPhoneInput(e.target.value, dial))}
+        disabled={submitting}
+        aria-label={callOn ? "Phone" : "Phone, optional"}
+        required={callOn}
+        placeholder={dial === "+91" ? "98765 43210" : "(555) 123-4567"}
+        autoComplete="tel-national"
+      />
+    </div>
+  );
+
   const callConsentRow = (submitting: boolean) => callOffer ? (
     <div className="cw-sched-consent-row">
       <input
@@ -459,7 +490,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
       ...(leadId ? { leadId } : {}),
       ...(email.trim() ? { email: email.trim() } : {}),
       ...(name.trim() ? { name: name.trim() } : {}),
-      ...(phone.trim() ? { phone: phone.trim() } : {}),
+      ...(phone.trim() ? { phone: withDialCode(phone, dial) } : {}),
     });
 
     if (!result.ok) {
@@ -710,18 +741,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
           <label className="cw-sched-email-label" htmlFor="cw-sched-email">Where should we send the invite?</label>
           <input id="cw-sched-email" className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
           {emailHint}
-          <input
-            className="cw-input cw-sched-phone-input"
-            type="tel"
-            inputMode="numeric"
-            value={phone}
-            onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))}
-            disabled={submitting}
-            aria-label={callOn ? "Phone" : "Phone, optional"}
-            required={callOn}
-            placeholder="(555) 123-4567"
-            autoComplete="tel"
-          />
+          {phoneField(submitting)}
 
           <div className="cw-sched-consent-row">
             <input
@@ -777,7 +797,7 @@ export function ScheduleCta({ config, leadId, summary, onBooked, prefill }: Sche
             <input className="cw-input cw-sched-email-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={submitting} required aria-label="Invite email" placeholder="Email" autoComplete="email" />
             {emailHint}
             {(callOn || prefill?.phone || callOffer) && (
-              <input className="cw-input cw-sched-phone-input" type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(formatUsPhoneInput(e.target.value))} disabled={submitting} required={callOn} aria-label={callOn ? "Phone" : "Phone, optional"} placeholder="(555) 123-4567" autoComplete="tel" />
+              phoneField(submitting)
             )}
           </>
         )}

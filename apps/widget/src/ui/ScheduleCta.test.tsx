@@ -1121,6 +1121,57 @@ describe("ScheduleCta with the AI confirmation call switched on", () => {
     });
   });
 
+  it("books with the picked country code in front of an Indian number (owner, 2026-11-24)", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+    bookSlotMock.mockResolvedValueOnce({
+      ok: true,
+      booking: { eventId: "evt-1", startsAt: SLOT_A.startsAt, endsAt: SLOT_A.endsAt, status: "booked" },
+    });
+
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={{ name: "Jane", email: "jane@example.com" }} />);
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+    const dial = container.querySelector<HTMLSelectElement>(".cw-sched-dial-select")!;
+    expect(dial.value).toBe("+1");
+    act(() => {
+      dial.value = "+91";
+      dial.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    act(() => {
+      setNativeInputValue(container.querySelector<HTMLInputElement>(".cw-sched-phone-input")!, "9876543210");
+    });
+    expect(container.querySelector<HTMLInputElement>(".cw-sched-phone-input")!.value).toBe("98765 43210");
+    act(() => {
+      getConsentCheckbox().click();
+    });
+    act(() => {
+      getConfirmButton().click();
+    });
+    await flush();
+
+    const [, input] = bookSlotMock.mock.calls[0]!;
+    expect(input).toMatchObject({ phone: "+919876543210" });
+  });
+
+  it("shows a known Indian number with India picked", async () => {
+    fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });
+
+    act(() => {
+      root.render(<ScheduleCta config={baseConfig} prefill={{ name: "Jane", email: "jane@example.com", phone: "+919876543210" }} />);
+    });
+    await flush();
+    act(() => {
+      getSlotButton(0).click();
+    });
+
+    expect(container.querySelector<HTMLSelectElement>(".cw-sched-dial-select")!.value).toBe("+91");
+    expect(container.querySelector<HTMLInputElement>(".cw-sched-phone-input")!.value).toBe("98765 43210");
+  });
+
   it("with the call off, the booking never claims call consent", async () => {
     voiceCallOn = false;
     fetchSlotsMock.mockResolvedValueOnce({ ok: true, slots: [SLOT_A] });

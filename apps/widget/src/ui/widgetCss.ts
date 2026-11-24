@@ -674,6 +674,10 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 .cw-sched-card .cw-sched-recap-label { margin: 0; color: #8da0bb; font-size: 11px; }
 .cw-sched-card .cw-sched-recap strong { color: var(--cw-ink); font-size: 14px; }
 .cw-sched-email-label { color: var(--cw-ink); font-size: 14px; font-weight: 700; }
+.cw-sched-phone-row { display: flex; gap: 8px; align-items: stretch; }
+.cw-sched-phone-row .cw-sched-phone-input { flex: 1 1 auto; min-width: 0; }
+.cw-sched-dial-select { flex: 0 0 auto; padding: 0 8px; border: 1px solid #d8dce2; border-radius: 10px; background: var(--cw-paper); color: var(--cw-ink); font: inherit; font-size: 14px; }
+.cw-sched-card .cw-sched-dial-select { min-height: 50px; }
 .cw-sched-card .cw-sched-email-input, .cw-sched-card .cw-sched-name-input, .cw-sched-card .cw-sched-phone-input { min-height: 50px; padding: 11px 13px; border: 1px solid #d8dce2; border-radius: 10px; background: var(--cw-paper); font-size: 14px; }
 .cw-sched-card .cw-sched-confirm-actions { align-items: stretch; }
 .cw-sched-card .cw-sched-confirm-actions .cw-sched-back-button { flex: 0 0 auto; min-width: 82px; border-radius: 9px; font-size: 13px; }
@@ -741,7 +745,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   .cw-sched-card .cw-sched-tz-select,
   .cw-sched-card .cw-sched-email-input,
   .cw-sched-card .cw-sched-name-input,
-  .cw-sched-card .cw-sched-phone-input {
+  .cw-sched-card .cw-sched-phone-input,
+  .cw-sched-dial-select {
     font-size: 16px;
   }
 }
@@ -766,7 +771,8 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   .cw-sched-card .cw-sched-tz-select,
   .cw-sched-card .cw-sched-email-input,
   .cw-sched-card .cw-sched-name-input,
-  .cw-sched-card .cw-sched-phone-input {
+  .cw-sched-card .cw-sched-phone-input,
+  .cw-sched-dial-select {
     font-size: 16px;
   }
 }
