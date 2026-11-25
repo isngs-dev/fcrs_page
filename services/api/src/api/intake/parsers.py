@@ -235,6 +235,14 @@ def trusted_sender(from_addr: str, trusted: list[str]) -> bool:
     return any(domain == t.lower() or domain.endswith("." + t.lower()) for t in trusted)
 
 
+def phone_country(e164: str | None) -> str | None:
+    """The number's country ("US", "IN"), or ``None`` when it can't be read."""
+    try:
+        return phonenumbers.region_code_for_number(phonenumbers.parse(e164 or ""))
+    except phonenumbers.NumberParseException:
+        return None
+
+
 def infer_timezone(e164: str | None) -> str | None:
     """A US number's zone when its area code has exactly one; else ``None`` (A10 I4)."""
     if not e164:

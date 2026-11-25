@@ -549,3 +549,11 @@ separate `country_code`-type field (`Country code`, `Dial code`, `Phone country 
 the number by `intake.parsers.normalise` (a bare 10-digit number was read as US). So +1 is called on Telnyx
 and +91 on the India route (D-T6). A +91 form lead without a zone of its own gets `Asia/Kolkata` from
 `infer_timezone` (India is the test market and has one zone); other non-US numbers still get none.
+
+**D-T6c — a known person's new number (owner, 2026-11-25).** A form matched to an existing lead by email,
+carrying a different number and call consent, makes that new number the lead's and the contact's number to
+ring (`intake.service.ingest` -> `update_lead_phone`, then `handle_inbound_lead`). The old number stays as a
+phone identity, so a call in from it still finds them. A new number from the same country keeps the
+contact's timezone; one from another country (US -> +91) takes the form's zone for it (`infer_timezone`),
+or clears the old one when there is none, so the call waits (`CONTACT_TIMEZONE_UNKNOWN`) rather than
+ringing at the old country's hours.

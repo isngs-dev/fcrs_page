@@ -446,6 +446,70 @@ async def test_a_past_or_clashing_form_booking_is_not_recorded_but_the_lead_stil
     assert await db.fetchval("SELECT count(*) FROM reminder_jobs WHERE tenant_id = $1", a) == 0
 
 
+async def test_the_same_email_with_a_new_number_rings_the_new_number(
+        env: dict[str, Any]) -> None:
+    """Owner, 2026-11-25: form 1 with email A + number A, form 2 with email A + number B.
+    It is the same person (matched by email), and the number they just agreed to be called
+    on is the one Rebecca rings; number A stays on them, so a call in from it still finds them."""
+    db, a, b = env["db"], env["a"], env["b"]
+    await upsert_agent_settings(db, _claims(a), AgentSettings(
+        enabled_channels=("call", "email"), inbound_auto_enabled=True,
+        physical_address="1 Main St", call_window_start=time(0, 0), call_window_end=time(23, 59)))
+    assert (await _config(env, a, call_consent_wording=_CALL_WORDING)).status_code == 200
+    await _form(env, a, name="Ana Ruiz", email="ana@example.com", phone="(415) 555-0100",
+                consent_to_call="on", submission_id="s-n1")
+    await dispatch.dispatch_events(db, limit=10)
+    # Tenant B has its own person on the new number: never touched by tenant A's form.
+    await _form(env, b, name="Other", email="other@example.com", phone="(415) 555-0199",
+                submission_id="s-n0")
+    await dispatch.dispatch_events(db, limit=10)
+
+    again = await _form(env, a, name="Ana Ruiz", email="ana@example.com", phone="(415) 555-0199",
+                        consent_to_call="on", submission_id="s-n2")
+    assert again.json()["status"] == "accepted"
+    await dispatch.dispatch_events(db, limit=10)
+
+    assert await db.fetchval("SELECT count(*) FROM leads WHERE tenant_id = $1", a) == 1
+    assert await db.fetchval("SELECT phone FROM leads WHERE tenant_id = $1", a) == "+14155550199"
+    contact = await db.fetchrow("SELECT contact_id, phone FROM contacts WHERE tenant_id = $1", a)
+    assert contact["phone"] == "+14155550199"
+    numbers = {r["identity_value"] for r in await db.fetch(
+        "SELECT identity_value FROM contact_identities WHERE tenant_id = $1 AND contact_id = $2 "
+        "AND identity_type = 'phone'", a, contact["contact_id"])}
+    assert numbers == {"+14155550100", "+14155550199"}
+    assert await db.fetchval("SELECT phone FROM leads WHERE tenant_id = $1", b) == "+14155550199"
+    assert await db.fetchval("SELECT count(*) FROM contacts WHERE tenant_id = $1 AND "
+                             "email = 'ana@example.com'", b) == 0
+
+
+async def test_a_new_number_from_another_country_brings_its_own_hours(
+        env: dict[str, Any]) -> None:
+    """Owner, 2026-11-25: a US number first, then an Indian one on the same email -- calls
+    to the Indian number must keep India hours, not the first number's US ones. Another US
+    number keeps the zone they already have."""
+    db, a, b = env["db"], env["a"], env["b"]
+    assert (await _config(env, a, call_consent_wording=_CALL_WORDING)).status_code == 200
+    assert (await _config(env, b, call_consent_wording=_CALL_WORDING)).status_code == 200
+    for tenant in (a, b):
+        await _form(env, tenant, name="Ana Ruiz", email="ana@example.com", phone="(415) 555-0100",
+                    consent_to_call="on", submission_id=f"s-z1-{tenant}")
+    await dispatch.dispatch_events(db, limit=20)
+
+    await _form(env, a, name="Ana Ruiz", email="ana@example.com", phone="(212) 555-0100",
+                consent_to_call="on", submission_id="s-z2")
+    await dispatch.dispatch_events(db, limit=10)
+    assert tuple(await db.fetchrow("SELECT phone, timezone FROM contacts WHERE tenant_id = $1",
+                                   a)) == ("+12125550100", "America/Los_Angeles")
+
+    await _form(env, a, name="Ana Ruiz", email="ana@example.com", phone="98765 43210",
+                **{"Country code": "+91"}, consent_to_call="on", submission_id="s-z3")
+    await dispatch.dispatch_events(db, limit=10)
+    assert tuple(await db.fetchrow("SELECT phone, timezone FROM contacts WHERE tenant_id = $1",
+                                   a)) == ("+919876543210", "Asia/Kolkata")
+    assert tuple(await db.fetchrow("SELECT phone, timezone FROM contacts WHERE tenant_id = $1",
+                                   b)) == ("+14155550100", "America/Los_Angeles")
+
+
 async def test_the_forms_country_code_reaches_the_contact_and_india_gets_its_own_hours(
         env: dict[str, Any]) -> None:
     """Owner, 2026-11-24: the form's country-code picker. +91 with a 10-digit number is an

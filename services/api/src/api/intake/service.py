@@ -11,14 +11,20 @@ from typing import Any
 
 from common.auth import AuthClaims
 from common.db import Database
+from common.errors import ValidationError
 
 from api.agents import hooks as agent_hooks
 from api.agents.imports import check_row
-from api.contacts.repository import get_contact, get_contact_id_by_identity, update_contact
+from api.contacts.repository import (
+    get_contact,
+    get_contact_id_by_identity,
+    set_contact_timezone,
+    update_contact,
+)
 from api.intake import meta
 from api.intake import repository as repo
-from api.intake.parsers import Normalised, booking_at, infer_timezone, normalise
-from api.leads.repository import add_activity, create_lead
+from api.intake.parsers import Normalised, booking_at, infer_timezone, normalise, phone_country
+from api.leads.repository import add_activity, create_lead, update_lead_phone
 from api.scheduling.reminder_repository import create_reminder_jobs
 from api.scheduling.repository import get_availability, record_form_booking
 
@@ -45,6 +51,20 @@ async def _existing_lead(db: Database, claims: AuthClaims, email: str | None,
             if contact is not None and contact.lead_id:
                 return contact.lead_id, contact_id
     return None
+
+
+async def _new_number_hours(db: Database, claims: AuthClaims, contact_id: str, phone: str,
+                            timezone: str | None) -> None:
+    """A new number from another country brings its own zone (owner, 2026-11-25): the old
+    number's zone would ring it at night. No zone for it clears the old one, so the call
+    waits with CONTACT_TIMEZONE_UNKNOWN rather than ringing at a guessed hour."""
+    contact = await get_contact(db, claims, contact_id)
+    if contact is None or not contact.phone or phone_country(contact.phone) == phone_country(phone):
+        return
+    try:
+        await set_contact_timezone(db, claims, contact_id, timezone)
+    except ValidationError:  # a zone the form made up
+        await set_contact_timezone(db, claims, contact_id, None)
 
 
 def _consents(lead: Normalised, *, source: str, intake_id: str, email: str | None,
@@ -115,6 +135,9 @@ async def ingest(db: Database, claims: AuthClaims, *, source: str, intake_id: st
         existing, contact_id = found
         if row.name:  # the name they just typed wins (live 2026-11-19: it was dropped)
             await update_contact(db, claims, contact_id, name=row.name)
+        if row.phone and "call" in channels:  # owner, 2026-11-25: ring the number just given
+            await _new_number_hours(db, claims, contact_id, row.phone, timezone)
+            await update_lead_phone(db, claims, existing, row.phone)
         await add_activity(db, claims, existing, type="intake_form_answers", payload=answers,
                            actor="system:intake")
         await _record_booking(db, claims, lead, lead_id=existing, intake_id=intake_id,
