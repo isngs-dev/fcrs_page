@@ -235,6 +235,17 @@ def test_parse_when_reads_the_day_and_time_the_caller_asks_for(
     ("double t o m at gmail dot com", "ttom@gmail.com"),
     ("no, use jane at gmail dot com instead", "jane@gmail.com"),
     ("send it to capital J ane at outlook dot com please", "jane@outlook.com"),
+    # Owner, 2026-11-26: the words around the address are not part of it ("So it's ..." became
+    # "soitsit@..."; live 2026-11-24 "So it's, uh, g a j a ..." became "soit'suhgaja...").
+    ("So it's it@isngs.com", "it@isngs.com"),
+    ("So it's it at isngs dot com", "it@isngs.com"),
+    ("So it's, uh, g a j a k o s h b e v d u, double t, at g m a i l dot com",
+     "gajakoshbevdutt@gmail.com"),
+    ("Okay, so my email is um david dot r at isngs dot com", "david.r@isngs.com"),
+    ("Yeah, it is j a n e at gmail dot com", "jane@gmail.com"),
+    ("So john at gmail dot com", "john@gmail.com"),
+    ("Uh, the email is it at isngs dot com, thanks", "it@isngs.com"),
+    ("sarah dot umar at gmail dot com", "sarah.umar@gmail.com"),  # "ah"/"um" inside names stay
 ])
 def test_spoken_email_is_turned_into_an_address(speech: str, email: str | None) -> None:
     assert script.parse_spoken_email(speech) == email

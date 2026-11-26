@@ -520,7 +520,11 @@ both / copy" asks for the other address (`EXTRA_EMAIL_ASK`, spelled), the final 
 the confirmation goes to both (`send_confirmation(copies=...)`; the second address becomes an identity, the
 main one is unchanged). `parse_spoken_email` strips lead-ins ("send the meeting link to", "my other mail id
 is") and refuses ordinary words before "at" (`_NOT_EMAIL_WORDS`) — a domain with no clear address gets
-`EMAIL_RETRY_LINE` (spell it). The same final check is never read twice in a row: the second time she asks
+`EMAIL_RETRY_LINE` (spell it). Owner, 2026-11-26: the words around the address are dropped — any run of
+"so / okay / yeah / well ..." before the lead-in, and "uh / um / er / hmm" anywhere ("So it's, uh, i t at
+isngs dot com" → `it@isngs.com`, where it had become "soit'suh..."); an address written as one word
+("it@isngs.com") is split at the @; and one word right after "it's / the email is" is the address even
+when it is an ordinary word ("it"), while "send the link to it at ..." still asks. The same final check is never read twice in a row: the second time she asks
 `CONFIRM_CLARIFY_LINE` instead.
 
 **R-form (owner, 2026-11-17 / 11-19) — a form lead's call order.** Live 2026-11-19 the form went unmentioned

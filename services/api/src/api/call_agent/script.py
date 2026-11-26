@@ -839,11 +839,14 @@ def parse_when(text: str, today: date) -> tuple[date | None, tuple[int, int] | N
     return day, at
 
 
+# Owner, 2026-11-26: "So it's, uh, ..." -- any run of these before the address, and the
+# sounds below anywhere, are not part of it ("soit'suhgaja..." was read back, live 2026-11-24).
+_EMAIL_SOUNDS = re.compile(r"\b(?:u+h+|u+m+|uhm|erm?|ah|hmm+)\b[,.]?\s*")
 _EMAIL_PREFIX = re.compile(
-    r"^(?:(?:yes|yeah|sure|ok(?:ay)?|no|nope|actually)[,.]?\s+)?"
-    r"(?:(?:it'?s|it is|that'?s|the email(?: address)? is|email is"
-    r"|my (?:other |second )?(?:e-?mail|mail)(?: address| id)? is"
-    r"|(?:you can |please )?use"
+    r"^(?:(?:yes|yeah|yep|sure|ok(?:ay)?|no|nope|actually|so|well|right|alright|oh)[,.]?\s+)*"
+    r"(?:(?P<declared>it'?s|it is|that'?s|the email(?: address)? is|email is"
+    r"|my (?:other |second )?(?:e-?mail|mail)(?: address| id)? is)[,.]?\s+"
+    r"|(?:(?:you can |please )?use"
     r"|(?:can you |could you |please )?(?:also )?(?:send|mail|email|forward)(?: me)?"
     r"(?: it| them| the (?:booking |meeting )?(?:details|link|invite|confirmation))?"
     r"(?: link)? to(?: my (?:other |second )?(?:e-?mail|mail)(?: address| id)?)?)\s+)?")
@@ -866,7 +869,12 @@ def parse_spoken_email(text: str) -> str | None:
     "j a n e", "J-A-N-E", "m as in mary", "double t"), or ``None`` when it isn't one. Indian
     English "at the rate" is understood too. Owner, 2026-11-17: the booking and every follow-up
     go to it -- the final check reads it back letter by letter before it is used."""
-    t = _EMAIL_SUFFIX.sub("", _EMAIL_PREFIX.sub("", text.lower().strip()))
+    t = _EMAIL_SOUNDS.sub("", text.lower().replace("’", "'").strip())
+    lead = _EMAIL_PREFIX.match(t)
+    # "It's it at isngs dot com": a single word right after "it's" / "email is" is the address
+    # itself, though "send the link to it at ..." stays a pronoun.
+    declared = bool(lead and lead.group("declared"))
+    t = _EMAIL_SUFFIX.sub("", t[lead.end():] if lead else t).replace("@", " @ ")
     t = re.sub(r"\bat the rate(?: of)?\b", " at ", t)
     t = re.sub(r"\b([a-z0-9]) as in \w+", r"\1", t)
     t = re.sub(r"\bdouble ([a-z0-9])\b", r"\1\1", t)
@@ -881,7 +889,7 @@ def parse_spoken_email(text: str) -> str | None:
             word = word.replace("-", "")
         parts.append(_EMAIL_WORDS.get(word, word))
     local = parts[:parts.index("@")] if "@" in parts else parts
-    if any(p in _NOT_EMAIL_WORDS for p in local):
+    if any(p in _NOT_EMAIL_WORDS for p in local) and not (declared and len(local) == 1):
         return None
     try:
         return validate_email("".join(parts).strip(".,"),
