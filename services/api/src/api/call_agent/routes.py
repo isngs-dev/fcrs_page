@@ -257,7 +257,10 @@ async def stream(websocket: WebSocket, call_id: str) -> None:
         try:
             await realtime.RealtimeCall(
                 socket, listener, voice, brain, opening=opening, record=record,
-                prefetch=lambda words: prefetch_embedding(db, claims, words)).run()
+                prefetch=lambda words: prefetch_embedding(db, claims, words),
+                # they called us: the greeting starts at once, no wait for their hello
+                opening_wait=0.0 if session.direction == "inbound" else realtime.OPENING_WAIT,
+            ).run()
         finally:
             if on_telnyx:  # closing the stream doesn't end a Telnyx call: hang up ourselves
                 await _telnyx_hangup(session)

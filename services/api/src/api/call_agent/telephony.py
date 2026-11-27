@@ -195,9 +195,18 @@ class TelnyxTelephony:
     def _state(value: str) -> str:
         return base64.b64encode(value.encode()).decode()
 
-    async def answer(self, *, call_uuid: str, client_state: str) -> None:
-        await self._request("POST", self._call(call_uuid, "answer"),
-                            {"client_state": self._state(client_state)})
+    async def answer(self, *, call_uuid: str, client_state: str, webhook_url: str | None = None,
+                     stream_url: str | None = None) -> None:
+        """Answer an incoming call. With ``webhook_url`` + ``stream_url`` (an inbound
+        conversation, 2026-11-27): that call's later events go to its own URL and its audio
+        streams exactly as on a dialled call."""
+        body: dict[str, Any] = {"client_state": self._state(client_state)}
+        if webhook_url:
+            body["webhook_url"] = webhook_url
+        if stream_url:
+            body.update(stream_url=stream_url, stream_track="inbound_track",
+                        stream_bidirectional_mode="rtp", stream_bidirectional_codec="PCMU")
+        await self._request("POST", self._call(call_uuid, "answer"), body)
 
     async def reject(self, *, call_uuid: str) -> None:
         await self._request("POST", self._call(call_uuid, "reject"), {"cause": "CALL_REJECTED"})

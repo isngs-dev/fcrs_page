@@ -149,6 +149,45 @@ def test_inbound_greeting_and_whisper() -> None:
         "a new caller. Connecting you now.")
 
 
+def test_a_returning_callers_greeting_picks_up_where_they_left_off() -> None:
+    """Owner, 2026-11-27: an incoming call starts from the last conversation -- their booked
+    call first, else what they reached out about; a first-time caller gets the plain line."""
+    at = datetime(2026, 12, 2, 20, 0, tzinfo=UTC)
+    booked = script.inbound_greeting(first_name="Jane", company="Acme Roofing", recording=True,
+                                     booked_at=at, timezone="America/New_York",
+                                     about="SEO")
+    assert booked == (
+        "Hi Jane, thanks for calling Acme Roofing. It's Rebecca, the AI assistant here. "
+        "This call's recorded. I see you have a call with our team on "
+        f"{script.say_time(at, 'America/New_York')}. Are you calling about that, "
+        "or is there something else I can help with?")
+    about = script.inbound_greeting(first_name="Jane", company="Acme Roofing", recording=False,
+                                    about="SEO and google ads")
+    assert about == ("Hi Jane, thanks for calling Acme Roofing. It's Rebecca, the AI assistant "
+                     "here. You reached out to us about SEO and google ads. "
+                     "What can I do for you today?")
+    known = script.inbound_greeting(first_name="Jane", company="Acme Roofing", recording=False,
+                                    known=True)
+    assert "Good to hear from you again." in known
+
+
+@pytest.mark.parametrize(("text", "cancel"), [
+    ("I want to cancel my call", True),
+    ("Please cancel it.", True),
+    ("Can you cancel the meeting on Tuesday?", True),
+    ("I need to cancel my appointment", True),
+    ("Just cancel.", True),
+    ("Yeah, I'd like to cancel that booking", True),
+    # a question about cancelling is not a request to cancel
+    ("Can I cancel later if something comes up?", False),
+    ("What's your cancellation policy?", False),
+    ("Is it free to cancel anytime?", False),
+    ("I want to reschedule my call", False),
+])
+def test_a_request_to_cancel_the_booked_call_is_heard(text: str, cancel: bool) -> None:
+    assert script.wants_cancel(text) is cancel
+
+
 @pytest.mark.parametrize(("url", "ok"), [
     ("https://media.plivo.com/v1/Account/MA1/Recording/r.mp3", True),
     ("https://plivo.com/r.mp3", True),

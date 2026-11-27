@@ -493,3 +493,19 @@ async def test_answering_speaking_gathering_and_rejecting_on_telnyx() -> None:
             "payload": "Goodbye.", "voice": telnyx.CALLBACK_VOICE,
             "client_state": _state("callback:bye")}),
         ("POST", "/v2/calls/v2:xyz/actions/reject", {"cause": "CALL_REJECTED"})]
+
+
+async def test_an_incoming_conversation_is_answered_with_its_own_events_url_and_stream() -> None:
+    """Owner, 2026-11-27: Rebecca answers calls to the number -- the same two-way audio as a
+    dialled call (Telnyx's AnswerRequest: webhook_url overrides this call's later webhooks)."""
+    api = _Api()
+    await _provider(api, _fake_key()).answer(
+        call_uuid="v2:abc", client_state="inbound",
+        webhook_url="https://api.example.com/hook?ticket=t",
+        stream_url="wss://api.example.com/stream?ticket=t")
+    [(method, path, body, _)] = api.requests
+    assert (method, path) == ("POST", "/v2/calls/v2:abc/actions/answer")
+    assert body == {
+        "client_state": _state("inbound"), "webhook_url": "https://api.example.com/hook?ticket=t",
+        "stream_url": "wss://api.example.com/stream?ticket=t", "stream_track": "inbound_track",
+        "stream_bidirectional_mode": "rtp", "stream_bidirectional_codec": "PCMU"}

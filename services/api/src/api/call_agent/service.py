@@ -41,6 +41,7 @@ from api.agents.outreach_repository import (
     stop_plan_if_empty,
 )
 from api.agents.repository import add_suppression, do_not_contact
+from api.audit.repository import record_audit
 from api.call_agent import realtime, script, telnyx
 from api.call_agent import repository as repo
 from api.call_agent.telephony import PlivoTelephony, TelephonyProvider, TelnyxTelephony
@@ -279,10 +280,7 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
     upcoming = (await get_upcoming_for_contact(db, claims, lead_id=contact.lead_id,
                                                email=contact.email) if contact else None)
     if upcoming is not None:  # booked already (e.g. on the website form): keep or move it
-        written["booked"] = {
-            "event_id": upcoming.event_id, "tz": upcoming.timezone,
-            "at": upcoming.starts_at.astimezone(UTC).isoformat(),
-            "minutes": str(int((upcoming.ends_at - upcoming.starts_at).total_seconds() // 60))}
+        written["booked"] = _booked_state(upcoming)
         # Option A (owner, 2026-11-20): booked in the chat a moment ago -> thanked, then asked
         # about their need; never "keep it or reschedule?" a minute after they chose it.
         if (upcoming.source == "native"
@@ -315,6 +313,13 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
 
 
 JUST_BOOKED = timedelta(minutes=15)  # a chat booking this recent was just made
+
+
+def _booked_state(upcoming: Any) -> dict[str, str]:
+    """Their upcoming booking, as the call's state carries it."""
+    return {"event_id": upcoming.event_id, "tz": upcoming.timezone,
+            "at": upcoming.starts_at.astimezone(UTC).isoformat(),
+            "minutes": str(int((upcoming.ends_at - upcoming.starts_at).total_seconds() // 60))}
 
 # -- Turns ----------------------------------------------------------------------------------
 
@@ -431,10 +436,14 @@ async def handle_callback(db: Database, event: telnyx.Callback) -> None:
         return
     provider = telnyx_for(tenant_id)
     claims = system_claims(tenant_id)
+    config = await repo.get_call_config(db, claims)
     if event.kind == "incoming":
+        caller = to_e164(event.caller)
+        if config is not None and config.enabled and config.inbound_enabled and caller:
+            await _answer_on_telnyx(db, claims, config, provider, event, caller)
+            return
         await provider.answer(call_uuid=event.call_control_id, client_state="callback:answered")
         return
-    config = await repo.get_call_config(db, claims)
     company = config.company_name if config else "our team"
     if event.kind == "answered":
         await provider.gather_using_speak(call_uuid=event.call_control_id,
@@ -455,6 +464,25 @@ async def handle_callback(db: Database, event: telnyx.Callback) -> None:
             line = telnyx.callback_removed_line(company)
         await provider.speak(call_uuid=event.call_control_id, text=line,
                              client_state="callback:bye")
+
+
+async def _answer_on_telnyx(db: Database, claims: AuthClaims, config: repo.CallConfig,
+                            provider: TelnyxTelephony, event: telnyx.Callback,
+                            caller: str) -> None:
+    """Owner, 2026-11-27: Rebecca answers calls to the Telnyx number herself -- the same
+    streamed conversation as her outbound calls (events and audio for that call go to its own
+    URLs, so the callback menu never sees them)."""
+    call_id, _ = await _open_inbound(db, claims, config, caller=caller,
+                                     called=to_e164(event.called) or event.called,
+                                     call_uuid=event.call_control_id)
+    try:
+        await provider.answer(call_uuid=event.call_control_id, client_state="inbound",
+                              webhook_url=telnyx.events_url(call_id, ticket(call_id)),
+                              stream_url=telnyx.stream_url(call_id, ticket(call_id)))
+    except Exception:
+        await repo.update_session(db, claims, call_id, status="failed", outcome="failed",
+                                  ended_at=datetime.now(UTC))
+        raise
 
 
 async def answer_xml(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
@@ -712,6 +740,33 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                        {"contact_id": session.contact_id, "channel": "call"})
             return await bye(script.OPT_OUT_LINE, "opted_out")
         return await bye(script.WRONG_NUMBER_LINE, "wrong_number")
+    # Cancelling their booked call (owner, 2026-11-27): moving it is offered first; it is
+    # cancelled only when they still want that. A question here is answered below and the
+    # booking stands.
+    if state.booked and (state.stage == "cancel_check" or script.wants_cancel(speech)):
+        b_at, b_tz = datetime.fromisoformat(state.booked["at"]), state.booked["tz"]
+        moves = script.wants_reschedule(speech)
+        if state.stage != "cancel_check" and not state.rescheduling:
+            state.stage = "cancel_check"
+            return await say(script.cancel_offer_line(b_at, b_tz))
+        state.stage = "talking"
+        if script.wants_cancel(speech) and not moves:
+            return await say(await _cancel_booking(db, claims, session, state))
+        if moves or named_time or kind in ("yes", "book"):
+            state.rescheduling, state.stage = True, "asking_time"
+            if not named_time:
+                return await say(script.OTHER_TIME_LINE)  # a time they named is read below
+        elif script.keeps_booking(speech):
+            return await say(script.kept_line(b_at, b_tz))
+        elif kind in ("no", "not_interested", "goodbye") or script.declines_booking(speech):
+            return await say(await _cancel_booking(db, claims, session, state))
+    if state.stage == "inbound_booked":  # "Are you calling about that, or something else?"
+        state.stage = "talking"
+        if kind == "yes":
+            state.stage = "booked_check"
+            return await say(script.INBOUND_BOOKED_WHAT_LINE)
+        if kind == "no":
+            return await say(script.SOMETHING_ELSE_LINE)
     # "Send me the link again (to my gmail)" with a booking: its confirmation, sent again
     # (live call 2026-11-19 got "I don't have a link to share").
     booked_id = (state.booked or {}).get("event_id") if not state.rescheduling else None
@@ -1439,24 +1494,77 @@ def spoken_text(xml_body: str) -> str:
 async def inbound_answer(db: Database, claims: AuthClaims, *, caller: str, called: str,
                          call_uuid: str | None) -> str:
     """Answer a call to the tenant's number: greet (by name if known) and listen (N3/N4)."""
-    from api.contacts.repository import get_contact_id_by_identity  # noqa: PLC0415
-
     config = await repo.get_call_config(db, claims)
     if config is None or not config.enabled or not config.inbound_enabled:
         voice = config.voice if config else "Polly.Joanna"
         return _hangup(script.INBOUND_OFF_LINE, voice)
+    call_id, line = await _open_inbound(db, claims, config, caller=caller, called=called,
+                                        call_uuid=call_uuid)
+    if realtime.enabled_for(claims.tenant_id):  # a streamed tenant: the stream says it
+        return realtime.stream_xml(call_id, ticket(call_id))
+    return _listen(line, call_id, config.voice)
+
+
+async def _open_inbound(db: Database, claims: AuthClaims, config: repo.CallConfig, *,
+                        caller: str, called: str, call_uuid: str | None) -> tuple[str, str]:
+    """An incoming call's session, its starting state and its greeting (said first)."""
     contact_id = await get_contact_id_by_identity(db, claims, identity_type="phone",
                                                   identity_value=caller)
-    contact = await get_contact(db, claims, contact_id) if contact_id else None
-    first = (contact.name or "").split(" ")[0] if contact and contact.name else None
+    line, state = await _inbound_start(db, claims, contact_id, config)
     call_id = await repo.create_inbound_session(db, claims, from_e164=caller, to_e164=called,
                                                 contact_id=contact_id, call_uuid=call_uuid)
-    line = script.inbound_greeting(first_name=first if first and first.isalpha() else None,
-                                   company=config.company_name,
-                                   recording=config.recording_enabled)
-    await repo.update_session(db, claims, call_id, session=script.CallState().to_json())
+    await repo.update_session(db, claims, call_id, session=state)
     await repo.add_turn(db, claims, call_id, speaker="rebecca", text=line)
-    return _listen(line, call_id, config.voice)
+    return call_id, line
+
+
+async def _inbound_start(db: Database, claims: AuthClaims, contact_id: str | None,
+                         config: repo.CallConfig) -> tuple[str, dict[str, Any]]:
+    """Owner, 2026-11-27: a returning caller's call starts from the last conversation -- their
+    booked call (keep, move or cancel it), else what they reached out about. Facts only, from
+    the code: no model on the line while it rings."""
+    contact = await get_contact(db, claims, contact_id) if contact_id else None
+    if contact is None:
+        return (script.inbound_greeting(first_name=None, company=config.company_name,
+                                        recording=config.recording_enabled),
+                script.CallState().to_json())
+    details = script.form_details(await memory.items(db, claims, contact.contact_id))
+    upcoming = await get_upcoming_for_contact(db, claims, lead_id=contact.lead_id,
+                                              email=contact.email)
+    line = script.inbound_greeting(
+        first_name=_first_name(contact), company=config.company_name,
+        recording=config.recording_enabled,
+        booked_at=upcoming.starts_at if upcoming else None,
+        timezone=upcoming.timezone if upcoming else None,
+        about=script.service_words(details), known=True)
+    state = script.CallState(booked=_booked_state(upcoming) if upcoming else None,
+                             first_name=_first_name(contact),
+                             who=script.who(contact.name, details.get("company")),
+                             stage="inbound_booked" if upcoming else "talking")
+    return line, state.to_json()
+
+
+async def _cancel_booking(db: Database, claims: AuthClaims, session: repo.CallSessionRow,
+                          state: script.CallState) -> str:
+    """They cancelled their booked call on the phone (owner, 2026-11-27): the same clean-up as
+    the booking link's Cancel (calendar event, reminders, the team told)."""
+    booked = state.booked or {}
+    at, tz = datetime.fromisoformat(booked["at"]), booked["tz"]
+    state.booked, state.rescheduling, state.stage = None, False, "talking"
+    event_id = booked.get("event_id")
+    if event_id and await retire_booking(db, claims, event_id):
+        await record_audit(db, claims, action="scheduling.booking_cancelled",
+                           target_type="schedule_event", target_id=event_id,
+                           metadata={"via": "call", "call_id": session.call_id})
+        await emit_event_safe(db, claims, kind="booking_cancelled_by_attendee",
+                              category="leads", target_type="schedule_event",
+                              target_id=event_id,
+                              payload={"starts_at": at.isoformat(), "via": "call"},
+                              actor_id=None)
+    if session.contact_id:  # the team and later calls know it's gone
+        await memory.remember(db, claims, session.contact_id, channel="call", kind="booked",
+                              text=f"Cancelled their call on {script.say_time(at, tz)}.")
+    return script.cancelled_line(at, tz)
 
 
 async def whisper_xml(db: Database, claims: AuthClaims, session: repo.CallSessionRow) -> str:

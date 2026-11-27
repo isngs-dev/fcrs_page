@@ -269,11 +269,23 @@ def opening(*, first_name: str | None, company: str, recording: bool, hook: str 
     return " ".join([*parts, "Is now a good time?"])
 
 
-def inbound_greeting(*, first_name: str | None, company: str, recording: bool) -> str:
+def inbound_greeting(*, first_name: str | None, company: str, recording: bool,
+                     booked_at: datetime | None = None, timezone: str | None = None,
+                     about: str | None = None, known: bool = False) -> str:
+    """An incoming call (owner, 2026-11-27: start from the last conversation): their booked
+    call first, else what they reached out about, else "good to hear from you again"."""
     who = f" {first_name}" if first_name else ""
     parts = [f"Hi{who}, thanks for calling {company}. It's Rebecca, the AI assistant here."]
     if recording:
         parts.append(RECORDED_LINE)
+    if booked_at is not None and timezone:
+        return " ".join([*parts, f"I see you have a call with our team on "
+                                 f"{say_time(booked_at, timezone)}. Are you calling about that, "
+                                 "or is there something else I can help with?"])
+    if about:
+        parts.append(f"You reached out to us about {about}.")
+    elif known:
+        parts.append("Good to hear from you again.")
     return " ".join([*parts, "What can I do for you today?"])
 
 
@@ -476,6 +488,33 @@ def means_same_time(text: str) -> bool:
 
 def keeps_booking(text: str) -> bool:
     return bool(_KEEP.search(text))
+
+
+# Cancelling the booked call (owner, 2026-11-27). A question about cancelling ("can I cancel
+# later if...", "your cancellation policy?") is answered, never acted on.
+_CANCEL = re.compile(r"\bcancel(?:l?ed|l?ing)?\b", re.I)
+_CANCEL_QUESTION = re.compile(r"\b(?:if|in case|later|any ?time|policy|fee|free|charge)\b",
+                              re.I)
+
+
+def wants_cancel(text: str) -> bool:
+    return bool(_CANCEL.search(text)) and not _CANCEL_QUESTION.search(text)
+
+
+def cancel_offer_line(at: datetime, timezone: str) -> str:
+    """Asked to cancel: the call can move instead -- cancelled only if they still want that."""
+    return (f"I can cancel your call on {say_time(at, timezone)}. Or would you rather move it "
+            "to another day or time?")
+
+
+def cancelled_line(at: datetime, timezone: str) -> str:
+    return (f"Done, your call on {say_time(at, timezone)} is cancelled. If you'd like a new "
+            f"time later, just call or reply to our email. {ANYTHING_ELSE}")
+
+
+SOMETHING_ELSE_LINE = "Sure, what can I help you with?"
+INBOUND_BOOKED_WHAT_LINE = ("Sure. Would you like to keep that time, move it to another time, "
+                            "or cancel it?")
 
 
 def ask_hour_line(day: date) -> str:
@@ -920,7 +959,8 @@ def say_email(email: str) -> str:
 # -- Per-call memory ------------------------------------------------------------------------
 
 Stage = Literal["talking", "discovery", "asking_time", "confirming", "email_ask", "booked_check",
-                "qualifying", "email_extra_ask", "link_email_ask", "details_check"]
+                "qualifying", "email_extra_ask", "link_email_ask", "details_check",
+                "inbound_booked", "cancel_check"]
 
 
 @dataclass

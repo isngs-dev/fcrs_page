@@ -4,14 +4,16 @@ callback scheduling, opt-out, warm transfer with whisper, unknown caller -> lead
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from datetime import time as dtime
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from common.auth import AuthClaims, Role
 from common.errors import ConflictError
 
-from api.agents import dispatch
+from api.agents import dispatch, memory
 from api.call_agent import repository as repo
 from api.call_agent import script, service
 from api.contacts.repository import add_identity, create_contact, set_contact_timezone
@@ -80,7 +82,7 @@ async def test_known_caller_is_greeted_by_name(routed: dict[str, Any]) -> None:
     r, call_id = await _call_in(routed)
     assert r.status_code == 200
     assert service.spoken_text(r.text) == script.inbound_greeting(
-        first_name="Jane", company="Acme Roofing", recording=True)
+        first_name="Jane", company="Acme Roofing", recording=True, known=True)
     session = await repo.get_session(routed["db"], _claims(routed["a"]), call_id)
     assert session is not None and session.direction == "inbound" and session.contact_id
 
@@ -212,3 +214,87 @@ async def test_inbound_switched_off_hangs_up_politely(routed: dict[str, Any]) ->
     r, _ = await _call_in(routed)
     assert service.spoken_text(r.text) == script.INBOUND_OFF_LINE
     assert r.text.endswith("<Hangup/></Response>")
+
+
+# -- A returning caller: the last conversation, their booking, cancel or move it -------------
+# (owner, 2026-11-27)
+
+_NY = ZoneInfo("America/New_York")
+
+
+async def _booking(env: dict[str, Any], tenant: str, email: str = "jane@example.com") -> tuple[
+        str, datetime]:
+    from api.scheduling.repository import record_form_booking
+
+    at = datetime.combine((datetime.now(_NY) + timedelta(days=2)).date(), dtime(15), tzinfo=_NY)
+    event_id = await record_form_booking(
+        env["db"], _claims(tenant), ref=f"form:{uuid4().hex}", starts_at=at,
+        ends_at=at + timedelta(minutes=30), timezone="America/New_York", lead_id=uuid4().hex,
+        email=email, name="Jane Doe", consent={"granted": True})
+    assert event_id is not None
+    return event_id, at
+
+
+async def _status(env: dict[str, Any], event_id: str) -> str:
+    return str(await env["db"].fetchval("SELECT status FROM schedule_events WHERE event_id = $1",
+                                        event_id))
+
+
+async def test_a_caller_with_a_booking_hears_it_and_can_cancel_it(routed: dict[str, Any]) -> None:
+    db, a, b = routed["db"], routed["a"], routed["b"]
+    cid = await _known_jane(routed)
+    event_id, at = await _booking(routed, a)
+    others, _ = await _booking(routed, b)  # tenant B's Jane: never touched
+    r, call_id = await _call_in(routed)
+    assert service.spoken_text(r.text) == script.inbound_greeting(
+        first_name="Jane", company="Acme Roofing", recording=True, booked_at=at,
+        timezone="America/New_York")
+
+    offer = service.spoken_text(await _turn(routed, call_id, "Yes, I need to cancel my call"))
+    assert offer == script.cancel_offer_line(at, "America/New_York")
+    assert await _status(routed, event_id) == "booked"  # not before they say so
+    done = service.spoken_text(await _turn(routed, call_id, "No, just cancel it please"))
+    assert done == script.cancelled_line(at, "America/New_York")
+    assert await _status(routed, event_id) == "cancelled"
+    assert await _status(routed, others) == "booked"
+    assert await db.fetchval("SELECT count(*) FROM audit_events WHERE tenant_id = $1 "
+                             "AND action = 'scheduling.booking_cancelled'", a) == 1
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
+                             "AND kind = 'booking_cancelled_by_attendee'", a) == 1
+    notes = [i["text"] for i in await memory.items(db, _claims(a), cid)]
+    assert any(n.startswith("Cancelled their call") for n in notes)
+    # The booking is gone from the call too: "goodbye" no longer names it.
+    bye = service.spoken_text(await _turn(routed, call_id, "No, that's all, thanks. Bye."))
+    assert "your call on" not in bye
+
+
+async def test_asked_to_cancel_they_can_move_it_instead(routed: dict[str, Any]) -> None:
+    await _known_jane(routed)
+    event_id, at = await _booking(routed, routed["a"])
+    _, call_id = await _call_in(routed)
+    await _turn(routed, call_id, "I'd like to cancel that booking")
+    ask = service.spoken_text(await _turn(routed, call_id, "Actually yes, let's move it"))
+    assert ask == script.OTHER_TIME_LINE
+    assert await _status(routed, event_id) == "booked"
+
+
+async def test_yes_to_calling_about_the_booking_asks_keep_move_or_cancel(
+        routed: dict[str, Any]) -> None:
+    await _known_jane(routed)
+    event_id, at = await _booking(routed, routed["a"])
+    _, call_id = await _call_in(routed)
+    what = service.spoken_text(await _turn(routed, call_id, "Yes"))
+    assert what == script.INBOUND_BOOKED_WHAT_LINE
+    kept = service.spoken_text(await _turn(routed, call_id, "keep it"))
+    assert kept == script.kept_line(at, "America/New_York")
+    assert await _status(routed, event_id) == "booked"
+
+
+async def test_a_returning_caller_hears_what_they_reached_out_about(
+        routed: dict[str, Any]) -> None:
+    cid = await _known_jane(routed)
+    await memory.remember(routed["db"], _claims(routed["a"]), cid, channel="form", kind="need",
+                          text="Service: seo")
+    r, _ = await _call_in(routed)
+    assert service.spoken_text(r.text) == script.inbound_greeting(
+        first_name="Jane", company="Acme Roofing", recording=True, about="SEO")

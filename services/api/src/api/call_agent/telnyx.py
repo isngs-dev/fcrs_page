@@ -141,7 +141,8 @@ def parse_event(body: bytes) -> Event:
 
 # -- callbacks: someone calls a tenant's number back (2026-11-16) ------------------------------
 #
-# Rebecca takes no incoming calls, but people return missed calls, and the number they see
+# Since 2026-11-27 (spec T5) Rebecca answers incoming calls herself; this menu is what a call
+# hears while the client has incoming calls off. People return missed calls, and the number they see
 # must let them ask that business to stop calling (47 CFR 64.1601(e)). So a call to a
 # tenant's Telnyx number gets one short message naming the business, and "press 1" puts the
 # caller on THAT tenant's do-not-call list. The tenant comes from the number called; each

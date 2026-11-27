@@ -561,3 +561,36 @@ phone identity, so a call in from it still finds them. A new number from the sam
 contact's timezone; one from another country (US -> +91) takes the form's zone for it (`infer_timezone`),
 or clears the old one when there is none, so the call waits (`CONTACT_TIMEZONE_UNKNOWN`) rather than
 ringing at the old country's hours.
+
+**T5 — Rebecca answers incoming calls (owner, 2026-11-27; replaces D-T7's menu while incoming calls are
+on).** A call to a Telnyx tenant's number, with the call agent and `inbound_enabled` on and a caller ID,
+is answered with Telnyx's `answer` carrying that call's own `webhook_url` (its events URL with the per-call
+ticket) and the same two-way stream as a dialled call (`stream_url`, `inbound_track`, `rtp`, `PCMU`;
+fields checked 2026-11-27 against Telnyx's AnswerRequest: `webhook_url` overrides the URL for that call's
+later webhooks). From there it is the outbound call's pipeline (events route, stream route,
+`handle_turn`, recording after the first turn, `on_hangup`, `after_call`). With incoming calls off, or no
+caller ID, D-T7's menu (press 1 = do-not-call) still answers. A Plivo inbound call on a streamed tenant
+gets the stream too. On an inbound stream the greeting starts at once (`opening_wait` 0): they called us.
+In the conversation, "stop calling me" is the same opt-out as on any call.
+
+**T5a — the greeting starts from the last conversation (owner, 2026-11-27).** Written by code from facts,
+never by the model (no model call while the phone rings): a known caller with an upcoming booking hears
+"I see you have a call with our team on <time>. Are you calling about that, or is there something else I
+can help with?" (the booking is in the call's state, so it can be kept, moved or cancelled); "yes" gets
+"Would you like to keep that time, move it to another time, or cancel it?"; "no" gets "Sure, what can I
+help you with?". Without a booking: "You reached out to us about <the form's service>." when the form
+named one, else "Good to hear from you again."; an unknown caller hears the plain greeting. Their
+questions are answered with their whole story (`memory.render`) as on outbound calls.
+
+**T5b — cancelling the booked call on the phone (owner, 2026-11-27).** On any call with a booking (inbound
+or outbound), "cancel my call" (`script.wants_cancel`; a question about cancelling — "if", "later",
+"anytime", "policy", "fee" — is answered, not acted on) first gets "I can cancel your call on <time>. Or
+would you rather move it to another day or time?". Then: cancel / no / no thanks -> cancelled; move /
+yes / a day or time -> the reschedule flow; keep it -> kept; a question -> answered, the booking stands.
+Said while rescheduling, "just cancel it" cancels without asking again. Cancelling is the booking link's
+Cancel: `retire_booking` (status, pending reminders skipped, calendar event deleted), the
+`scheduling.booking_cancelled` audit (`via: call`), `booking_cancelled_by_attendee` for the team, and a
+memory note ("Cancelled their call on <time>.") so later calls and emails know. The line: "Done, your
+call on <time> is cancelled. If you'd like a new time later, just call or reply to our email. Is there
+anything else I can help with?". Not covered: an inbound call to the Indian Plivo number (it is not
+registered to a tenant, and its webhooks would be signed with the India account's token).

@@ -2332,6 +2332,9 @@ async def test_a_callback_hears_the_business_and_pressing_1_stops_its_calls(
     numbers = await _numbers(env)
     contact_id, _ = await _contact_with_call_task(env, a)  # Jane, +12025550123, in tenant A
     caller = {"from": "+12025550123", "to": numbers["a"]}
+    # The menu is what a call hears when the client has incoming calls off (owner, 2026-11-27).
+    await db.execute("UPDATE tenant_call_agent_configs SET inbound_enabled = false "
+                     "WHERE tenant_id = $1", a)
 
     await _callback_event(env, key, "call.initiated", direction="incoming", **caller)
     assert fake.calls[-1] == ("answer", {"call_uuid": "v2:cb-1", "client_state": "callback:answered"})
@@ -2858,3 +2861,52 @@ async def test_another_clients_indian_numbers_never_use_this_india_account(
     assert _INDIA_ID not in used
     assert await env["db"].fetchval("SELECT from_e164 FROM call_sessions WHERE call_id = $1",
                                     call_id) == "+17865550000"
+
+
+# -- Rebecca answers calls to the Telnyx number (owner, 2026-11-27) ------------------------------
+
+
+async def test_a_call_to_the_telnyx_number_is_a_conversation_with_rebecca(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.call_agent import telnyx
+
+    a, b, db = env["a"], env["b"], env["db"]
+    fake, key = _on_telnyx(env, monkeypatch, a, b)
+    numbers = await _numbers(env)
+    contact_id, _ = await _contact_with_call_task(env, a)  # Jane, +12025550123, in tenant A
+    await _callback_event(env, key, "call.initiated", direction="incoming",
+                          **{"from": "+12025550123", "to": numbers["a"]})
+
+    session = await db.fetchrow("SELECT call_id, tenant_id, direction, contact_id, from_e164, "
+                                "to_e164, provider_call_uuid FROM call_sessions "
+                                "WHERE provider_call_uuid = 'v2:cb-1'")
+    assert session is not None
+    call_id = session["call_id"]
+    assert (session["tenant_id"], session["direction"], session["contact_id"],
+            session["from_e164"], session["to_e164"]) == (
+        a, "inbound", contact_id, "+12025550123", numbers["a"])
+    assert fake.calls[-1] == ("answer", {
+        "call_uuid": "v2:cb-1", "client_state": "inbound",
+        "webhook_url": telnyx.events_url(call_id, service.ticket(call_id)),
+        "stream_url": telnyx.stream_url(call_id, service.ticket(call_id))})
+    greeting = await db.fetchval("SELECT text FROM call_transcript_turns WHERE call_id = $1", call_id)
+    assert greeting.startswith("Hi Jane, thanks for calling Acme Roofing.")
+    assert await db.fetchval("SELECT count(*) FROM call_sessions WHERE tenant_id = $1", b) == 0
+    # That call's events now come to its own URL and are accepted there.
+    answered = await _telnyx_event(env, key, call_id, "call.answered", control_id="v2:cb-1",
+                                   ticket=service.ticket(call_id))
+    assert answered.status_code == 200
+
+
+async def test_with_incoming_calls_off_the_number_still_offers_the_opt_out(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    a, db = env["a"], env["db"]
+    fake, key = _on_telnyx(env, monkeypatch, a)
+    numbers = await _numbers(env)
+    await db.execute("UPDATE tenant_call_agent_configs SET inbound_enabled = false "
+                     "WHERE tenant_id = $1", a)
+    await _callback_event(env, key, "call.initiated", direction="incoming",
+                          **{"from": "+12025550123", "to": numbers["a"]})
+    assert fake.calls[-1] == ("answer", {"call_uuid": "v2:cb-1",
+                                         "client_state": "callback:answered"})
+    assert await db.fetchval("SELECT count(*) FROM call_sessions WHERE tenant_id = $1", a) == 0
