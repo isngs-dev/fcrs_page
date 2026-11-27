@@ -40,7 +40,7 @@ function ConversationRateCard({ hub }: { hub: ChatbotHub }) {
   return (
     <SoftCard as="article" className="flex w-full flex-col gap-1.5 px-4 py-3.5">
       <div className="flex items-start justify-between gap-2">
-        <h3 className="text-base font-semibold text-[var(--ink)]">Conversation Rate</h3>
+        <h3 className="text-base font-semibold text-foreground">Conversation Rate</h3>
         <PeriodSelector bucket={hub.bucket} period={hub.period} />
       </div>
       <p className="text-xs text-muted-foreground">
@@ -86,14 +86,14 @@ function ConversationRateCard({ hub }: { hub: ChatbotHub }) {
  * and their matching legend dots, keyed by the `HUB_PERIODS` they map onto. */
 const SEGMENT_BACKGROUNDS: Record<HubPeriod, string> = {
   week: "var(--primary)",
-  month: "repeating-linear-gradient(45deg,#878787 0 4px,#cdcdcd 4px 8px)",
-  year: "#cdcdcd",
+  month: "repeating-linear-gradient(45deg,var(--chart-3) 0 4px,#c9d6c9 4px 8px)",
+  year: "var(--chart-4)",
 };
 
 const SEGMENT_DOTS: Record<HubPeriod, string> = {
   week: "var(--primary)",
-  month: "#878787",
-  year: "#cdcdcd",
+  month: "var(--chart-3)",
+  year: "var(--chart-4)",
 };
 
 function PeriodSelector({ period, bucket }: { period: HubPeriod; bucket: string }) {
@@ -140,14 +140,14 @@ function EscalationDonut({ reading }: { reading: ReturnType<typeof buildEscalati
 
   return (
     <svg width={56} height={56} viewBox="0 0 56 56" className="absolute inset-0 -rotate-90" aria-hidden>
-      <circle cx={28} cy={28} r={radius} fill="none" stroke="#cdcdcd" strokeWidth={7} />
+      <circle cx={28} cy={28} r={radius} fill="none" stroke="var(--secondary)" strokeWidth={7} />
       {reading.percent !== null ? (
         <circle
           cx={28}
           cy={28}
           r={radius}
           fill="none"
-          stroke="var(--primary)"
+          stroke="var(--brand-clay)"
           strokeWidth={7}
           strokeDasharray={`${filled} ${circumference - filled}`}
           strokeLinecap="round"
@@ -162,14 +162,14 @@ function EscalationRateCard({ hub }: { hub: ChatbotHub }) {
 
   return (
     <SoftCard as="article" aria-label={reading.label} className="flex w-full flex-col gap-3 px-[18px] py-4">
-      <h3 className="text-base leading-tight font-semibold text-[var(--ink)]">Escalation Rate</h3>
+      <h3 className="text-base leading-tight font-semibold text-foreground">Escalation Rate</h3>
       {/* Reference Dashboard.dc.html:214-226 -- ring on the left with the
           percentage centred INSIDE it, two 5px-dot legend rows on the right
           (the shipped version put a 3xl number beside the ring instead). */}
       <div className="flex items-center gap-3.5">
         <div role="img" aria-label={reading.label} className="relative size-14 flex-none">
           <EscalationDonut reading={reading} />
-          <div className="absolute inset-0 flex items-center justify-center text-center text-[13px] font-semibold text-[var(--ink)]">
+          <div className="absolute inset-0 flex items-center justify-center text-center text-[13px] font-semibold text-foreground">
             {reading.percent === null ? (
               <span className="text-[9px] text-[var(--ink-2)]">No data</span>
             ) : (
@@ -222,7 +222,7 @@ function AnsweredByChatbotCard({ hub }: { hub: ChatbotHub }) {
   return (
     <SoftCard as="article" className="flex w-full flex-col px-[18px] py-4">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-base font-semibold text-[var(--ink)]">Answered by chatbot</h3>
+        <h3 className="text-base font-semibold text-foreground">Answered by chatbot</h3>
         <Link
           href="/conversations"
           className="rounded text-xs font-semibold text-[var(--ink-2)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -243,12 +243,12 @@ function AnsweredByChatbotCard({ hub }: { hub: ChatbotHub }) {
             <li key={row.conversationId} className="flex items-center gap-2.5">
               <span
                 aria-hidden
-                className="flex size-[26px] flex-none items-center justify-center rounded-full bg-border text-[10px] font-semibold text-[var(--ink-2)]"
+                className="flex size-[26px] flex-none items-center justify-center rounded-full bg-[#e4ece3] text-[10px] font-semibold text-primary"
               >
                 {row.initials}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs leading-[1.25] font-semibold text-[var(--ink)]">
+                <p className="truncate text-xs leading-[1.25] font-semibold text-foreground">
                   {row.identityLabel}
                 </p>
                 <p className="truncate text-[11px] leading-[1.25] text-muted-foreground">{row.preview}</p>

@@ -508,22 +508,22 @@ describe("getLeadActivities", () => {
 });
 
 describe("stageBadgeStyle", () => {
-  it("returns the SR-15 monochrome-restyle colors for each canonical stage (citron deleted per D1)", () => {
-    expect(stageBadgeStyle("captured")).toEqual({ label: "CAPTURED", bg: "#efeee6", fg: "var(--ink-2)" });
-    expect(stageBadgeStyle("qualified")).toEqual({ label: "QUALIFIED", bg: "#efeee6", fg: "#333333" });
-    expect(stageBadgeStyle("contacted")).toEqual({ label: "CONTACTED", bg: "#efeee6", fg: "#404040" });
-    expect(stageBadgeStyle("converted")).toEqual({ label: "CONVERTED", bg: "#eaf3ec", fg: "#3f7d57" });
+  it("returns the Pine & Clay progression for each canonical stage (sand, sage, clay, green, red)", () => {
+    expect(stageBadgeStyle("captured")).toEqual({ label: "CAPTURED", bg: "#eeebe3", fg: "#3d4540" });
+    expect(stageBadgeStyle("qualified")).toEqual({ label: "QUALIFIED", bg: "#e4ece3", fg: "#1f4b3a" });
+    expect(stageBadgeStyle("contacted")).toEqual({ label: "CONTACTED", bg: "#f6e7dc", fg: "#9a4a1e" });
+    expect(stageBadgeStyle("converted")).toEqual({ label: "CONVERTED", bg: "#e5efe7", fg: "#2e6a46" });
     expect(stageBadgeStyle("disqualified")).toEqual({
       label: "DISQUALIFIED",
-      bg: "#f6e3df",
-      fg: "#a24b4b",
+      bg: "#f8e6e0",
+      fg: "#b3452f",
     });
   });
 
   it("falls back to a neutral style for an unrecognized stage rather than throwing", () => {
     const style = stageBadgeStyle("bogus");
     expect(style.label).toBe("BOGUS");
-    expect(style.bg).toBe("#ecece5");
+    expect(style.bg).toBe("#eeebe3");
   });
 });
 
@@ -540,7 +540,7 @@ describe("scoreChipStyle", () => {
   });
 
   it("uses the converted-green chip regardless of score once stage is converted", () => {
-    expect(scoreChipStyle(90, "converted")).toEqual({ label: "90", bg: "#dcefdc", fg: "#1f6a2f" });
+    expect(scoreChipStyle(90, "converted")).toEqual({ label: "90", bg: "#e5efe7", fg: "#2e6a46" });
   });
 
   it("uses a plain muted style below the 60 threshold", () => {

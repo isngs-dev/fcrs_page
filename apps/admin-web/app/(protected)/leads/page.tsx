@@ -145,7 +145,7 @@ export default async function LeadsPage({ searchParams }: LeadsPageProps) {
               href/wiring itself is untouched. */}
           <a
             href="/leads/export"
-            className="inline-flex h-[38px] items-center gap-2 rounded-[10px] bg-[#333333] px-4 text-[13.5px] font-semibold whitespace-nowrap text-[#fbfaf7] transition-colors hover:bg-[#404040] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="inline-flex h-[38px] items-center gap-2 rounded-[10px] bg-primary px-4 text-[13.5px] font-semibold whitespace-nowrap text-primary-foreground transition-colors hover:bg-[#183d2f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
@@ -212,7 +212,7 @@ async function renderLeadsBoardSection(currentRole: Role) {
     return (
       <p
         role="alert"
-        className="rounded-[14px] border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]"
+        className="rounded-[14px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]"
       >
         {boardResult.message}
         {boardResult.correlationId ? (
@@ -270,7 +270,7 @@ async function renderLeadsTableSection({
     return (
       <p
         role="alert"
-        className="rounded-[14px] border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]"
+        className="rounded-[14px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]"
       >
         {result.message}
         {result.correlationId ? (

@@ -20,8 +20,8 @@ describe("SR-15 D4: every badge/chip style carries a real text label", () => {
   it("the converted stage (this table's success case) uses the system's success color pair", () => {
     expect(stageBadgeStyle("converted")).toEqual({
       label: "CONVERTED",
-      bg: "#eaf3ec",
-      fg: "#3f7d57",
+      bg: "#e5efe7",
+      fg: "#2e6a46",
     });
   });
 
@@ -36,7 +36,7 @@ describe("SR-15 D4: every badge/chip style carries a real text label", () => {
     // SR-27 slice 2: `dot` (Console.dc.html:394's 6x6px status dot color)
     // was added to the badge-style contract for the reference chip
     // geometry -- `active`'s dot is the same success-green as its fg.
-    expect(active).toEqual({ label: "ACTIVE", bg: "#eaf3ec", fg: "#3f7d57", dot: "#4a9c6d" });
+    expect(active).toEqual({ label: "ACTIVE", bg: "#e5efe7", fg: "#2e6a46", dot: "#3b8a5a" });
   });
 
   it("an unrecognized status still returns a non-empty label (no-silent-fallback)", () => {

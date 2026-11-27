@@ -100,9 +100,9 @@ export interface StatusBadgeSpec {
 }
 
 const TONE_CLASSES: Record<BadgeTone, string> = {
-  success: "bg-[#eaf3ec] text-[#3f7d57]",
+  success: "bg-[var(--success-bg)] text-[var(--success-fg)]",
   progress: "bg-secondary text-foreground",
-  failed: "bg-[#f6e3df] text-[#a24b4b]",
+  failed: "bg-[var(--danger-bg)] text-[var(--danger-fg)]",
   neutral: "bg-secondary text-[var(--ink-2)]",
 };
 

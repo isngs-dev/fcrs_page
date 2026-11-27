@@ -38,7 +38,7 @@ export function SegmentedControl({
     <div
       role="group"
       aria-label={ariaLabel}
-      className="flex items-center gap-0 rounded-[10px] bg-secondary p-[3px] text-[13px] font-semibold"
+      className="flex items-center gap-0.5 rounded-[10px] border border-border bg-secondary p-[3px] text-[13px] font-semibold"
     >
       {items.map((item) => (
         <Link
@@ -46,10 +46,10 @@ export function SegmentedControl({
           href={item.href}
           scroll={scroll}
           aria-current={item.active ? "true" : undefined}
-          className="flex h-8 items-center rounded-lg px-4 transition-colors"
+          className="flex h-[30px] items-center rounded-[8px] px-3.5 transition-colors duration-150 hover:text-foreground"
           style={
             item.active
-              ? { background: "#333333", color: "#fbfaf7" }
+              ? { background: "var(--card)", color: "var(--primary)", boxShadow: "var(--shadow-card)" }
               : { color: "var(--muted-foreground)" }
           }
         >

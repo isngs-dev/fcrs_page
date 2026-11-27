@@ -63,10 +63,10 @@ export function VolumeAreaChart({ data }: { data: AnalyticsOverview }) {
       <div role="img" aria-label={ariaLabel} className="w-full">
         <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full" preserveAspectRatio="none" style={{ height: 180 }}>
           {gridlineYs.map((y) => (
-            <line key={y} x1={PADDING_X} x2={WIDTH - PADDING_X} y1={y} y2={y} stroke="#e6e6e6" strokeWidth={1} />
+            <line key={y} x1={PADDING_X} x2={WIDTH - PADDING_X} y1={y} y2={y} stroke="var(--row-line)" strokeWidth={1} />
           ))}
           <path d={areaPath} fill="rgba(51,51,51,.07)" stroke="none" />
-          <path d={linePath} fill="none" stroke="#333333" strokeWidth={2} />
+          <path d={linePath} fill="none" stroke="var(--primary)" strokeWidth={2} />
         </svg>
       </div>
 

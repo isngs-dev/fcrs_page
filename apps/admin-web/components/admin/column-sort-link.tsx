@@ -87,7 +87,7 @@ export function ColumnSortLink({
       })}
       scroll={false}
       aria-label={nextAction}
-      className="grid size-5 place-items-center rounded text-[13px] leading-none text-muted-foreground hover:bg-[#e6e6e6] hover:text-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+      className="grid size-5 place-items-center rounded text-[13px] leading-none text-muted-foreground hover:bg-accent hover:text-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
     >
       <span aria-hidden>{glyph}</span>
     </Link>

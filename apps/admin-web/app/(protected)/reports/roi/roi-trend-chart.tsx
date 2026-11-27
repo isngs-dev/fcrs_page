@@ -56,8 +56,8 @@ function linePath(points: TrendPoint[], key: "leads" | "bookings", maxValue: num
 }
 
 const SERIES = [
-  { key: "leads" as const, label: "leads generated", color: "var(--foreground)" },
-  { key: "bookings" as const, label: "appointments booked", color: "#3f7d57" },
+  { key: "leads" as const, label: "leads generated", color: "var(--chart-1)" },
+  { key: "bookings" as const, label: "appointments booked", color: "var(--chart-2)" },
 ];
 
 export function RoiTrendChart({

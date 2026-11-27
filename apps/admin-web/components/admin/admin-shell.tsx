@@ -2,6 +2,7 @@
 
 import { useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
+import { BrandLogo } from "@/components/admin/brand-logo";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
@@ -396,12 +397,12 @@ function NavLink({
       aria-label={item.label}
       aria-current={current ? "page" : undefined}
       className={cn(
-        "my-px flex items-center gap-[11px] rounded-[9px] px-[11px] py-2 font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+        "my-px flex items-center gap-[11px] rounded-[8px] px-[11px] py-[7px] font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sidebar-ring",
         indent ? "text-[13px]" : "text-[14px]",
         collapsed ? "mx-2 justify-center px-2" : indent ? "mx-2.5 ml-[38px]" : "mx-2.5",
         current
-          ? "bg-border font-semibold text-foreground"
-          : "text-[var(--ink-2)] hover:bg-[#e6e6e6] hover:text-foreground",
+          ? "bg-sidebar-accent font-semibold text-white shadow-[inset_3px_0_0_var(--brand-clay)]"
+          : "text-sidebar-foreground/80 hover:bg-sidebar-accent/70 hover:text-white",
         className
       )}
     >
@@ -409,7 +410,7 @@ function NavLink({
         <Icon
           aria-hidden
           strokeWidth={1.8}
-          className={cn("size-[17px] flex-none", current ? "text-foreground" : "text-muted-foreground")}
+          className={cn("size-[17px] flex-none", current ? "text-clay" : "text-sidebar-muted")}
         />
       ) : null}
       <span className={collapsed ? "hidden" : undefined}>{item.label}</span>
@@ -492,7 +493,7 @@ export function AdminShell({
           // `margin:1px 10px`), so the logo/avatar blocks can carry the
           // reference's own `padding:0 20px` and their divider rules can span
           // the full 198px width as they do in Sidebar.dc.html:30/:64.
-          "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-border bg-card py-[18px] lg:flex",
+          "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar py-[18px] text-sidebar-foreground lg:flex",
           sidebar.collapsed && "items-center"
         )}
       >
@@ -500,16 +501,14 @@ export function AdminShell({
             16px` with a full-width bottom rule. */}
         <div
           className={cn(
-            "mb-1 flex items-center gap-[11px] border-b border-border px-5 pb-4",
+            "mb-1 flex items-center gap-[11px] border-b border-sidebar-border px-5 pb-4",
             sidebar.collapsed && "w-full flex-col px-2"
           )}
         >
-          <div className="grid size-[34px] flex-none place-items-center rounded-[9px] bg-primary text-xs font-bold text-primary-foreground">
-            CL
-          </div>
+          <BrandLogo tile priority height={sidebar.collapsed ? 14 : 18} />
           <div className={cn("min-w-0 flex-1", sidebar.collapsed && "hidden")}>
-            <p className="text-[14.5px] font-bold tracking-[-0.01em]">ChatLeads</p>
-            <p className="truncate text-[11px] text-muted-foreground">
+            <p className="text-[14.5px] font-semibold tracking-[-0.01em] text-white">ChatLeads</p>
+            <p className="truncate text-[11px] text-sidebar-muted">
               {workspaceLabel}
             </p>
           </div>
@@ -518,7 +517,7 @@ export function AdminShell({
             aria-label={sidebar.collapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-expanded={!sidebar.collapsed}
             onClick={() => updateSidebar((current) => ({ ...current, collapsed: !current.collapsed }))}
-            className="grid size-8 shrink-0 place-items-center rounded-[9px] text-[var(--ink-2)] transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="grid size-8 shrink-0 place-items-center rounded-[8px] text-sidebar-muted transition-colors hover:bg-sidebar-accent hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
           >
             {sidebar.collapsed ? <PanelLeftOpen aria-hidden className="size-4" /> : <PanelLeftClose aria-hidden className="size-4" />}
           </button>
@@ -542,7 +541,7 @@ export function AdminShell({
             <div key={group.label} className="flex flex-col">
               <p
                 className={cn(
-                  "mt-4 mb-[5px] px-[21px] text-[10.5px] font-semibold tracking-[0.12em] text-muted-foreground uppercase",
+                  "mt-5 mb-[6px] px-[21px] text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase",
                   sidebar.collapsed && "hidden"
                 )}
               >
@@ -586,7 +585,7 @@ export function AdminShell({
                           onClick={() =>
                             setExplicitExpand((prev) => ({ ...prev, [item.href]: !expanded }))
                           }
-                          className="mr-2.5 grid size-6 shrink-0 place-items-center rounded-[7px] text-[var(--ink-2)] transition-colors hover:bg-[#e6e6e6] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                          className="mr-2.5 grid size-6 shrink-0 place-items-center rounded-[7px] text-sidebar-muted transition-colors hover:bg-sidebar-accent hover:text-white focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sidebar-ring"
                         >
                           <ChevronDown
                             aria-hidden
@@ -621,14 +620,14 @@ export function AdminShell({
         {/* Sidebar.dc.html:64-70 -- `margin-top:auto; padding:14px 20px 0`
             over a full-width top rule; 30px round `--line` avatar, 12.5px/600
             identity over an 11px muted role line. */}
-        <div className="mt-auto w-full border-t border-border pt-3.5">
+        <div className="mt-auto w-full border-t border-sidebar-border pt-3.5">
           <div className={cn("flex items-center gap-2.5 px-5", sidebar.collapsed && "justify-center px-2")}>
-            <div className="grid size-[30px] flex-none place-items-center rounded-full bg-border text-[11px] font-semibold text-[var(--ink-2)]">
+            <div className="grid size-[30px] flex-none place-items-center rounded-full bg-sidebar-accent text-[11px] font-semibold text-white ring-1 ring-sidebar-border">
               {identityLabel.slice(0, 2).toUpperCase()}
             </div>
             <div className={cn("min-w-0 flex-1", sidebar.collapsed && "hidden")}>
-              <p className="min-w-0 truncate text-[12.5px] font-semibold">{identityLabel}</p>
-              <p className="min-w-0 truncate text-[11px] text-muted-foreground">{roleLabel}</p>
+              <p className="min-w-0 truncate text-[12.5px] font-semibold text-white">{identityLabel}</p>
+              <p className="min-w-0 truncate text-[11px] text-sidebar-muted">{roleLabel}</p>
             </div>
           </div>
           <form action={logoutAction}>
@@ -636,11 +635,11 @@ export function AdminShell({
               type="submit"
               aria-label="Log out"
               className={cn(
-                "my-px mt-2 flex items-center gap-[11px] rounded-[9px] px-[11px] py-2 text-[14px] font-medium text-[var(--ink-2)] transition-colors hover:bg-[#e6e6e6] hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+                "my-px mt-2 flex items-center gap-[11px] rounded-[8px] px-[11px] py-[7px] text-[14px] font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent/70 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sidebar-ring",
                 sidebar.collapsed ? "mx-2 justify-center px-2" : "mx-2.5 w-[calc(100%-20px)]"
               )}
             >
-              <LogOut aria-hidden strokeWidth={1.8} className="size-[17px] flex-none text-muted-foreground" />
+              <LogOut aria-hidden strokeWidth={1.8} className="size-[17px] flex-none text-sidebar-muted" />
               <span className={sidebar.collapsed ? "hidden" : undefined}>Log out</span>
             </button>
           </form>
@@ -660,18 +659,16 @@ export function AdminShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex min-h-16 items-center border-b border-border bg-background px-4 lg:hidden">
+        <header className="flex min-h-14 items-center border-b border-sidebar-border bg-sidebar px-4 text-white lg:hidden">
           <Link href="/" className="flex items-center gap-2 text-sm font-bold">
-            <span className="grid size-8 place-items-center rounded-[9px] bg-primary text-[10px] text-primary-foreground">
-              CL
-            </span>
+            <BrandLogo tile height={16} />
             ChatLeads
           </Link>
           <form action={logoutAction} className="ml-auto">
             <button
               type="submit"
               aria-label="Log out"
-              className="grid size-11 place-items-center rounded-[9px] text-[var(--ink-2)] transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              className="grid size-11 place-items-center rounded-[9px] text-sidebar-muted transition-colors hover:bg-sidebar-accent hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
             >
               <LogOut aria-hidden className="size-4" />
             </button>
@@ -694,7 +691,7 @@ export function AdminShell({
                 aria-current={current ? "page" : undefined}
                 className={cn(
                   "flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-[9px] px-1 text-[10px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
-                  current ? "bg-border font-semibold" : "hover:bg-accent/70"
+                  current ? "bg-secondary font-semibold text-primary" : "text-[var(--ink-2)] hover:bg-accent/70"
                 )}
               >
                 <Icon aria-hidden className="size-4" />
@@ -719,7 +716,7 @@ export function AdminShell({
                   aria-current={overflowCurrent ? "page" : undefined}
                   className={cn(
                     "flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-[9px] px-1 text-[10px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
-                    overflowCurrent ? "bg-border font-semibold" : "hover:bg-accent/70"
+                    overflowCurrent ? "bg-secondary font-semibold text-primary" : "text-[var(--ink-2)] hover:bg-accent/70"
                   )}
                 >
                   <MoreHorizontal aria-hidden className="size-4" />

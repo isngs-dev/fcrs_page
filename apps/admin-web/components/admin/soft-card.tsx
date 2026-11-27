@@ -24,7 +24,7 @@ export function SoftCard<T extends ElementType = "div">({
   return (
     <Component
       className={cn(
-        "rounded-[14px] border border-border bg-card shadow-[0_1px_2px_rgba(28,27,25,.03)]",
+        "rounded-[12px] border border-border bg-card shadow-[var(--shadow-card)]",
         className
       )}
       {...props}

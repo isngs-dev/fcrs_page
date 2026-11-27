@@ -103,7 +103,7 @@ function KpiTile({ label, value }: { label: string; value: string }) {
 
 function ErrorNote({ message, correlationId }: { message: string; correlationId: string }) {
   return (
-    <p role="alert" className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[#f6e3df]/60 p-4 text-sm text-[var(--danger-fg)]">
+    <p role="alert" className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[var(--danger-bg)]/60 p-4 text-sm text-[var(--danger-fg)]">
       {message}
       {correlationId ? (
         <span className="block text-xs text-[var(--danger-fg)]/80">Correlation ID: {correlationId}</span>

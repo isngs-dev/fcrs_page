@@ -54,7 +54,7 @@ export function FilterPills({
             className="rounded-full px-3 py-[5px] text-[11.5px] font-semibold"
             style={
               on
-                ? { background: "#333333", color: "#fbfaf7" }
+                ? { background: "var(--primary)", color: "var(--primary-foreground)" }
                 : { background: "#fff", border: "1px solid var(--line)", color: "var(--ink-2)" }
             }
           >

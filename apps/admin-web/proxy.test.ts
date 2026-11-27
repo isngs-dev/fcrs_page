@@ -71,6 +71,12 @@ describe("proxy (route gate)", () => {
     ).toBe(false);
   });
 
+  it("matcher config excludes the brand logo and app icons (the sign-in page and browser tab load them logged out)", () => {
+    for (const url of ["/isn-logo.png", "/icon.png", "/apple-icon.png", "/favicon.ico"]) {
+      expect(unstable_doesProxyMatch({ config, nextConfig: {}, url })).toBe(false);
+    }
+  });
+
   it("matcher config includes protected paths", () => {
     expect(unstable_doesProxyMatch({ config, nextConfig: {}, url: "/" })).toBe(
       true

@@ -111,13 +111,13 @@ export function ResponsesOverTimeChart({
             <div
               key={top}
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 border-t border-dashed border-[#e6e6e6]"
+              className="pointer-events-none absolute inset-x-0 border-t border-dashed border-[var(--row-line)]"
               style={{ top }}
             />
           ))}
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 border-t border-dashed border-[#e6e6e6]"
+            className="pointer-events-none absolute inset-x-0 bottom-0 border-t border-dashed border-[var(--row-line)]"
           />
           {/* The midline: visually distinct (--border, #cdcdcd) because it is
               the zero line both series diverge from, not a decorative rule. */}
@@ -148,7 +148,7 @@ export function ResponsesOverTimeChart({
                   />
                   <span
                     aria-hidden
-                    className="absolute rounded-b-[3px] bg-muted-foreground"
+                    className="absolute rounded-b-[3px] bg-clay/85"
                     style={{ left: "28%", right: "28%", top: MIDLINE, height: downHeight }}
                   />
                 </button>
@@ -167,18 +167,18 @@ export function ResponsesOverTimeChart({
               />
               <div
                 aria-hidden
-                className="pointer-events-none absolute top-0 z-2 -translate-x-1/2 rounded-[9px] bg-[var(--ink-2)] px-2.5 py-[7px] text-[10px] leading-[1.35] whitespace-nowrap text-white shadow-[0_6px_18px_rgba(28,27,25,.22)]"
+                className="pointer-events-none absolute top-0 z-2 -translate-x-1/2 rounded-[9px] bg-sidebar px-2.5 py-[7px] text-[10px] leading-[1.35] whitespace-nowrap text-white shadow-[0_6px_18px_rgba(28,27,25,.22)]"
                 style={{
                   left: `clamp(0px, ${((activeIndex + 0.5) / buckets.length) * 100}%, 100%)`,
                 }}
               >
                 <div className="mb-1 font-semibold">{buckets[activeIndex].label}</div>
                 <div className="flex items-center gap-1.5">
-                  <span className="size-2 rounded-full bg-[#333333]" />
+                  <span className="size-2 rounded-full bg-primary" />
                   Answered · {buckets[activeIndex].answers}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5">
-                  <span className="size-2 rounded-full bg-[#878787]" />
+                  <span className="size-2 rounded-full bg-clay" />
                   Escalated · {buckets[activeIndex].escalations}
                 </div>
               </div>

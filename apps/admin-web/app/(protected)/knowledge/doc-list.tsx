@@ -51,7 +51,7 @@ export function KnowledgeDocList({
     return (
       <div
         role="alert"
-        className="rounded-[9px] border border-[var(--danger-border)] bg-[#f6e3df] p-3 text-[12.5px] font-medium text-[var(--danger-fg)]"
+        className="rounded-[9px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-[12.5px] font-medium text-[var(--danger-fg)]"
       >
         Unable to load knowledge items. {result.message}
       </div>

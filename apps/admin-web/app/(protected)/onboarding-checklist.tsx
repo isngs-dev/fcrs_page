@@ -55,41 +55,58 @@ export function isOnboardingComplete(
 }
 
 function ChecklistItem({
+  step,
   done,
   label: itemLabel,
   href,
   linkLabel,
 }: {
+  step: number;
   done: boolean;
   label: string;
   href: string;
   linkLabel: string;
 }) {
   return (
-    <li className="flex items-center justify-between gap-3 py-2.5">
-      <span className="flex items-center gap-2.5 text-[13.5px]">
+    <li
+      className={`flex items-center justify-between gap-3 rounded-[10px] border p-3.5 sm:min-h-[92px] sm:flex-col sm:items-stretch ${
+        done ? "border-[var(--success-bg)] bg-[var(--success-bg)]/50" : "border-border bg-card"
+      }`}
+    >
+      <span className="flex items-start gap-2.5 text-[13.5px] leading-snug">
         {done ? (
-          <CircleCheck aria-hidden className="size-[18px] shrink-0 text-[#3f7d57]" />
+          <CircleCheck aria-hidden className="mt-px size-[18px] shrink-0 text-[var(--success-fg)]" />
         ) : (
-          <Circle aria-hidden className="size-[18px] shrink-0 text-muted-foreground" />
+          <span
+            aria-hidden
+            className="grid size-[18px] shrink-0 place-items-center rounded-full border border-input text-[10px] font-semibold text-muted-foreground"
+          >
+            {step}
+          </span>
         )}
-        <span className={done ? "text-foreground line-through decoration-muted-foreground/50" : "text-foreground"}>
+        <span className={done ? "text-muted-foreground line-through decoration-muted-foreground/50" : "font-medium text-foreground"}>
           {itemLabel}
         </span>
       </span>
       {!done ? (
         <Link
           href={href}
-          className="flex shrink-0 items-center gap-1 text-[12.5px] font-semibold text-foreground underline underline-offset-2 hover:no-underline"
+          className="flex w-fit shrink-0 items-center gap-1 text-[12.5px] font-semibold whitespace-nowrap text-primary hover:text-clay"
         >
           {linkLabel}
           <ArrowRight aria-hidden className="size-3.5" />
         </Link>
-      ) : null}
+      ) : (
+        <span className="text-[12px] font-medium text-[var(--success-fg)]">Done</span>
+      )}
     </li>
   );
 }
 
+/**
+ * Pine & Clay (owner, 2026-11-27): a compact step strip -- the two essentials with a
+ * progress bar, then testing and the optional missed-call step -- in place of a tall list.
+ */
 export function OnboardingChecklist({
   settingsResult,
   docsResult,
@@ -107,44 +124,63 @@ export function OnboardingChecklist({
   const knowledgeDone = hasKnowledgeUploaded(docsResult);
   const missedCallDone = isMissedCallConfigured(callConfigResult);
   const requiredDone = settingsDone && knowledgeDone;
+  const essentialsDone = Number(settingsDone) + Number(knowledgeDone);
 
   return (
-    <SoftCard className="flex flex-col gap-1 p-5">
-      <p className="text-[15px] font-semibold text-foreground">
-        {requiredDone ? "Your bot is set up" : "Get your bot ready"}
-      </p>
-      <p className="text-[12.5px] text-muted-foreground">
-        {requiredDone
-          ? "The essentials are done. Missed-call text-back is optional, and you can always come back to test the bot."
-          : "A few quick steps before this bot is ready for real visitors."}
-      </p>
-      <ul className="mt-1 flex flex-col divide-y divide-border">
+    <SoftCard className="flex flex-col gap-4 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[15px] font-semibold text-foreground">
+            {requiredDone ? "Your bot is set up" : "Get your bot ready"}
+          </p>
+          <p className="mt-0.5 text-[12.5px] text-muted-foreground">
+            {requiredDone
+              ? "The essentials are done. Missed-call text-back is optional, and you can always come back to test the bot."
+              : "A few quick steps before this bot is ready for real visitors."}
+          </p>
+        </div>
+        <div className="flex min-w-[180px] flex-col gap-1.5">
+          <span className="tabular text-[12px] font-medium text-[var(--ink-2)]">
+            {essentialsDone} of 2 essentials done
+          </span>
+          <span aria-hidden className="h-1.5 overflow-hidden rounded-full bg-secondary">
+            <span
+              className="block h-full rounded-full bg-primary transition-[width] duration-500"
+              style={{ width: `${essentialsDone * 50}%` }}
+            />
+          </span>
+        </div>
+      </div>
+      <ul className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
         <ChecklistItem
+          step={1}
           done={settingsDone}
           label="Customize your bot"
           href={settingsHref}
           linkLabel="Go to settings"
         />
         <ChecklistItem
+          step={2}
           done={knowledgeDone}
           label="Upload your knowledge base"
           href={knowledgeHref}
           linkLabel="Upload documents"
         />
-        <li className="flex items-center justify-between gap-3 py-2.5">
-          <span className="flex items-center gap-2.5 text-[13.5px] text-foreground">
-            <Circle aria-hidden className="size-[18px] shrink-0 text-muted-foreground" />
+        <li className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-card p-3.5 sm:min-h-[92px] sm:flex-col sm:items-stretch">
+          <span className="flex items-start gap-2.5 text-[13.5px] leading-snug font-medium text-foreground">
+            <Circle aria-hidden className="mt-px size-[18px] shrink-0 text-muted-foreground" />
             Test your bot
           </span>
           <Link
             href={knowledgeHref}
-            className="flex shrink-0 items-center gap-1 text-[12.5px] font-semibold text-foreground underline underline-offset-2 hover:no-underline"
+            className="flex w-fit shrink-0 items-center gap-1 text-[12.5px] font-semibold whitespace-nowrap text-primary hover:text-clay"
           >
             Try it now
             <ArrowRight aria-hidden className="size-3.5" />
           </Link>
         </li>
         <ChecklistItem
+          step={4}
           done={missedCallDone}
           label="Set up missed-call text-back (optional)"
           href={settingsHref}

@@ -102,7 +102,7 @@ export function OffRampDialog({
         ) : null}
 
         {error ? (
-          <p role="alert" className="mt-3 rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-2 text-[11.5px] text-[var(--danger-fg)]">
+          <p role="alert" className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-2 text-[11.5px] text-[var(--danger-fg)]">
             {error}
           </p>
         ) : null}

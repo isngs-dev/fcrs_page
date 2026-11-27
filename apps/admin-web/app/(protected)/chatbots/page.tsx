@@ -29,7 +29,7 @@ function StatusBadge({ enabled }: { enabled: boolean }) {
     <span
       className={
         "shrink-0 rounded-full px-2 py-[3px] text-[10px] font-bold tracking-wide " +
-        (enabled ? "bg-[#dcefdc] text-[var(--success-fg)]" : "bg-[#f6e3df] text-[var(--danger-fg)]")
+        (enabled ? "bg-[var(--success-bg)] text-[var(--success-fg)]" : "bg-[var(--danger-bg)] text-[var(--danger-fg)]")
       }
     >
       {enabled ? "ACTIVE" : "DISABLED"}
@@ -41,7 +41,7 @@ function ChatbotCard({ chatbot, isActive }: { chatbot: ChatbotSummary; isActive:
   return (
     <li className="flex flex-col gap-3 rounded-[14px] border border-[var(--border)] bg-white p-[18px]">
       <div className="flex items-center gap-2.5">
-        <div className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[#ecece5] text-[13px] font-bold text-[var(--foreground)]">
+        <div className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-secondary text-[13px] font-bold text-[var(--foreground)]">
           {initials(chatbot.name)}
         </div>
         <div className="min-w-0 flex-1">
@@ -77,7 +77,7 @@ function AddChatbotTile() {
     <li>
       <Link
         href="/chatbots/new"
-        className="flex min-h-[150px] w-full flex-col items-center justify-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-[#d5d5cb] text-[var(--muted-foreground)] transition-colors hover:border-[#a8a99f] hover:text-[var(--muted-foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
+        className="flex min-h-[150px] w-full flex-col items-center justify-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-input text-[var(--muted-foreground)] transition-colors hover:border-primary/50 hover:bg-card hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]"
       >
         <span className="grid size-[34px] place-items-center rounded-full bg-[var(--secondary)] text-base">
           +
@@ -123,7 +123,7 @@ export default async function ChatbotsPage({ searchParams }: ChatbotsPageProps) 
       {params.switchError ? (
         <p
           role="alert"
-          className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[#f6e3df] p-4 text-sm text-[var(--danger-fg)]"
+          className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[var(--danger-bg)] p-4 text-sm text-[var(--danger-fg)]"
         >
           Couldn&apos;t switch chatbots ({params.switchError}). Please try again.
         </p>
@@ -132,7 +132,7 @@ export default async function ChatbotsPage({ searchParams }: ChatbotsPageProps) 
       {result.status === "error" ? (
         <p
           role="alert"
-          className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[#f6e3df] p-4 text-sm text-[var(--danger-fg)]"
+          className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[var(--danger-bg)] p-4 text-sm text-[var(--danger-fg)]"
         >
           {result.message}
           {result.correlationId ? (

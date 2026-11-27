@@ -107,7 +107,7 @@ export function LeadsFilter({
       />
       <button
         type="submit"
-        className="inline-flex h-[38px] items-center gap-2 rounded-[10px] border border-border bg-card px-4 text-[13.5px] font-semibold text-[var(--ink-2)] hover:bg-[#e6e6e6]"
+        className="inline-flex h-[38px] items-center gap-2 rounded-[10px] border border-border bg-card px-4 text-[13.5px] font-semibold text-[var(--ink-2)] hover:bg-accent"
       >
         <svg
           aria-hidden="true"

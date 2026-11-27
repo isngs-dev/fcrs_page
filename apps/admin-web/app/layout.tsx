@@ -1,25 +1,22 @@
 import type { Metadata } from "next";
-import { Archivo } from "next/font/google";
+import { IBM_Plex_Sans } from "next/font/google";
 import "./globals.css";
 
 /**
- * SR-15 D2: Archivo, self-hosted at build time via next/font/google -- no
- * runtime request to fonts.googleapis.com/fonts.gstatic.com and no CLS.
- * `variable` feeds --font-app-sans (globals.css's `@theme inline` maps
- * --font-sans to --font-app-sans, and `html { @apply font-sans }` applies
- * it), matching Sidebar.dc.html's declared stack verbatim: Archivo first,
- * system-ui/sans-serif fallback (also declared as globals.css's :root
- * fallback value for --font-app-sans before this variable overrides it).
+ * Pine & Clay (owner, 2026-11-27): IBM Plex Sans, self-hosted at build time via
+ * next/font/google (no runtime font request, no layout shift). `variable` feeds
+ * --font-app-sans, which globals.css maps to --font-sans.
  */
-const archivo = Archivo({
+const plexSans = IBM_Plex_Sans({
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-app-sans",
   fallback: ["system-ui", "sans-serif"],
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Admin Console",
+  title: "iSN Admin Console",
   description: "Chatbot platform admin console.",
 };
 
@@ -29,7 +26,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`h-full antialiased ${archivo.variable}`}>
+    <html lang="en" className={`h-full antialiased ${plexSans.variable}`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

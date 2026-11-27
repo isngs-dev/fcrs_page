@@ -9,12 +9,12 @@
  * the sole carrier of meaning (every slice has a text label + count).
  */
 const DEFAULT_SLICE_COLORS = [
-  "var(--foreground)",
-  "var(--ink-2)",
-  "var(--muted-foreground)",
-  "#a9aa9f",
-  "#d5d5cb",
-  "#8a6d3b",
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "#b98a5e",
 ] as const;
 
 const RADIUS = 52;

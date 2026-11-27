@@ -1,24 +1,10 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { AuthFrame } from "@/components/admin/auth-frame";
 import { LoginForm } from "@/app/login/login-form";
 
 export default function LoginPage() {
   return (
-    <div className="flex flex-1 items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Admin console</CardTitle>
-          <CardDescription>Sign in to manage your tenant.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <LoginForm />
-        </CardContent>
-      </Card>
-    </div>
+    <AuthFrame title="Sign in" description="Welcome back. Sign in to manage your chatbot.">
+      <LoginForm />
+    </AuthFrame>
   );
 }

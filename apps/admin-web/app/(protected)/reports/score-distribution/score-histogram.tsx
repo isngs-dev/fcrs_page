@@ -21,7 +21,7 @@ function Column({ label, count, max, tone }: { label: string; count: number; max
       <div className="flex h-32 w-full items-end overflow-hidden rounded-[6px] bg-[var(--secondary)]">
         <div
           title={`${label}: ${count}`}
-          className={tone === "unscored" ? "w-full rounded-[6px] bg-[#a9aa9f]" : "w-full rounded-[6px] bg-[var(--foreground)]"}
+          className={tone === "unscored" ? "w-full rounded-[6px] bg-[var(--chart-3)]" : "w-full rounded-[6px] bg-[var(--foreground)]"}
           style={{ height: `${pct}%` }}
         />
       </div>
@@ -59,7 +59,7 @@ export function ScoreHistogram({ data }: { data: ScoreDistributionReport }) {
           <div className="flex h-32 w-full items-end overflow-hidden rounded-[6px] bg-[var(--secondary)]">
             <div
               title={`Unscored: ${data.unscored}`}
-              className="w-full rounded-[6px] bg-[#a9aa9f]"
+              className="w-full rounded-[6px] bg-[var(--chart-3)]"
               style={{ height: `${Math.max((data.unscored / max) * 100, data.unscored > 0 ? 4 : 1)}%` }}
             />
           </div>

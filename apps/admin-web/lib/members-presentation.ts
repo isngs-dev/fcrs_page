@@ -25,8 +25,8 @@ export interface BadgeStyle {
 // fill without a chromatic accent, matching the shell's identical
 // re-decision.
 const ROLE_BADGES: Record<string, BadgeStyle> = {
-  CLIENT_ADMIN: { label: "ADMIN", bg: "#333333", fg: "#ffffff" },
-  CLIENT_AGENT: { label: "AGENT", bg: "#efeee6", fg: "#404040" },
+  CLIENT_ADMIN: { label: "ADMIN", bg: "#1f4b3a", fg: "#ffffff" },
+  CLIENT_AGENT: { label: "AGENT", bg: "#eeebe3", fg: "#3d4540" },
 };
 
 /** Role -> badge color/label (SR-15 restyle of HANDOFF-SPEC.md §3 "7b":
@@ -35,7 +35,7 @@ const ROLE_BADGES: Record<string, BadgeStyle> = {
  * somehow showing up here) fall back to a neutral muted style rather than
  * throwing. */
 export function roleBadgeStyle(role: string): BadgeStyle {
-  return ROLE_BADGES[role] ?? { label: role, bg: "#ecece5", fg: "var(--ink-2)" };
+  return ROLE_BADGES[role] ?? { label: role, bg: "#eeebe3", fg: "#3d4540" };
 }
 
 /** Two-letter initials for the member avatar chip, e.g. "Sara Romero" ->

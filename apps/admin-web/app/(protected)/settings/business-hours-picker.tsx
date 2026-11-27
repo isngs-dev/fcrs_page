@@ -118,7 +118,7 @@ export function BusinessHoursPicker({
                   className="grid size-8 place-items-center rounded-lg text-[12px] font-semibold transition-colors"
                   style={
                     active
-                      ? { background: "#333333", color: "#fbfaf7" }
+                      ? { background: "var(--primary)", color: "var(--primary-foreground)" }
                       : { background: "var(--secondary)", color: "var(--muted-foreground)" }
                   }
                 >

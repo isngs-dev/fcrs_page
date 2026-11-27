@@ -171,7 +171,7 @@ export function CoverageGaps({ result, tenantId }: { result: ListGapsResult; ten
   return (
     <div className="flex flex-col gap-2 rounded-[14px] bg-primary px-[22px] py-5">
       <p className="text-[15px] font-semibold text-primary-foreground">Coverage check</p>
-      <p className="text-[12.5px] leading-relaxed text-[#c9c9c9]">
+      <p className="text-[12.5px] leading-relaxed text-primary-foreground/75">
         Questions your bot couldn&apos;t answer for real visitors -- teach an answer to fix it, or
         dismiss it if it isn&apos;t a real question.
       </p>

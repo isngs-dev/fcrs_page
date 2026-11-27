@@ -195,7 +195,7 @@ export function ContactsTable({
                   scroll={false}
                   className="flex min-h-11 items-center gap-2.5 px-3.5 py-3 font-semibold text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
-                  <span className="grid size-7 shrink-0 place-items-center rounded-full bg-border text-[10px] font-bold text-[var(--ink-2)]">
+                  <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#e4ece3] text-[10px] font-bold text-primary">
                     {initials(contact.name)}
                   </span>
                   {contact.name || "Unnamed contact"}

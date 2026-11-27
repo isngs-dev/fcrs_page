@@ -35,7 +35,7 @@ function ErrorNote({ message, correlationId }: { message: string; correlationId:
   return (
     <p
       role="alert"
-      className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[#f6e3df]/60 p-4 text-sm text-[var(--danger-fg)]"
+      className="rounded-[14px] border border-[var(--danger-fg)]/40 bg-[var(--danger-bg)]/60 p-4 text-sm text-[var(--danger-fg)]"
     >
       {message}
       {correlationId ? (

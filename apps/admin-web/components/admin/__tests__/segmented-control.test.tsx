@@ -21,18 +21,18 @@ describe("SegmentedControl (Console.dc.html:46-48 .seg recipe)", () => {
     expect(html).toContain("rounded-[10px]");
   });
 
-  it("renders each item at 32px height (h-8) with 8px radius (rounded-lg)", () => {
+  it("renders each item at 30px height with an 8px radius", () => {
     const html = renderToStaticMarkup(
       <SegmentedControl
         ariaLabel="Test"
         items={[{ key: "a", label: "A", href: "/a", active: true }]}
       />
     );
-    expect(html).toContain("h-8");
-    expect(html).toContain("rounded-lg");
+    expect(html).toContain("h-[30px]");
+    expect(html).toContain("rounded-[8px]");
   });
 
-  it("marks the active item near-black bg + #fbfaf7 text, with aria-current", () => {
+  it("marks the active item as a raised white pill with pine text, with aria-current", () => {
     const html = renderToStaticMarkup(
       <SegmentedControl
         ariaLabel="Test"
@@ -42,8 +42,8 @@ describe("SegmentedControl (Console.dc.html:46-48 .seg recipe)", () => {
         ]}
       />
     );
-    expect(html).toContain("background:#333333");
-    expect(html).toContain("color:#fbfaf7");
+    expect(html).toContain("background:var(--card)");
+    expect(html).toContain("color:var(--primary)");
     expect(html).toMatch(/aria-current="true"/);
   });
 

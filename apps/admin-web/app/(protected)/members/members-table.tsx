@@ -127,7 +127,7 @@ function SortButton({
       type="button"
       aria-label={nextAction}
       onClick={() => onSort(column)}
-      className="grid size-5 place-items-center rounded text-[13px] leading-none text-muted-foreground hover:bg-[#e6e6e6] hover:text-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+      className="grid size-5 place-items-center rounded text-[13px] leading-none text-muted-foreground hover:bg-accent hover:text-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
     >
       <span aria-hidden>{glyph}</span>
     </button>
@@ -161,8 +161,8 @@ function Avatar({ member }: { member: MemberSummary }) {
       className="flex h-8 w-8 flex-none items-center justify-center rounded-full text-[11px] font-bold"
       style={
         isAdmin
-          ? { background: "#333333", color: "#ffffff" }
-          : { background: "#cdcdcd", color: "var(--ink-2)" }
+          ? { background: "var(--primary)", color: "#ffffff" }
+          : { background: "var(--border)", color: "var(--ink-2)" }
       }
       aria-hidden="true"
     >
@@ -404,7 +404,7 @@ export function MembersTable({ members }: { members: MemberSummary[] }) {
                     Active
                   </Chip>
                 ) : (
-                  <span className="inline-flex h-6 items-center rounded-[7px] bg-[#f6e3df] px-2.5 text-[11.5px] font-semibold text-[var(--danger-fg)]">
+                  <span className="inline-flex h-6 items-center rounded-[7px] bg-[var(--danger-bg)] px-2.5 text-[11.5px] font-semibold text-[var(--danger-fg)]">
                     Inactive
                   </span>
                 )}
@@ -421,7 +421,7 @@ export function MembersTable({ members }: { members: MemberSummary[] }) {
                     variant="outline"
                     disabled={isPending}
                     onClick={() => handleToggleClick(member)}
-                    className="h-8 rounded-[9px] border-border bg-card px-[13px] text-[12.5px] font-semibold text-[var(--ink-2)] hover:bg-[#e6e6e6]"
+                    className="h-8 rounded-[9px] border-border bg-card px-[13px] text-[12.5px] font-semibold text-[var(--ink-2)] hover:bg-accent"
                   >
                     {member.active ? "Deactivate" : "Activate"}
                   </Button>

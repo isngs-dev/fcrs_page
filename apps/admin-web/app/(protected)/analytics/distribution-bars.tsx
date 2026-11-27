@@ -52,7 +52,7 @@ export function DistributionBars({
                       // SR-15 D1: the top-value citron fill is deleted and
                       // re-decided to full black vs. the others' -- the top
                       // bar is already distinguished by being the longest.
-                      backgroundColor: isTop ? "#000000" : "var(--foreground)",
+                      backgroundColor: isTop ? "var(--brand-clay)" : "var(--primary)",
                     }}
                   />
                 </div>

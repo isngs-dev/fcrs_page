@@ -37,6 +37,23 @@
         "--strictPort"
       ],
       "port": 5174
+    },
+    {
+      "name": "api-local",
+      "runtimeExecutable": "venv/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "api.app:create_app",
+        "--factory",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--app-dir",
+        "services/api/src"
+      ],
+      "port": 8000
     }
   ]
 }

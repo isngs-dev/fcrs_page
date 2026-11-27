@@ -78,7 +78,7 @@ function MessageBubble({
   const bubble = isVisitor ? (
     <div
       className="max-w-[70%] self-end rounded-[16px_16px_4px_16px] px-4 py-[11px] text-[13px] leading-relaxed"
-      style={{ background: "#fbfaf7", color: "#333333" }}
+      style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
       title={formatDateTime(createdAt)}
     >
       {content}
@@ -88,11 +88,11 @@ function MessageBubble({
       {isBot ? (
         <span
           aria-hidden
-          className="mb-0.5 size-[28px] shrink-0 rounded-full bg-secondary"
+          className="mb-0.5 size-[28px] shrink-0 rounded-full bg-[#e4ece3] ring-1 ring-border"
         />
       ) : null}
       <div
-        className="rounded-[16px_16px_16px_4px] bg-secondary px-4 py-[11px] text-[13px] leading-relaxed text-foreground"
+        className="rounded-[16px_16px_16px_4px] border border-border bg-card px-4 py-[11px] text-[13px] leading-relaxed text-foreground shadow-[var(--shadow-card)]"
         title={formatDateTime(createdAt)}
       >
         {content}
@@ -104,7 +104,7 @@ function MessageBubble({
     <div className="flex flex-col gap-1">
       {bubble}
       {intent === "voice_call" ? (
-        <span className={`text-[10.5px] font-medium text-[#15803d] ${isVisitor ? "self-end" : "ml-9"}`}>
+        <span className={`text-[10.5px] font-medium text-[var(--success-fg)] ${isVisitor ? "self-end" : "ml-9"}`}>
           Voice call · {formatDateTime(createdAt)}
         </span>
       ) : null}
@@ -138,7 +138,7 @@ export function TranscriptPane({
   const fetchSourcesAction = bindFetchMessageSources(conversation.conversationId, tenantId);
 
   return (
-    <div className="flex flex-1 flex-col bg-secondary">
+    <div className="flex min-h-0 flex-1 flex-col bg-[var(--row-hover)]">
       <div className="flex items-center gap-3 border-b border-border bg-card px-5 py-3.5">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -164,7 +164,7 @@ export function TranscriptPane({
 
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-6">
         {conversation.summary ? (
-          <p className="self-center rounded-full bg-border px-3 py-1 text-center text-[10.5px] text-muted-foreground">
+          <p className="self-center rounded-full border border-border bg-card px-3 py-1 text-center text-[10.5px] text-muted-foreground">
             {conversation.summary}
           </p>
         ) : null}

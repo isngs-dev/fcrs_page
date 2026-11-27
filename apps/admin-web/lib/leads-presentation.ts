@@ -86,18 +86,18 @@ export interface BadgeStyle {
 // semantic signal (D4: this label always carries its own text, never color
 // alone).
 const STAGE_BADGES: Record<string, BadgeStyle> = {
-  captured: { label: "CAPTURED", bg: "#efeee6", fg: "var(--ink-2)" },
-  qualified: { label: "QUALIFIED", bg: "#efeee6", fg: "#333333" },
-  contacted: { label: "CONTACTED", bg: "#efeee6", fg: "#404040" },
-  converted: { label: "CONVERTED", bg: "#eaf3ec", fg: "#3f7d57" },
-  disqualified: { label: "DISQUALIFIED", bg: "#f6e3df", fg: "#a24b4b" },
+  captured: { label: "CAPTURED", bg: "#eeebe3", fg: "#3d4540" },
+  qualified: { label: "QUALIFIED", bg: "#e4ece3", fg: "#1f4b3a" },
+  contacted: { label: "CONTACTED", bg: "#f6e7dc", fg: "#9a4a1e" },
+  converted: { label: "CONVERTED", bg: "#e5efe7", fg: "#2e6a46" },
+  disqualified: { label: "DISQUALIFIED", bg: "#f8e6e0", fg: "#b3452f" },
 };
 
 /** Stage -> badge color/label (HANDOFF-SPEC.md §2 Badges). Unknown stages
  * fall back to a neutral muted style rather than throwing -- the backend's
  * `_VALID_STAGES` set is the real gate, this is presentation only. */
 export function stageBadgeStyle(stage: string): BadgeStyle {
-  return STAGE_BADGES[stage] ?? { label: stage.toUpperCase(), bg: "#ecece5", fg: "var(--ink-2)" };
+  return STAGE_BADGES[stage] ?? { label: stage.toUpperCase(), bg: "#eeebe3", fg: "#3d4540" };
 }
 
 /** Score chip color. `null` (no score yet) renders as the muted em-dash,
@@ -112,7 +112,7 @@ export function stageBadgeStyle(stage: string): BadgeStyle {
  * chip already uses, instead of a stray one-off color. */
 export function scoreChipStyle(score: number, stage: string): BadgeStyle {
   if (stage === "converted") {
-    return { label: String(score), bg: "#dcefdc", fg: "#1f6a2f" };
+    return { label: String(score), bg: "#e5efe7", fg: "#2e6a46" };
   }
   if (score >= 60) {
     return { label: String(score), bg: "var(--success-bg)", fg: "var(--success-fg)" };

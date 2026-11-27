@@ -24,7 +24,7 @@ const STAGE_LABELS: Record<string, string> = {
 // SR-15 D1: the final "converted" step's citron fill is deleted and
 // re-decided to the design's success-fg green, mirroring
 // `reports/leads-by-stage/stage-bars.tsx`'s identical re-decision.
-const STAGE_COLORS = ["var(--foreground)", "var(--ink-2)", "#8a8b82", "#3f7d57"] as const;
+const STAGE_COLORS = ["var(--chart-5)", "var(--chart-3)", "var(--chart-2)", "var(--chart-1)"] as const;
 
 export function FunnelSteps({ data }: { data: FunnelReport }) {
   const allZero = data.steps.every((s) => s.count === 0) && data.disqualifiedCount === 0;
@@ -76,7 +76,7 @@ export function FunnelSteps({ data }: { data: FunnelReport }) {
         })}
       </div>
 
-      <div className="flex items-center justify-between rounded-[10px] border border-dashed border-[#d5d5cb] bg-[var(--secondary)] px-4 py-2.5 text-sm">
+      <div className="flex items-center justify-between rounded-[10px] border border-dashed border-input bg-[var(--secondary)] px-4 py-2.5 text-sm">
         <span className="text-[var(--muted-foreground)]">Disqualified (off-ramp, not a funnel step)</span>
         <span className="font-bold text-[var(--foreground)] tabular-nums">
           {data.disqualifiedCount.toLocaleString()}

@@ -83,7 +83,7 @@ export function VoiceAgentConfigCard({
         </p>
       ) : null}
       {!plivoReady ? (
-        <p className="mb-3 rounded-md bg-[#fff9ec] px-3 py-2 text-[12px] text-[#6a4e00]">
+        <p className="mb-3 rounded-md bg-[var(--warning-bg)] px-3 py-2 text-[12px] text-[var(--warning-fg)]">
           Plivo browser calling isn&apos;t set up on the server yet, so Call Us stays hidden even
           when switched on.
         </p>
@@ -158,7 +158,7 @@ export function VoiceAgentConfigCard({
           </p>
         ) : null}
         {saved ? (
-          <p role="status" className="text-[12.5px] font-medium text-[#3f7d57]">
+          <p role="status" className="text-[12.5px] font-medium text-[var(--success-fg)]">
             Saved.
           </p>
         ) : null}

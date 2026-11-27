@@ -188,13 +188,13 @@ function stageDotColor(stage: string): string {
     case "converted":
       return "var(--success-dot)";
     case "disqualified":
-      return "#a24b4b";
+      return "var(--danger-fg)";
     case "qualified":
-      return "#333333";
+      return "var(--primary)";
     case "contacted":
-      return "#404040";
+      return "var(--ink-2)";
     default:
-      return "#878787";
+      return "var(--muted-foreground)";
   }
 }
 
@@ -303,7 +303,7 @@ export function LeadsTable({
           return (
             <TableRow
               key={lead.leadId}
-              style={highlighted ? { background: "#fdfdec" } : undefined}
+              style={highlighted ? { background: "var(--warning-bg)" } : undefined}
             >
               <TableCell className="px-0 py-0">
                 <Link

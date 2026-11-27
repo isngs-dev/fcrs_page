@@ -124,7 +124,7 @@ export function CreateMemberDialog() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex h-[38px] items-center gap-2 rounded-[10px] bg-[#333333] px-4 text-[13.5px] font-semibold whitespace-nowrap text-[#fbfaf7] transition-colors hover:bg-[#404040] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="inline-flex h-[38px] items-center gap-2 rounded-[10px] bg-primary px-4 text-[13.5px] font-semibold whitespace-nowrap text-primary-foreground transition-colors hover:bg-[#183d2f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
           <path d="M12 5v14M5 12h14" />

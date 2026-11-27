@@ -18,7 +18,7 @@ import { getBotSettings } from "@/lib/settings";
 import { getChatbotHub } from "@/lib/hub";
 import { getCallConfig } from "@/lib/calls";
 import { listKnowledgeDocs } from "@/app/(protected)/knowledge/actions";
-import { DashboardHero } from "@/app/(protected)/dashboard-hero";
+import { DashboardHeader, DashboardHero } from "@/app/(protected)/dashboard-hero";
 import { ResponsesOverTimeCard } from "@/app/(protected)/dashboard-responses-card";
 import { DashboardMetricCards } from "@/app/(protected)/dashboard-metric-cards";
 import { OnboardingChecklist } from "@/app/(protected)/onboarding-checklist";
@@ -58,7 +58,8 @@ export default async function ProtectedHomePage({ searchParams }: ProtectedHomeP
       : "Dashboard";
 
   return (
-    <main className="flex flex-1 flex-col gap-6 px-4 py-8 sm:px-6 lg:px-7 lg:py-10">
+    <main className="flex flex-1 flex-col gap-5 px-4 py-8 sm:px-6 lg:px-8 lg:py-9">
+      <DashboardHeader title={dashboardTitle} />
       <OnboardingChecklist
         settingsResult={settingsResult}
         docsResult={docsResult}
@@ -67,7 +68,7 @@ export default async function ProtectedHomePage({ searchParams }: ProtectedHomeP
         knowledgeHref="/knowledge"
       />
       {hubResult.status === "error" ? (
-        <div role="alert" className="rounded-2xl border border-[var(--danger-border)] bg-[#fff3ee] p-4 text-sm text-[var(--danger-fg)]">
+        <div role="alert" className="rounded-[12px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-4 text-sm text-[var(--danger-fg)]">
           <div className="flex gap-2">
             <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
             <div>
@@ -79,7 +80,7 @@ export default async function ProtectedHomePage({ searchParams }: ProtectedHomeP
         </div>
       ) : (
         <>
-          <DashboardHero hub={hubResult.data} title={dashboardTitle} />
+          <DashboardHero hub={hubResult.data} />
           <ResponsesOverTimeCard hub={hubResult.data} />
           <DashboardMetricCards hub={hubResult.data} />
         </>

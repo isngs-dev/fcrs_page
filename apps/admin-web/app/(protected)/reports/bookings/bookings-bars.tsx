@@ -20,9 +20,9 @@ function formatBucketLabel(iso: string, bucket: string): string {
 // outcome, mirroring the reports stage-bars/funnel-steps re-decisions.
 const SERIES = [
   { key: "booked" as const, label: "booked", color: "var(--foreground)" },
-  { key: "completed" as const, label: "completed", color: "#3f7d57" },
+  { key: "completed" as const, label: "completed", color: "var(--chart-1)" },
   { key: "noShow" as const, label: "no-show", color: "var(--muted-foreground)" },
-  { key: "cancelled" as const, label: "cancelled", color: "#a24b4b" },
+  { key: "cancelled" as const, label: "cancelled", color: "var(--danger-fg)" },
 ];
 
 export function BookingsBars({ data }: { data: BookingsReport }) {

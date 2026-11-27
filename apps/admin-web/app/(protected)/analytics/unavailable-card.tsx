@@ -12,7 +12,7 @@
  */
 export function UnavailableCard({ title, reason }: { title: string; reason: string }) {
   return (
-    <div className="flex flex-col gap-2 rounded-[14px] border border-dashed border-[#d5d5cb] p-[18px]">
+    <div className="flex flex-col gap-2 rounded-[14px] border border-dashed border-input p-[18px]">
       <span className="text-sm font-bold text-[var(--foreground)]">{title}</span>
       <p role="status" className="text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">
         Not available yet. {reason}

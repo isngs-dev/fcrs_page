@@ -27,7 +27,7 @@ export type SettingsRailRow =
 
 function rowClass(active: boolean | undefined) {
   return `flex items-center gap-[9px] rounded-lg px-[11px] py-2 text-[13px] transition-colors ${
-    active ? "bg-secondary font-semibold text-foreground" : "text-[var(--ink-2)] hover:bg-[#e6e6e6]"
+    active ? "bg-secondary font-semibold text-foreground" : "text-[var(--ink-2)] hover:bg-accent"
   }`;
 }
 

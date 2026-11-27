@@ -12,20 +12,20 @@ describe("statusBadgeStyle", () => {
   it("maps the real 'active' status to an honest ACTIVE badge (never LIVE) using the reference success pair + 6x6px dot color (SR-27 slice 2)", () => {
     expect(statusBadgeStyle("active")).toEqual({
       label: "ACTIVE",
-      bg: "#eaf3ec",
-      fg: "#3f7d57",
-      dot: "#4a9c6d",
+      bg: "#e5efe7",
+      fg: "#2e6a46",
+      dot: "#3b8a5a",
     });
   });
 
   it("maps the real 'ended' status to an ENDED badge with no dot (SR-15 monochrome restyle)", () => {
-    expect(statusBadgeStyle("ended")).toEqual({ label: "ENDED", bg: "#efeee6", fg: "var(--ink-2)" });
+    expect(statusBadgeStyle("ended")).toEqual({ label: "ENDED", bg: "#eeebe3", fg: "#3d4540" });
   });
 
   it("falls back to a neutral style for an unrecognized status rather than throwing", () => {
     const style = statusBadgeStyle("bogus");
     expect(style.label).toBe("BOGUS");
-    expect(style.bg).toBe("#efeee6");
+    expect(style.bg).toBe("#eeebe3");
   });
 });
 

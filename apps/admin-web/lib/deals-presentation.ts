@@ -25,16 +25,16 @@ export function dealStageLabel(stage: string): string {
 }
 
 const STAGE_BADGES: Record<string, { bg: string; fg: string }> = {
-  prospecting: { bg: "#efeee6", fg: "var(--ink-2)" },
-  qualification: { bg: "#efeee6", fg: "#333333" },
-  proposal: { bg: "#efeee6", fg: "#404040" },
-  negotiation: { bg: "#fdf6e3", fg: "#8a6416" },
-  closed_won: { bg: "#eaf3ec", fg: "#3f7d57" },
-  closed_lost: { bg: "#f6e3df", fg: "#a24b4b" },
+  prospecting: { bg: "#eeebe3", fg: "#3d4540" },
+  qualification: { bg: "#e4ece3", fg: "#1f4b3a" },
+  proposal: { bg: "#f6e7dc", fg: "#9a4a1e" },
+  negotiation: { bg: "#f8eed9", fg: "#855c12" },
+  closed_won: { bg: "#e5efe7", fg: "#2e6a46" },
+  closed_lost: { bg: "#f8e6e0", fg: "#b3452f" },
 };
 
 export function dealStageBadgeStyle(stage: string): { label: string; bg: string; fg: string } {
-  const style = STAGE_BADGES[stage] ?? { bg: "#ecece5", fg: "var(--ink-2)" };
+  const style = STAGE_BADGES[stage] ?? { bg: "#eeebe3", fg: "#3d4540" };
   return { label: dealStageLabel(stage).toUpperCase(), ...style };
 }
 

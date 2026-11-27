@@ -157,7 +157,7 @@ export function MissedCallConfig({
           </p>
         ) : null}
         {saved ? (
-          <p role="status" className="text-[12.5px] font-medium text-[#3f7d57]">
+          <p role="status" className="text-[12.5px] font-medium text-[var(--success-fg)]">
             Saved.
           </p>
         ) : null}

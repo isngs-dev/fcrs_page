@@ -40,11 +40,11 @@ function WeeklyConversationBars({ hub }: { hub: ChatbotHub }) {
         aria-label={`New conversations by day: ${summary}`}
         className="mt-3 flex gap-[9px]"
       >
-        {series.map((entry) => (
+        {series.map((entry, index) => (
           <div key={entry.bucketStart} className="flex flex-1 flex-col items-center gap-[7px]">
             <div className="flex h-[78px] w-full items-end justify-center">
               <div
-                className="w-full max-w-[15px] rounded-[3px] bg-primary"
+                className={`w-full max-w-[15px] rounded-[4px] ${index === series.length - 1 ? "bg-clay" : "bg-primary/85"}`}
                 style={{ height: `${(entry.conversations / max) * 78}px` }}
               />
             </div>
@@ -135,7 +135,7 @@ export function AnsweredByChatbotGauge({ hub }: { hub: ChatbotHub }) {
         ))}
         <div
           aria-hidden
-          className="absolute inset-x-0 text-center text-[21px] leading-none font-semibold text-[var(--ink)]"
+          className="absolute inset-x-0 text-center text-[21px] leading-none font-semibold text-foreground"
           style={{ bottom: -2 }}
         >
           {reading.percent === null ? (
@@ -174,7 +174,7 @@ function StatReadout({ label, value, href, caption }: { label: string; value: nu
       className="group flex flex-col justify-center gap-[7px] rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
       <span className="flex items-center justify-between gap-2">
-        <span className="text-[32px] leading-none font-semibold tracking-[-0.02em] tabular-nums text-[var(--ink)]">
+        <span className="text-[32px] leading-none font-semibold tracking-[-0.02em] tabular-nums text-foreground">
           {value.toLocaleString()}
         </span>
         <ArrowRight
@@ -188,57 +188,57 @@ function StatReadout({ label, value, href, caption }: { label: string; value: nu
   );
 }
 
+function todayLabel(): string {
+  return new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+}
+
 /**
- * The cream hero strip. Reference `Dashboard.dc.html:89-145`:
- * `border-radius:16px; padding:16px 26px; gap:14px`, then a single row split
- * into four zones by 1px `--line-2` rules at flex ratios 1.35 / 1 / 0.85 /
- * 0.85. D8 still applies: the row stacks on small screens (the artboard's
- * fixed 902px strip is not responsive), and the vertical rules only draw at
- * `lg:` where there is a real column boundary to draw between.
+ * Pine & Clay (owner, 2026-11-27): a page header (date, title, actions) over one white
+ * overview card split into four zones -- new conversations by day (today in clay), the
+ * answered-by-chatbot gauge, and the active / closed readouts. The zones stack on small
+ * screens; the vertical rules only draw at `lg:` where there is a real column boundary.
  */
-export function DashboardHero({ hub, title }: { hub: ChatbotHub; title: string }) {
+export function DashboardHeader({ title }: { title: string }) {
   return (
-    <section
-      aria-label="Chatbot hub overview"
-      className="flex flex-col gap-3.5 rounded-2xl bg-[var(--secondary)] px-5 py-4 sm:px-[26px]"
-    >
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="mb-[5px] text-[10.5px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
-            Chatbot Hub
-          </p>
-          <h1 className="text-[29px] leading-none font-semibold tracking-[-0.01em] text-[var(--ink)]">{title}</h1>
+          <p className="mb-1.5 text-[12px] font-medium text-muted-foreground">{todayLabel()}</p>
+          <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.015em] text-foreground">{title}</h1>
+          <p className="mt-1 text-[13.5px] text-[var(--ink-2)]">How your chatbot is performing this week.</p>
         </div>
-        {/* `.icon-btn` (40x40, radius 11) and `.pill-btn.pill-primary`
-            (height 40, radius 11, 14px/600) -- Dashboard.dc.html:32-36. */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             aria-label="Filter dashboard"
-            className="flex size-10 items-center justify-center rounded-[11px] border border-[var(--line-2)] bg-card text-[var(--ink-2)] transition-colors hover:bg-[#e6e6e6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="flex size-9 items-center justify-center rounded-[9px] border border-border bg-card text-[var(--ink-2)] shadow-[var(--shadow-card)] transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
-            <Filter aria-hidden className="size-[17px]" />
+            <Filter aria-hidden className="size-4" />
           </button>
           <Link
             href="/conversations"
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-[11px] bg-primary px-[18px] text-sm font-semibold text-primary-foreground transition-colors hover:bg-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-[9px] bg-primary px-4 text-[13.5px] font-semibold text-primary-foreground shadow-[var(--shadow-card)] transition-colors hover:bg-[#183d2f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
-            Review Conversations
+            Review conversations
             <ArrowRight aria-hidden className="size-[15px]" />
           </Link>
         </div>
       </div>
+  );
+}
 
-      <div className="flex flex-col gap-6 sm:grid sm:grid-cols-2 lg:flex lg:flex-row lg:items-center lg:gap-0">
-        <div className="flex flex-col lg:flex-[1.35] lg:pr-[26px]">
-          <p className="text-[13px] font-medium text-[var(--ink-2)]">New Conversations</p>
+export function DashboardHero({ hub }: { hub: ChatbotHub }) {
+  return (
+    <section aria-label="Chatbot hub overview">
+      <div className="flex flex-col gap-6 rounded-[12px] border border-border bg-card px-5 py-5 shadow-[var(--shadow-card)] sm:grid sm:grid-cols-2 sm:px-6 lg:flex lg:flex-row lg:items-center lg:gap-0">
+        <div className="flex flex-col lg:flex-[1.35] lg:pr-7">
+          <p className="text-[12px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">New conversations</p>
           <WeeklyConversationBars hub={hub} />
         </div>
-        <div aria-hidden className="hidden self-stretch bg-[var(--line-2)] lg:block lg:my-1 lg:w-px" />
+        <div aria-hidden className="hidden self-stretch bg-border lg:block lg:w-px" />
         <div className="flex flex-col items-center lg:flex-1 lg:px-6">
           <AnsweredByChatbotGauge hub={hub} />
         </div>
-        <div aria-hidden className="hidden self-stretch bg-[var(--line-2)] lg:block lg:my-1 lg:w-px" />
+        <div aria-hidden className="hidden self-stretch bg-border lg:block lg:w-px" />
         <div className="flex flex-col justify-center lg:flex-[0.85] lg:px-6">
           <StatReadout
             label="Active conversations"
@@ -247,7 +247,7 @@ export function DashboardHero({ hub, title }: { hub: ChatbotHub; title: string }
             caption="Currently open."
           />
         </div>
-        <div aria-hidden className="hidden self-stretch bg-[var(--line-2)] lg:block lg:my-1 lg:w-px" />
+        <div aria-hidden className="hidden self-stretch bg-border lg:block lg:w-px" />
         <div className="flex flex-col justify-center lg:flex-[0.85] lg:pl-6">
           <StatReadout
             label="Closed conversations"

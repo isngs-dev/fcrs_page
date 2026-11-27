@@ -162,7 +162,7 @@ export function TestBotChat({ tenantId }: { tenantId?: string }) {
                 {turn.question}
               </p>
               {turn.result.status === "error" ? (
-                <p className="rounded-[9px] border border-[var(--danger-border)] bg-[#f6e3df] px-3 py-2 text-[12px] text-[var(--danger-fg)]">
+                <p className="rounded-[9px] border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-[12px] text-[var(--danger-fg)]">
                   {turn.result.message}
                 </p>
               ) : (
@@ -176,7 +176,7 @@ export function TestBotChat({ tenantId }: { tenantId?: string }) {
                   </p>
                   {turn.result.decision !== "answer" ? (
                     turn.taught ? (
-                      <p className="mt-2 text-[11.5px] font-medium text-[#3f7d57]">
+                      <p className="mt-2 text-[11.5px] font-medium text-[var(--success-fg)]">
                         Saved — ask again in a few seconds to see it take effect.
                       </p>
                     ) : (

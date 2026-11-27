@@ -51,7 +51,7 @@ export function ResponsesOverTimeCard({ hub }: { hub: ChatbotHub }) {
   return (
     <SoftCard as="section" aria-label="Responses over time" className="px-5 pt-3.5 pb-2.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-[var(--ink)]">Responses over time</h2>
+        <h2 className="text-base font-semibold text-foreground">Responses over time</h2>
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-3.5 text-xs text-[var(--ink-2)]">
             <span className="inline-flex items-center gap-1.5">
@@ -70,7 +70,7 @@ export function ResponsesOverTimeCard({ hub }: { hub: ChatbotHub }) {
       {buckets.length === 0 ? (
         <p
           role="status"
-          className="mt-5 rounded-lg border border-dashed border-border bg-secondary p-4 text-sm text-muted-foreground"
+          className="mt-5 rounded-[10px] border border-dashed border-border bg-[var(--row-hover)] px-4 py-6 text-center text-sm text-muted-foreground"
         >
           No conversations yet in this period.
         </p>

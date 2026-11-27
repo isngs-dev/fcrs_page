@@ -66,10 +66,10 @@ export function TenantSwitcher({
   }
 
   return (
-    <div className={collapsed ? "hidden" : "border-b border-border px-5 pb-3.5"}>
+    <div className={collapsed ? "hidden" : "border-b border-sidebar-border px-5 pb-3.5"}>
       <label
         htmlFor="tenant-switcher"
-        className="mb-1 block text-[10.5px] font-semibold tracking-[0.12em] text-muted-foreground uppercase"
+        className="mb-1 block text-[10.5px] font-semibold tracking-[0.12em] text-sidebar-muted uppercase"
       >
         Active chatbot
       </label>
@@ -78,7 +78,7 @@ export function TenantSwitcher({
         defaultValue={activeTenantId ?? undefined}
         onChange={handleChange}
         disabled={isPending}
-        className="w-full rounded-[9px] border border-border bg-white px-2.5 py-1.5 text-[13px] font-medium text-foreground outline-none disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="w-full rounded-[9px] border border-sidebar-border bg-sidebar-accent px-2.5 py-1.5 text-[13px] font-medium text-white outline-none transition-colors hover:border-sidebar-muted/60 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring [&>option]:bg-white [&>option]:text-foreground"
       >
         {chatbots.map((bot) => (
           <option key={bot.id} value={bot.id} disabled={!bot.enabled}>

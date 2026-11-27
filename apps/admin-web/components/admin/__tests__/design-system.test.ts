@@ -64,22 +64,24 @@ describe("SR-15 D1: citron is fully deleted from apps/admin-web", () => {
   });
 });
 
-describe("SR-15 D1: globals.css :root carries the monochrome ramp read from Console.dc.html's .cv block", () => {
-  it("maps every shadcn token to its M2 monochrome value", () => {
-    expect(globalsCss).toMatch(/--background:\s*#f8f9fa/);
-    expect(globalsCss).toMatch(/--foreground:\s*#333333/);
-    expect(globalsCss).toMatch(/--primary:\s*#333333/);
-    expect(globalsCss).toMatch(/--primary-foreground:\s*#fbfaf7/);
-    expect(globalsCss).toMatch(/--secondary:\s*#efeee6/);
-    expect(globalsCss).toMatch(/--muted-foreground:\s*#878787/);
-    expect(globalsCss).toMatch(/--border:\s*#cdcdcd/);
-    expect(globalsCss).toMatch(/--destructive:\s*#a24b4b/);
+describe("Pine & Clay (owner, 2026-11-27): globals.css :root carries the palette", () => {
+  it("maps every shadcn token to its Pine & Clay value", () => {
+    expect(globalsCss).toMatch(/--background:\s*#f4f2ec/);
+    expect(globalsCss).toMatch(/--foreground:\s*#1b201c/);
+    expect(globalsCss).toMatch(/--primary:\s*#1f4b3a/);
+    expect(globalsCss).toMatch(/--primary-foreground:\s*#f7f5ef/);
+    expect(globalsCss).toMatch(/--secondary:\s*#eeebe3/);
+    expect(globalsCss).toMatch(/--muted-foreground:\s*#6b716c/);
+    expect(globalsCss).toMatch(/--border:\s*#e3dfd5/);
+    expect(globalsCss).toMatch(/--destructive:\s*#b3452f/);
+    expect(globalsCss).toMatch(/--sidebar:\s*#15241d/);
+    expect(globalsCss).toMatch(/--brand-clay:\s*#c4652f/);
   });
 
   it("adds the three structural properties with no shadcn equivalent (D1)", () => {
-    expect(globalsCss).toMatch(/--ink-2:\s*#404040/);
-    expect(globalsCss).toMatch(/--line-2:\s*#cdcdcd/);
-    expect(globalsCss).toMatch(/--row-line:\s*#ececec/);
+    expect(globalsCss).toMatch(/--ink-2:\s*#3d4540/);
+    expect(globalsCss).toMatch(/--line-2:\s*#e3dfd5/);
+    expect(globalsCss).toMatch(/--row-line:\s*#eeebe4/);
   });
 
   it("--row-line and --border are distinct values (M11: the design distinguishes them)", () => {
@@ -90,12 +92,13 @@ describe("SR-15 D1: globals.css :root carries the monochrome ramp read from Cons
     expect(rowLineMatch?.[1]?.toLowerCase()).not.toBe(borderMatch?.[1]?.toLowerCase());
   });
 
-  it("adds the system's only two chromatic value pairs (M3)", () => {
-    expect(globalsCss).toMatch(/--success-bg:\s*#eaf3ec/);
-    expect(globalsCss).toMatch(/--success-fg:\s*#3f7d57/);
-    expect(globalsCss).toMatch(/--success-dot:\s*#4a9c6d/);
-    expect(globalsCss).toMatch(/--danger-fg:\s*#a24b4b/);
-    expect(globalsCss).toMatch(/--danger-border:\s*#e2b8b8/);
+  it("carries the status colour pairs (success, warning, danger)", () => {
+    expect(globalsCss).toMatch(/--success-bg:\s*#e5efe7/);
+    expect(globalsCss).toMatch(/--success-fg:\s*#2e6a46/);
+    expect(globalsCss).toMatch(/--success-dot:\s*#3b8a5a/);
+    expect(globalsCss).toMatch(/--warning-fg:\s*#855c12/);
+    expect(globalsCss).toMatch(/--danger-fg:\s*#b3452f/);
+    expect(globalsCss).toMatch(/--danger-border:\s*#ebc4b8/);
   });
 });
 

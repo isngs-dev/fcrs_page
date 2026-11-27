@@ -34,12 +34,12 @@ export interface BadgeStyle {
  * (`#eaf3ec` on `#3f7d57`) with a `#4a9c6d` 6x6px dot (`Console.dc.html:394`). */
 export function statusBadgeStyle(status: string): BadgeStyle {
   if (status === "active") {
-    return { label: "ACTIVE", bg: "#eaf3ec", fg: "#3f7d57", dot: "#4a9c6d" };
+    return { label: "ACTIVE", bg: "#e5efe7", fg: "#2e6a46", dot: "#3b8a5a" };
   }
   if (status === "ended") {
-    return { label: "ENDED", bg: "#efeee6", fg: "var(--ink-2)" };
+    return { label: "ENDED", bg: "#eeebe3", fg: "#3d4540" };
   }
-  return { label: status.toUpperCase(), bg: "#efeee6", fg: "var(--ink-2)" };
+  return { label: status.toUpperCase(), bg: "#eeebe3", fg: "#3d4540" };
 }
 
 /** Two-letter initials for the visitor avatar chip. A `null` id (fully

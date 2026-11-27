@@ -71,8 +71,8 @@ describe("ResponsesOverTimeChart -- diverging geometry (Dashboard.dc.html:161-17
   });
 
   it("draws the midline distinctly from the five lighter dashed gridlines", () => {
-    // Light gridlines are #e6e6e6; the midline uses --border (#cdcdcd).
-    expect(markup).toContain("border-[#e6e6e6]");
+    // Light gridlines use --row-line; the midline uses the darker --border.
+    expect(markup).toContain("border-[var(--row-line)]");
     expect(markup).toContain("border-border");
   });
 

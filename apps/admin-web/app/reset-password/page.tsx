@@ -1,10 +1,4 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { AuthFrame } from "@/components/admin/auth-frame";
 import { ResetPasswordForm } from "@/app/reset-password/reset-password-form";
 
 interface ResetPasswordPageProps {
@@ -20,16 +14,8 @@ export default async function ResetPasswordPage({ searchParams }: ResetPasswordP
   const token = firstValue(params.token) ?? null;
 
   return (
-    <div className="flex flex-1 items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Choose a new password</CardTitle>
-          <CardDescription>Must be at least 12 characters.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResetPasswordForm token={token} />
-        </CardContent>
-      </Card>
-    </div>
+    <AuthFrame title="Choose a new password" description="Must be at least 12 characters.">
+      <ResetPasswordForm token={token} />
+    </AuthFrame>
   );
 }

@@ -229,7 +229,7 @@ function DrawerErrorState({
         </span>
         <CloseButton onClose={onClose} closeButtonRef={closeButtonRef} />
       </div>
-      <p role="alert" className="rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]">
+      <p role="alert" className="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]">
         {message}
         {correlationId ? <span className="mt-1 block text-xs opacity-80">Correlation ID: {correlationId}</span> : null}
       </p>
@@ -322,7 +322,7 @@ function DrawerBody({
               onClick={() => onTabChange(t)}
               className={cn(
                 "flex h-8 items-center rounded-lg px-4 text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                tab === t ? "bg-[#333] text-[#fbfaf7]" : "text-muted-foreground hover:text-foreground"
+                tab === t ? "bg-[#333] text-primary-foreground" : "text-muted-foreground hover:text-foreground"
               )}
             >
               {TAB_LABELS[t]}
@@ -421,7 +421,7 @@ function TimelineTab({
           height="16"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="#404040"
+          stroke="var(--ink-2)"
           strokeWidth="1.8"
           className="mt-0.5 shrink-0"
         >
@@ -562,7 +562,7 @@ function NotesTab({
       </form>
 
       {activitiesResult?.status === "error" ? (
-        <p role="alert" className="rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]">
+        <p role="alert" className="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]">
           {activitiesResult.message}
         </p>
       ) : notes.length === 0 ? (

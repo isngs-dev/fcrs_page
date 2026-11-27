@@ -35,7 +35,7 @@ function WinRateBar({ winRate }: { winRate: number | null }) {
   return (
     <div className="flex items-center gap-2">
       <div className="h-2 w-20 overflow-hidden rounded-full bg-[var(--secondary)]">
-        <div className="h-full rounded-full bg-[#3f7d57]" style={{ width: `${pct}%` }} />
+        <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
       </div>
       <span className="text-[13px] font-semibold tabular-nums text-[var(--foreground)]">
         {formatRate(winRate)}

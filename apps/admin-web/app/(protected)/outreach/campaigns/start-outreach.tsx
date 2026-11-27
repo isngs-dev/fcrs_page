@@ -28,7 +28,7 @@ const card = "flex flex-col gap-3 rounded-[14px] border border-[var(--line)] bg-
 function Note({ note }: { note: { ok: boolean; text: string } | null }) {
   if (!note) return null;
   return (
-    <p role={note.ok ? "status" : "alert"} className={note.ok ? "text-[12.5px] text-[#3f7d57]" : "text-[12.5px] text-destructive"}>
+    <p role={note.ok ? "status" : "alert"} className={note.ok ? "text-[12.5px] text-[var(--success-fg)]" : "text-[12.5px] text-destructive"}>
       {note.text}
     </p>
   );

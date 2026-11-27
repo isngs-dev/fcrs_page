@@ -133,7 +133,7 @@ export default async function ClientLeadsPage({ params, searchParams }: ClientLe
       </div>
 
       {view === "board" ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-[14px] border border-dashed border-[#d5d5cb] p-12 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-[14px] border border-dashed border-input p-12 text-center">
           <p className="text-sm font-semibold text-[var(--ink-2)]">Board view is coming soon</p>
           <p className="max-w-sm text-xs text-[var(--muted-foreground)]">
             Kanban drag-and-drop between stages is a follow-up; see the Leads screen for the same
@@ -146,7 +146,7 @@ export default async function ClientLeadsPage({ params, searchParams }: ClientLe
       ) : result.status === "error" ? (
         <p
           role="alert"
-          className="rounded-[14px] border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]"
+          className="rounded-[14px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]"
         >
           {result.message}
           {result.correlationId ? (

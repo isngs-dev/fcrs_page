@@ -162,7 +162,7 @@ export default async function NotificationsPage({ searchParams }: NotificationsP
   const result = await listNotifications({ page: 1, category });
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-1 flex-col gap-5 px-4 py-8 sm:px-6 lg:px-8 lg:py-9">
       <div className="flex flex-col gap-1">
         <h1 className="text-[28px] font-semibold text-foreground">Notifications</h1>
         <p className="text-[13px] text-muted-foreground">
@@ -203,7 +203,7 @@ export default async function NotificationsPage({ searchParams }: NotificationsP
                 className="rounded-full px-3 py-[5px] text-[11.5px] font-semibold transition-colors"
                 style={
                   active
-                    ? { background: "#333333", color: "#fbfaf7" }
+                    ? { background: "var(--primary)", color: "var(--primary-foreground)" }
                     : { background: "#fff", border: "1px solid var(--line)", color: "var(--ink-2)" }
                 }
               >
@@ -236,7 +236,7 @@ export default async function NotificationsPage({ searchParams }: NotificationsP
               aria-hidden="true"
               className="mb-2 flex h-16 w-16 items-center justify-center rounded-full bg-secondary"
             >
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#878787" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--muted-foreground)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
                 <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
               </svg>

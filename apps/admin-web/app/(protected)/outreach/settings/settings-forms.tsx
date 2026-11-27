@@ -59,7 +59,7 @@ function Check({ name, label, defaultChecked }: { name: string; label: string; d
 function Status({ note }: { note: Note }) {
   if (!note) return null;
   return (
-    <p role={note.ok ? "status" : "alert"} className={note.ok ? "text-[12.5px] text-[#3f7d57]" : "text-[12.5px] text-destructive"}>
+    <p role={note.ok ? "status" : "alert"} className={note.ok ? "text-[12.5px] text-[var(--success-fg)]" : "text-[12.5px] text-destructive"}>
       {note.text}
     </p>
   );

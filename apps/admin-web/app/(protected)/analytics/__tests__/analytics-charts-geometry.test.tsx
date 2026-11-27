@@ -65,7 +65,7 @@ describe("VolumeAreaChart (SR-23 spec: filled area + line, 3 gridlines + baselin
 
   it("renders a stroked polyline in the reference line color", () => {
     const html = renderToStaticMarkup(<VolumeAreaChart data={makeOverview([5, 8, 3])} />);
-    expect(html).toContain("#333333");
+    expect(html).toContain("var(--primary)");
   });
 
   it("renders at least 3 gridlines (plus baseline)", () => {

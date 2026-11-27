@@ -41,9 +41,9 @@ export default async function OutreachOverviewPage() {
         <>
           <SoftCard className="flex flex-wrap items-center gap-3 px-5 py-4">
             {result.overview.platformPaused ? (
-              <Chip className="bg-[#fde8e8] text-[#9b1c1c]">Paused by the platform</Chip>
+              <Chip className="bg-[var(--danger-bg)] text-[var(--danger-fg)]">Paused by the platform</Chip>
             ) : result.overview.outreachPaused ? (
-              <Chip className="bg-[#fde8e8] text-[#9b1c1c]">Paused</Chip>
+              <Chip className="bg-[var(--danger-bg)] text-[var(--danger-fg)]">Paused</Chip>
             ) : (
               <Chip tone="success" dot>
                 Running

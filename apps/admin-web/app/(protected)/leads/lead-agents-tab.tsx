@@ -29,8 +29,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 const BAND_STYLE: Record<string, string> = {
-  high: "bg-[#e3f1e8] text-[#2f6b45]",
-  medium: "bg-[#fbf0dc] text-[#8a5a12]",
+  high: "bg-[var(--success-bg)] text-[var(--success-fg)]",
+  medium: "bg-[var(--warning-bg)] text-[var(--warning-fg)]",
   low: "bg-secondary text-muted-foreground",
 };
 

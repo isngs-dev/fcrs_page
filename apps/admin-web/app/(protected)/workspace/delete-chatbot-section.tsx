@@ -59,10 +59,10 @@ export function DeleteChatbotSection({ currentName }: { currentName: string }) {
     <>
       <SoftCard
         className="flex scroll-mt-16 flex-col gap-3 px-[22px] pb-[18px] pt-1"
-        style={{ borderColor: "#e2b8b8" }}
+        style={{ borderColor: "var(--danger-border)" }}
         id="settings-danger-zone"
       >
-        <h2 className="pt-4 text-[15px] font-semibold" style={{ color: "#a24b4b" }}>
+        <h2 className="pt-4 text-[15px] font-semibold" style={{ color: "var(--danger-fg)" }}>
           Danger zone
         </h2>
         <div className="flex items-center justify-between gap-5">
@@ -79,7 +79,7 @@ export function DeleteChatbotSection({ currentName }: { currentName: string }) {
             variant="outline"
             onClick={handleOpen}
             className="flex-none"
-            style={{ borderColor: "#d99", color: "#a24b4b" }}
+            style={{ borderColor: "var(--danger-border)", color: "var(--danger-fg)" }}
           >
             Delete this chatbot
           </Button>
@@ -127,7 +127,7 @@ export function DeleteChatbotSection({ currentName }: { currentName: string }) {
             {error ? (
               <p
                 role="alert"
-                className="mt-3 rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-2 text-[11.5px] text-[var(--danger-fg)]"
+                className="mt-3 rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-2 text-[11.5px] text-[var(--danger-fg)]"
               >
                 {error}
               </p>

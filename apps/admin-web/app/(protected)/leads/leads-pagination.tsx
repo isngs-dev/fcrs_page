@@ -40,7 +40,7 @@ export function LeadsPagination({
             href={prevHref}
             scroll={false}
             aria-label="Previous page"
-            className={`${chipBase} border border-border bg-card text-[var(--ink-2)] hover:bg-[#e6e6e6]`}
+            className={`${chipBase} border border-border bg-card text-[var(--ink-2)] hover:bg-accent`}
           >
             ←
           </Link>
@@ -49,7 +49,7 @@ export function LeadsPagination({
             ←
           </span>
         )}
-        <span aria-current="page" className={`${chipBase} bg-[#333333] text-[#fbfaf7]`}>
+        <span aria-current="page" className={`${chipBase} bg-primary text-primary-foreground`}>
           {page}
         </span>
         {hasNext ? (
@@ -57,7 +57,7 @@ export function LeadsPagination({
             href={nextHref}
             scroll={false}
             aria-label="Next page"
-            className={`${chipBase} border border-border bg-card text-[var(--ink-2)] hover:bg-[#e6e6e6]`}
+            className={`${chipBase} border border-border bg-card text-[var(--ink-2)] hover:bg-accent`}
           >
             →
           </Link>

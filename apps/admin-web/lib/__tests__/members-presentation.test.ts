@@ -6,27 +6,27 @@ import {
 } from "@/lib/members-presentation";
 
 describe("roleBadgeStyle", () => {
-  it("maps CLIENT_ADMIN to the ink/white badge (SR-15: citron deleted per D1)", () => {
+  it("maps CLIENT_ADMIN to the pine/white badge (Pine & Clay, 2026-11-27)", () => {
     expect(roleBadgeStyle("CLIENT_ADMIN")).toEqual({
       label: "ADMIN",
-      bg: "#333333",
+      bg: "#1f4b3a",
       fg: "#ffffff",
     });
   });
 
-  it("maps CLIENT_AGENT to the SR-15 monochrome badge", () => {
+  it("maps CLIENT_AGENT to the neutral sand badge", () => {
     expect(roleBadgeStyle("CLIENT_AGENT")).toEqual({
       label: "AGENT",
-      bg: "#efeee6",
-      fg: "#404040",
+      bg: "#eeebe3",
+      fg: "#3d4540",
     });
   });
 
   it("falls back to a neutral style for an unknown role rather than throwing", () => {
     expect(roleBadgeStyle("PLATFORM_ADMIN")).toEqual({
       label: "PLATFORM_ADMIN",
-      bg: "#ecece5",
-      fg: "var(--ink-2)",
+      bg: "#eeebe3",
+      fg: "#3d4540",
     });
   });
 });

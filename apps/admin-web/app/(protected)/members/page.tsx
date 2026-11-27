@@ -49,11 +49,11 @@ export default async function MembersPage() {
       {result.status === "error" ? (
         <div
           role="alert"
-          className="rounded-xl border border-[#f0e2bd] bg-[#fff9ec] px-4 py-3 text-[13px] text-[#6a4e00]"
+          className="rounded-xl border border-[#e7d3a6] bg-[var(--warning-bg)] px-4 py-3 text-[13px] text-[var(--warning-fg)]"
         >
           {result.message}
           {result.correlationId ? (
-            <span className="block text-[11px] text-[#6a4e00]/80">
+            <span className="block text-[11px] text-[var(--warning-fg)]/80">
               Correlation ID: {result.correlationId}
             </span>
           ) : null}
@@ -68,7 +68,7 @@ export default async function MembersPage() {
       ) : (
         <div
           role="alert"
-          className="rounded-xl border border-[#f0e2bd] bg-[#fff9ec] px-4 py-3 text-[13px] text-[#6a4e00]"
+          className="rounded-xl border border-[#e7d3a6] bg-[var(--warning-bg)] px-4 py-3 text-[13px] text-[var(--warning-fg)]"
         >
           {assignmentResult.message}
         </div>

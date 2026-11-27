@@ -358,7 +358,7 @@ export function PipelineBoard<TCard extends PipelineCard>({
               style={
                 drag
                   ? isFocused
-                    ? { outline: "2px solid var(--ring)", outlineOffset: "2px", background: "#fdfdec" }
+                    ? { outline: "2px solid var(--ring)", outlineOffset: "2px", background: "var(--warning-bg)" }
                     : isLegal
                       ? { outline: "1.5px dashed var(--ink-2)", outlineOffset: "2px" }
                       : { opacity: 0.45 }
@@ -415,7 +415,7 @@ export function PipelineBoard<TCard extends PipelineCard>({
                         {isRejected ? (
                           <p
                             role="alert"
-                            className="rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-2 text-[11.5px] text-[var(--danger-fg)]"
+                            className="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-2 text-[11.5px] text-[var(--danger-fg)]"
                           >
                             {rejection.message}
                             {rejection.correlationId ? (

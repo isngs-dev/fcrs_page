@@ -188,7 +188,7 @@ export function RecordDrawer({ subject, result, onClose, loadOlderHref }: Record
             height="16"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="#404040"
+            stroke="var(--ink-2)"
             strokeWidth="1.8"
             className="mt-0.5 shrink-0"
           >
@@ -227,7 +227,7 @@ export function RecordDrawerTimelinePanel({
     return (
       <p
         role="alert"
-        className="rounded-lg border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]"
+        className="rounded-lg border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]"
       >
         {result.message}
         {result.correlationId ? (
@@ -259,7 +259,7 @@ function TimelineBody({
           role="alert"
           aria-live="polite"
           data-testid="timeline-degraded-notice"
-          className="rounded-lg border border-[#f0d9a8] bg-[#fdf6e3] p-3 text-[12.5px] text-[#8a6416]"
+          className="rounded-lg border border-[#e7d3a6] bg-[var(--warning-bg)] p-3 text-[12.5px] text-[var(--warning-fg)]"
         >
           <p className="font-semibold">This history may be incomplete.</p>
           <p className="mt-0.5">

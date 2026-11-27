@@ -18,6 +18,9 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-clay: var(--brand-clay);
+  --color-clay-soft: var(--brand-clay-soft);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
@@ -49,69 +52,72 @@
 }
 
 :root {
-  /* SR-15 D2: Archivo, wired via next/font/google in app/layout.tsx and
-     assigned to --font-app-sans there (CSS variable indirection preserved --
-     this file only declares the fallback stack). */
+  /* Pine & Clay (owner, 2026-11-27): IBM Plex Sans, wired via next/font/google in
+     app/layout.tsx and assigned to --font-app-sans there; this is only the fallback. */
   --font-app-sans: system-ui, sans-serif;
-  --font-app-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-app-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
 
-  /* SR-15 D1: monochrome ramp read verbatim from Console.dc.html's `.cv`
-     block (M2), mapped onto the existing shadcn token names so no component
-     changes its class strings. Ink & Citron is fully replaced -- see D1's
-     mapping table in dev_plan/sprints/SR-15-design-system-shell-restyle.md. */
-  --background: #f8f9fa; /* --paper */
-  --foreground: #333333; /* --ink */
+  /* Pine & Clay palette, mapped onto the shadcn token names so every component that
+     already reads tokens restyles without a class change. Warm stone canvas, white
+     surfaces, deep pine for primary actions, one clay accent used sparingly. */
+  --background: #f4f2ec; /* stone canvas */
+  --foreground: #1b201c; /* ink */
   --card: #ffffff;
-  --card-foreground: #333333;
+  --card-foreground: #1b201c;
   --popover: #ffffff;
-  --popover-foreground: #333333;
-  --primary: #333333; /* --near-black */
-  --primary-foreground: #fbfaf7;
-  --secondary: #efeee6; /* --cream */
-  --secondary-foreground: #333333;
-  --muted: #efeee6;
-  --muted-foreground: #878787;
-  --accent: #efeee6;
-  --accent-foreground: #333333;
-  --destructive: #a24b4b;
-  --border: #cdcdcd; /* --line */
-  --input: #cdcdcd;
-  --ring: #333333;
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --popover-foreground: #1b201c;
+  --primary: #1f4b3a; /* pine */
+  --primary-foreground: #f7f5ef;
+  --secondary: #eeebe3; /* sand */
+  --secondary-foreground: #1b201c;
+  --muted: #f0ede6;
+  --muted-foreground: #6b716c;
+  --accent: #ebe7dd; /* hover wash */
+  --accent-foreground: #1b201c;
+  --destructive: #b3452f;
+  --border: #e3dfd5; /* line */
+  --input: #d8d3c7;
+  --ring: #1f4b3a;
+  --chart-1: #1f4b3a; /* pine */
+  --chart-2: #c4652f; /* clay */
+  --chart-3: #8ea88f; /* sage */
+  --chart-4: #d8c49c; /* sand */
+  --chart-5: #5d6a62; /* slate */
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
 
-  /* SR-15 D1: three structural properties with no shadcn equivalent, added
-     by name. --row-line is deliberately LIGHTER than --border -- the design
-     distinguishes a table card's outer border from its interior row
-     dividers (M11); collapsing them would flatten every restyled table. */
-  --ink-2: #404040; /* secondary text, between --ink and --muted-foreground */
-  --line-2: #cdcdcd; /* vertical rules */
-  --row-line: #ececec; /* table row dividers */
+  /* The sidebar is the console's frame: deep pine with light text. */
+  --sidebar: #15241d;
+  --sidebar-foreground: #dfe5e0;
+  --sidebar-primary: #c4652f;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #20352b;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #24382e;
+  --sidebar-ring: #8ea88f;
+  --sidebar-muted: #8b9c92;
 
-  /* SR-24: reference-sourced callout background (Console.dc.html:907/974),
-     distinct from --secondary (cream) -- a deliberate new token, not a
-     legacy-hex migration. */
-  --callout-bg: #eef0f2;
+  /* Structural properties with no shadcn equivalent. --row-line stays LIGHTER than
+     --border: a table card's outer edge vs its interior row dividers. */
+  --ink-2: #3d4540; /* secondary text */
+  --line-2: #e3dfd5; /* vertical rules */
+  --row-line: #eeebe4; /* table row dividers */
+  --row-hover: #faf8f3; /* table row hover */
+  --callout-bg: #f2efe7;
+  --brand-clay: #c4652f; /* the one accent: current page, key highlights */
+  --brand-clay-soft: #f6e7dc;
 
-  /* SR-15 D1/M3: the system's only two chromatic values. Never used as the
-     sole signal of meaning -- see D4 and the Chip component. */
-  --success-bg: #eaf3ec;
-  --success-fg: #3f7d57;
-  --success-dot: #4a9c6d;
-  --danger-fg: #a24b4b;
-  --danger-border: #e2b8b8;
+  /* Status colours. Never the sole signal of meaning -- see the Chip component. */
+  --success-bg: #e5efe7;
+  --success-fg: #2e6a46;
+  --success-dot: #3b8a5a;
+  --warning-bg: #f8eed9;
+  --warning-fg: #855c12;
+  --danger-bg: #f8e6e0;
+  --danger-fg: #b3452f;
+  --danger-border: #ebc4b8;
+
+  --shadow-card: 0 1px 2px rgba(27, 32, 28, 0.04), 0 1px 1px rgba(27, 32, 28, 0.02);
+  --shadow-raised: 0 8px 24px -12px rgba(27, 32, 28, 0.18);
 }
 
 /*
@@ -168,8 +174,31 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "cv05";
   }
   html {
     @apply font-sans;
   }
+  ::selection {
+    background: var(--brand-clay-soft);
+    color: var(--foreground);
+  }
+}
+
+/* Numbers that line up in tables and metric tiles. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Loading skeletons: a quiet pulse, off for anyone who prefers reduced motion. */
+@keyframes console-pulse {
+  50% { opacity: 0.55; }
+}
+.skeleton {
+  border-radius: 8px;
+  background: var(--secondary);
+  animation: console-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
 }

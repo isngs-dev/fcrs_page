@@ -99,9 +99,9 @@ export default async function ConversationsPage({ searchParams }: ConversationsP
     // V1: shell is `display:flex;gap:18px;padding:24px`
     // (Console.dc.html:379) -- two independent `.tbl-card`s side by side,
     // not one bordered wrapper. `p-6` = 24px, `gap-[18px]` = 18px.
-    <div className="flex flex-1 gap-[18px] p-6">
+    <div className="flex flex-1 gap-[18px] p-6 lg:h-screen lg:min-h-0">
       <div
-        className="flex w-[340px] flex-none flex-col overflow-hidden rounded-[12px] border border-border bg-card"
+        className="flex min-h-0 w-[340px] flex-none flex-col overflow-hidden rounded-[12px] border border-border bg-card shadow-[var(--shadow-card)]"
         style={{ minHeight: "70vh" }}
       >
         <div className="flex flex-col gap-3 border-b border-[var(--row-line)] px-4 pb-3 pt-4">
@@ -122,7 +122,7 @@ export default async function ConversationsPage({ searchParams }: ConversationsP
         </div>
 
         {listResult.status === "error" ? (
-          <p role="alert" className="m-4 rounded-[14px] border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]">
+          <p role="alert" className="m-4 rounded-[14px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]">
             {listResult.message}
             {listResult.correlationId ? (
               <span className="mt-1 block text-xs opacity-80">
@@ -174,7 +174,7 @@ export default async function ConversationsPage({ searchParams }: ConversationsP
       </div>
 
       <div
-        className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] border border-border bg-card"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] border border-border bg-card shadow-[var(--shadow-card)]"
         style={{ minHeight: "70vh" }}
       >
         {!conversationId ? (

@@ -18,7 +18,7 @@ const STAGE_ORDER = ["captured", "qualified", "contacted", "converted", "disqual
 // to the design's success-fg green (--success-fg #3f7d57) -- converted is
 // this report's one meaningfully "good" outcome, matching M3's only other
 // semantic-success use in the new system.
-const STAGE_COLORS = ["var(--foreground)", "var(--ink-2)", "var(--muted-foreground)", "#3f7d57", "#a24b4b"] as const;
+const STAGE_COLORS = ["var(--chart-5)", "var(--chart-3)", "var(--chart-2)", "var(--chart-1)", "var(--danger-fg)"] as const;
 
 export function StageBars({ data }: { data: LeadsByStageReport }) {
   if (data.total === 0) {

@@ -65,7 +65,7 @@ export function ConversationList({
             // to read against it, not carry a second accent.
             style={
               selected
-                ? { background: "#efeee6", borderLeft: "3px solid #333333" }
+                ? { background: "var(--brand-clay-soft)", borderLeft: "3px solid var(--brand-clay)" }
                 : { borderLeft: "3px solid transparent" }
             }
           >
@@ -75,7 +75,7 @@ export function ConversationList({
               aria-current={selected ? "true" : undefined}
               className="flex min-h-[44px] gap-[11px] px-4 py-[13px] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             >
-              <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-border text-[10px] font-bold text-[var(--ink-2)]">
+              <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-[#e4ece3] text-[10px] font-bold text-primary">
                 {initialsFromVisitor(item.visitorId)}
               </span>
               <span className="min-w-0 flex-1">
@@ -103,7 +103,7 @@ export function ConversationList({
                     {badge.label}
                   </span>
                   {item.hasVoiceCall ? (
-                    <span className="flex h-5 items-center rounded-[5px] bg-[#ecfdf3] px-2 text-[10px] font-bold text-[#15803d]">
+                    <span className="flex h-5 items-center rounded-[5px] bg-[var(--success-bg)] px-2 text-[10px] font-bold text-[var(--success-fg)]">
                       Voice call
                     </span>
                   ) : null}

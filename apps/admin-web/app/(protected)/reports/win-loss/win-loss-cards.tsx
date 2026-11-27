@@ -69,7 +69,7 @@ export function WinLossCards({ data }: { data: WinLossReport }) {
         {!data.currencyConfigured ? (
           <span
             role="status"
-            className="rounded-[8px] border border-dashed border-[#d5d5cb] px-2.5 py-1 text-[var(--muted-foreground)]"
+            className="rounded-[8px] border border-dashed border-input px-2.5 py-1 text-[var(--muted-foreground)]"
           >
             Currency not configured for this tenant -- defaulted to {data.currency}.
           </span>

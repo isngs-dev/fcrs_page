@@ -53,7 +53,7 @@ export function ColumnFilterMenu({
     <details className="group relative">
       <summary
         aria-label={`Filter ${label}`}
-        className="grid size-5 cursor-pointer list-none place-items-center rounded text-muted-foreground hover:bg-[#e6e6e6] hover:text-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"
+        className="grid size-5 cursor-pointer list-none place-items-center rounded text-muted-foreground hover:bg-accent hover:text-[var(--ink-2)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"
       >
         <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M4 6h16M7 12h10M10 18h4" />

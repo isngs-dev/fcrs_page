@@ -34,7 +34,7 @@ export function DealsViewToggle({
         scroll={false}
         aria-current={view === "board" ? "page" : undefined}
         className="min-h-9 px-3.5 py-1.5"
-        style={view === "board" ? { background: "#333333", color: "#fff" } : { color: "var(--ink-2)" }}
+        style={view === "board" ? { background: "var(--primary)", color: "#fff" } : { color: "var(--ink-2)" }}
       >
         Board
       </Link>
@@ -43,7 +43,7 @@ export function DealsViewToggle({
         scroll={false}
         aria-current={view === "table" ? "page" : undefined}
         className="min-h-9 px-3.5 py-1.5"
-        style={view === "table" ? { background: "#333333", color: "#fff" } : { color: "var(--ink-2)" }}
+        style={view === "table" ? { background: "var(--primary)", color: "#fff" } : { color: "var(--ink-2)" }}
       >
         Table
       </Link>

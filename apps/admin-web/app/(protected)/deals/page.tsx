@@ -117,7 +117,7 @@ async function renderDealsBoardSection() {
 
   if (boardResult.status === "error") {
     return (
-      <p role="alert" className="rounded-[14px] border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]">
+      <p role="alert" className="rounded-[14px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]">
         {boardResult.message}
         {boardResult.correlationId ? (
           <span className="block text-xs opacity-80">Correlation ID: {boardResult.correlationId}</span>
@@ -157,7 +157,7 @@ async function renderDealsTableSection({
 
   if (result.status === "error") {
     return (
-      <p role="alert" className="rounded-[14px] border border-[#f6e3df] bg-[#fdf5f3] p-3 text-sm text-[var(--danger-fg)]">
+      <p role="alert" className="rounded-[14px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger-fg)]">
         {result.message}
         {result.correlationId ? (
           <span className="block text-xs opacity-80">Correlation ID: {result.correlationId}</span>

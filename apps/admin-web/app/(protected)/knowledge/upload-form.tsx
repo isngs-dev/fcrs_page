@@ -189,7 +189,7 @@ export function StatusPanel({
           </tr>
         </thead>
         <tbody>
-          <tr className={cn(badge.tone === "failed" && "bg-[#fdfdec]")}>
+          <tr className={cn(badge.tone === "failed" && "bg-[var(--warning-bg)]")}>
             <TableCell className="min-w-0 truncate font-bold text-foreground">
               Uploaded document
             </TableCell>
@@ -233,7 +233,7 @@ export function StatusPanel({
       {hasError ? (
         <p
           role="alert"
-          className="rounded-[9px] border border-[var(--danger-border)] bg-[#f6e3df] p-3 text-[12.5px] font-medium text-[var(--danger-fg)]"
+          className="rounded-[9px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-[12.5px] font-medium text-[var(--danger-fg)]"
         >
           {result.status === "error" ? result.message : "Unable to load status."}
         </p>
@@ -251,7 +251,7 @@ export function StatusPanel({
       {cappedOut ? (
         <p
           role="alert"
-          className="rounded-[9px] border border-[#f0e2bd] bg-[#fff9ec] p-3 text-[12.5px] text-[#6a4e00]"
+          className="rounded-[9px] border border-[#e7d3a6] bg-[var(--warning-bg)] p-3 text-[12.5px] text-[var(--warning-fg)]"
         >
           Still processing after 5 minutes -- the ingestion worker may be busy or down. This
           document&apos;s status is <span className="font-semibold">{runStatus ?? "queued"}</span>;
@@ -350,11 +350,11 @@ function RunStatusBody({
       <div className="flex flex-col gap-2">
         <p
           role="alert"
-          className="rounded-[9px] border border-[var(--danger-border)] bg-[#f6e3df] p-3 text-[12.5px] font-semibold text-[var(--danger-fg)]"
+          className="rounded-[9px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-3 text-[12.5px] font-semibold text-[var(--danger-fg)]"
         >
           Ingestion failed.
         </p>
-        <pre className="max-h-40 overflow-y-auto rounded-[9px] border border-[var(--danger-border)] bg-[#f6e3df] p-2.5 text-xs whitespace-pre-wrap text-[var(--danger-fg)]">
+        <pre className="max-h-40 overflow-y-auto rounded-[9px] border border-[var(--danger-border)] bg-[var(--danger-bg)] p-2.5 text-xs whitespace-pre-wrap text-[var(--danger-fg)]">
           {formatRunErrors(errors)}
         </pre>
         {durationMs !== null ? (
@@ -415,7 +415,7 @@ function Dropzone({
       {/* K3: 44x44 rounded-11 cream icon tile with a real SVG (upload arrow
           over a tray), matching Console.dc.html:472 exactly. */}
       <div className="grid size-11 shrink-0 place-items-center rounded-[11px] bg-secondary">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#404040" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ink-2)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 16V4M7 9l5-5 5 5M4 20h16" />
         </svg>
       </div>

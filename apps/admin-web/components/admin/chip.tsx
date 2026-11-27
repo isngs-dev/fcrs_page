@@ -27,7 +27,7 @@ export function Chip({ tone = "default", dot = false, className, children }: Chi
   return (
     <span
       className={cn(
-        "inline-flex h-6 items-center gap-1.5 rounded-[7px] px-2.5 text-[11.5px] font-semibold",
+        "inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold",
         tone === "success" ? "bg-[var(--success-bg)] text-[var(--success-fg)]" : "bg-secondary text-[var(--ink-2)]",
         className
       )}

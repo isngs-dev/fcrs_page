@@ -54,7 +54,7 @@ export function DealsTable({
           const badge = dealStageBadgeStyle(deal.stage);
           const highlighted = deal.opportunityId === selectedDealId;
           return (
-            <TableRow key={deal.opportunityId} style={highlighted ? { background: "#fdfdec" } : undefined}>
+            <TableRow key={deal.opportunityId} style={highlighted ? { background: "var(--warning-bg)" } : undefined}>
               <TableCell className="px-0 py-0">
                 <Link
                   href={dealHref(resolvedBasePath, resolvedParams, deal.opportunityId)}

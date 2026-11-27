@@ -61,5 +61,7 @@ export const config = {
   // Everything except the login page, the password-reset request/confirm
   // pages, and Next.js internals requires a valid cookie -- those three are
   // the only screens a logged-out visitor must reach (no redirect loop).
-  matcher: ["/((?!login|forgot-password|reset-password|_next|favicon.ico).*)"],
+  // The brand logo and the app icons load on the sign-in page and in the browser tab,
+  // before anyone is signed in (owner, 2026-11-27).
+  matcher: ["/((?!login|forgot-password|reset-password|_next|favicon.ico|isn-logo.png|icon.png|apple-icon.png).*)"],
 };

@@ -37,7 +37,7 @@ export function TableCard({
     <div
       className={cn(
         allowOverflow ? "overflow-visible" : "overflow-hidden",
-        "rounded-[12px] border border-border bg-card",
+        "rounded-[12px] border border-border bg-card shadow-[var(--shadow-card)]",
         className
       )}
     >
@@ -66,7 +66,7 @@ export function TableHeadCell({
     <th
       scope="col"
       className={cn(
-        "border-r border-[var(--row-line)] bg-secondary px-3.5 py-2.5 text-left text-[11px] font-semibold tracking-[.06em] text-muted-foreground uppercase first:rounded-tl-[11px] last:rounded-tr-[11px] last:border-r-0",
+        "border-b border-border bg-[var(--row-hover)] px-4 py-2.5 text-left text-[11px] font-semibold tracking-[.08em] text-muted-foreground uppercase first:rounded-tl-[11px] last:rounded-tr-[11px]",
         className
       )}
       {...props}
@@ -89,7 +89,7 @@ export function TableHeadCell({
 export function TableCell({ className, children, ...props }: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
     <td
-      className={cn("min-h-14 border-t border-[var(--row-line)] px-3.5 py-3 align-middle", className)}
+      className={cn("min-h-14 border-t border-[var(--row-line)] px-4 py-3 align-middle", className)}
       {...props}
     >
       {children}
@@ -107,7 +107,7 @@ export function TableRow({
   ...props
 }: React.HTMLAttributes<HTMLTableRowElement>) {
   return (
-    <tr className={cn("hover:bg-[#faf9f6]", className)} {...props}>
+    <tr className={cn("transition-colors hover:bg-[var(--row-hover)]", className)} {...props}>
       {children}
     </tr>
   );

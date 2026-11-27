@@ -76,7 +76,7 @@ export function MessageSources({ messageId, sourceCount, replyContent, fetchSour
       </button>
 
       {expanded ? (
-        <div className="max-w-[520px] rounded-[10px] border border-[var(--border)] bg-[#fbfbf8] p-3 text-[12px]">
+        <div className="max-w-[520px] rounded-[10px] border border-[var(--border)] bg-[var(--row-hover)] p-3 text-[12px]">
           {state.status === "loading" ? (
             <p role="status" className="text-[var(--muted-foreground)]">
               Loading sources…
