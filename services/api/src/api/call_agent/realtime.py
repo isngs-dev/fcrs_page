@@ -276,6 +276,10 @@ class RealtimeCall:
         self._ending = False
         self._replies = 0
         self._bridges = 0
+        self._frames = 0  # caller audio frames passed to the listener
+        self._heard = 0  # listener events (any kind) -- with _frames, says who went quiet
+        self._last_heard: float | None = None
+        self._started = clock()
         self._done = asyncio.Event()
 
     async def run(self) -> None:
@@ -289,6 +293,14 @@ class RealtimeCall:
         with contextlib.suppress(Exception):
             await self._listener.close()
         await asyncio.gather(*tasks, return_exceptions=True)
+        # Live 2026-11-28: the caller went unheard mid-call. This line says whether their
+        # audio was still arriving (frames) and when the listener last reported anything.
+        last = ("never" if self._last_heard is None
+                else f"{int(self._last_heard - self._started)} s in")
+        _log.info("realtime call finished", extra={
+            "event": "realtime_call_finished",
+            "reason": f"{self._frames} caller frames, {self._heard} listener events, "
+                      f"last {last}, {int(self._clock() - self._started)} s long"})
 
     async def _send(self, event: dict[str, Any]) -> None:
         await self._plivo.send_text(json.dumps(event))
@@ -304,6 +316,7 @@ class RealtimeCall:
                     self._deadline = asyncio.create_task(self._open_after(self._opening_cap))
                 elif event == "media":
                     await self._listener.send(base64.b64decode(message["media"]["payload"]))
+                    self._frames += 1
                 elif event == "playedStream" and message.get("name") == self._playing:
                     self._playing = None
                     if message.get("name") == self._opening_mark:
@@ -361,7 +374,24 @@ class RealtimeCall:
                 self._open()
 
     async def _from_flux(self) -> None:
+        """The listener's events. If it stops while the call is up she can no longer hear
+        them: the call ends, loudly, rather than going on deaf (live 2026-11-28)."""
+        reason = "ended"
+        try:
+            await self._listen()
+        except Exception as exc:  # noqa: BLE001 -- logged below and the call ends
+            reason = type(exc).__name__
+        if not self._done.is_set():
+            _log.error("realtime listener stopped mid-call", extra={
+                "event": "realtime_listener_lost", "reason": reason})
+            with contextlib.suppress(Exception):
+                await self._plivo.close()
+            self._done.set()
+
+    async def _listen(self) -> None:
         async for heard in self._listener.events():
+            self._heard += 1
+            self._last_heard = self._clock()
             if self._ending:  # her closing line plays out whole; nothing after it is a turn
                 continue
             if not self._opened:

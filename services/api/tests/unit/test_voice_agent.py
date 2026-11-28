@@ -167,7 +167,7 @@ def test_the_time_limit_hands_over_after_answering() -> None:
 
 async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_book: bool = False,
                        assistant: str | None = None, handoff: bool = False,
-                       caller_name: str | None = None,
+                       caller_name: str | None = None, expert: str | None = None,
                        ) -> tuple[str | None, AsyncMock]:
     from api.llm.provider import Completion
 
@@ -186,7 +186,8 @@ async def _answer_with(completion_text: str, stop_reason: str = "stop", *, can_b
     ):
         reply = await answer_from_knowledge(object(), object(), "do you fix roofs?", [],  # type: ignore[arg-type]
                                             can_book=can_book, assistant=assistant,
-                                            handoff=handoff, caller_name=caller_name)
+                                            handoff=handoff, caller_name=caller_name,
+                                            **({"expert": expert} if expert else {}))
     return reply, generate
 
 
@@ -949,3 +950,37 @@ def test_she_may_still_describe_what_she_can_do() -> None:
 
     line = "I can explain how booking inspections works with Roof Engine."
     assert without_call_pushes(line) == line
+
+
+# -- Live 2026-11-28 (HomeOwners): "our marketing expert" on a homeowner's roofing call, and
+# "The context I have doesn't say whether same-day service is available" said aloud.
+
+
+async def test_the_hand_off_names_this_chatbots_own_expert() -> None:
+    from api.voice_agent.agent import MissReply
+
+    _, generate = await _answer_with("Sure.", expert="roofing specialist")
+    system = generate.call_args.args[0][0].content
+    assert "roofing specialist" in system and "marketing expert" not in system
+    handoff = ("That's a great question about gutters. Our roofing pro will be able to answer "
+               "it more precisely.")
+    reply, _ = await _answer_with(f"NO_ANSWER_FOUND | {handoff}", handoff=True,
+                                  expert="roofing pro")
+    assert isinstance(reply, MissReply) and reply == handoff
+
+
+async def test_she_never_talks_about_her_context() -> None:
+    _, generate = await _answer_with("Sure.")
+    assert "Never mention the context" in generate.call_args.args[0][0].content
+    reply, _ = await _answer_with(
+        "The context I have doesn't say whether same-day service is available.")
+    assert reply is None  # a miss: the turn logic hands it to the expert in its own words
+
+
+async def test_a_streamed_answer_stops_before_a_sentence_about_its_context() -> None:
+    reply, spoken, _ = await _streamed([
+        "Thanks, Sandhya. ",
+        "The context I have doesn't say whether same-day service is available. ",
+        "Our marketing expert will know."])
+    assert reply is None
+    assert not any("context" in line for line in spoken)

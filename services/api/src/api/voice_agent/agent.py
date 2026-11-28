@@ -97,11 +97,16 @@ _VOICE_SYSTEM_PROMPT = (
     "or price. "
     "Never guess, never promise, never say anything is booked, and never "
     "invent prices, dates or commitments. "
+    # Live 2026-11-28: "The context I have doesn't say whether same-day service is available".
+    "Never mention the context, your notes or what you were given: you speak for the "
+    "business. "
     # Owner, 2026-11-20: the call with the team is offered once their questions are done.
     "When you have answered, stop: never end an answer by offering a call, a meeting or a "
     "time, or by saying our team or marketing expert can walk them through it."
 )
 _NO_ANSWER = "NO_ANSWER_FOUND"
+# Who a question she can't answer goes to; each calling chatbot names its own (2026-11-28).
+DEFAULT_EXPERT = "marketing expert"
 BOOK_A_TIME = "BOOK_A_TIME"  # the Calling Agent's booking flow takes over from the model
 _CAN_BOOK_PROMPT = (
     "If the caller wants to book or schedule a call or meeting, or names a day or time for "
@@ -266,7 +271,7 @@ def _streamed_effort(model: str) -> str:
 _CALL_PUSH = re.compile(
     r"\b(?:would you like|shall i|should i|do you want|want me to|(?:i'?d|i would) be happy to)"
     r"\b.{0,60}\b(?:set up|book|schedule|arrange|find a time)\b"
-    r"|\b(?:our|the) (?:marketing )?(?:experts?|team|specialists?)\b.{0,40}"
+    r"|\b(?:our|the) (?:\w+ )?(?:experts?|team|specialists?|pros?)\b.{0,40}"
     r"\b(?:can|will|could|would)\b.{0,30}"
     r"\b(?:walk you through|help you decide|go over|talk you through|discuss|explain)\b",
     re.IGNORECASE)
@@ -287,12 +292,19 @@ def without_call_pushes(text: str) -> str:
     return " ".join(kept)
 
 
+# Live 2026-11-28: the model talked about its own input ("The context I have doesn't say...").
+_ABOUT_ITS_CONTEXT = re.compile(
+    r"\b(?:the|my|this|that|your) context\b|\bcontext (?:i have|provided|given|below)\b"
+    r"|\bknowledge base\b", re.IGNORECASE)
+
+
 def _sayable(sentence: str, context: str, pricing: str | None = None) -> bool:
     """The whole reply's checks, on one sentence: no model signal, nothing the output
     guardrails block, no price or promise the knowledge base doesn't state -- and, once the
     client has approved pricing documents (``pricing``), no price they don't state (2.6)."""
     return (_NO_ANSWER not in sentence and BOOK_A_TIME not in sentence
-            and scan_output(sentence).ok and not unstated_commitments(sentence, context)
+            and not _ABOUT_ITS_CONTEXT.search(sentence) and scan_output(sentence).ok
+            and not unstated_commitments(sentence, context)
             and not (pricing is not None and unsupported_prices(sentence, pricing)))
 
 
@@ -349,10 +361,11 @@ _HANDOFF_FORBIDDEN = re.compile(
 _HANDOFF_TO = re.compile(r"\b(?:expert|team|specialist)\b", re.I)
 
 
-def _spoken_handoff(reply: str, context: str) -> str | None:
+def _spoken_handoff(reply: str, context: str, expert: str = DEFAULT_EXPERT) -> str | None:
     """The model's hand-off after ``NO_ANSWER_FOUND |``, if it follows the rules."""
     text = " ".join(reply.split(_NO_ANSWER, 1)[1].lstrip(" |:-").split())
-    if not (4 <= len(text.split()) <= 40) or not _HANDOFF_TO.search(text):
+    hands_off = _HANDOFF_TO.search(text) or expert.lower() in text.lower()
+    if not (4 <= len(text.split()) <= 40) or not hands_off or _ABOUT_ITS_CONTEXT.search(text):
         return None
     if _HANDOFF_FORBIDDEN.search(text) or _NO_ANSWER in text or BOOK_A_TIME in text:
         return None
@@ -365,7 +378,7 @@ async def answer_from_knowledge(
     db: Database, claims: AuthClaims, question: str, history: list[ChatMessage],
     *, model: str | None = None, about_caller: str | None = None, can_book: bool = False,
     llm_config: LLMConfig | None = None, assistant: str | None = None,
-    handoff: bool = False, caller_name: str | None = None,
+    handoff: bool = False, caller_name: str | None = None, expert: str = DEFAULT_EXPERT,
 ) -> str | None:
     """A short spoken answer grounded in the tenant's knowledge base, or ``None``
     when the knowledge base doesn't hold it (or the reply fails the output
@@ -394,7 +407,8 @@ async def answer_from_knowledge(
         ChatMessage(role="system", content=(
             # ``assistant``: who she is (the calling agent's "Rebecca, the AI assistant at X")
             f"{_who_prompt(assistant)}"
-            f"{_VOICE_SYSTEM_PROMPT}{f' {_CAN_BOOK_PROMPT}' if can_book else ''}"
+            f"{_VOICE_SYSTEM_PROMPT.replace(DEFAULT_EXPERT, expert)}"
+            f"{f' {_CAN_BOOK_PROMPT}' if can_book else ''}"
             f"{_name_prompt(caller_name)}\n\n"
             f"Context:\n{context}\n\n{frame_memory(about_caller)}"
         ).strip()),  # A11: the caller's story, as data
@@ -432,11 +446,13 @@ async def answer_from_knowledge(
     elif _NO_ANSWER in reply:
         miss = "not in the knowledge base"
         # ``handoff``: the calling agent says her own words for this question (2026-11-16)
-        written = _spoken_handoff(reply, context) if handoff else None
+        written = _spoken_handoff(reply, context, expert) if handoff else None
         if written:
             _log.info("voice agent could not answer", extra={
                 "event": "voice_agent_miss", "reason": f"{miss}, own hand-off"})
             return MissReply(written)
+    elif _ABOUT_ITS_CONTEXT.search(reply):
+        miss = "reply talked about its context"
     elif not scan_output(reply).ok:
         miss = "reply failed the output guardrails"
     elif unstated_commitments(reply, context):  # A9 H4: no spoken price/promise not in the KB

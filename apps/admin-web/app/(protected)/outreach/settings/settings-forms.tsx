@@ -280,6 +280,8 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
         max_concurrent_calls: Number(text(data, "max_concurrent")),
         recording_enabled: data.get("recording") === "on",
         inbound_enabled: data.get("inbound") === "on",
+        expert_title: text(data, "expert_title"),
+        ask_company: data.get("ask_company") === "on",
         recording_retention_days: Number(text(data, "retention_days")),
         missed_call_alert_emails: text(data, "missed_call_alert_emails")
           .split(/[,;\s]+/)
@@ -322,6 +324,9 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
           <Field label="Business name (spoken)">
             <Input name="company_name" required maxLength={80} defaultValue={config.companyName ?? ""} />
           </Field>
+          <Field label="Who answers what Rebecca can't (“our ___ will answer that”)">
+            <Input name="expert_title" required maxLength={40} placeholder="roofing specialist" defaultValue={config.expertTitle ?? "marketing expert"} />
+          </Field>
           <Field label="Voicemail">
             <select name="voicemail_policy" defaultValue={config.voicemailPolicy ?? "hangup"} className="h-9 rounded-[10px] border border-border bg-background px-2 text-[13px]">
               <option value="hangup">Hang up, try again later</option>
@@ -355,6 +360,7 @@ export function CallConfigForm({ config }: { config: CallConfig }) {
           <Check name="enabled" label="Calling enabled" defaultChecked={config.enabled ?? true} />
           <Check name="recording" label="Record calls (announced first)" defaultChecked={config.recordingEnabled ?? true} />
           <Check name="inbound" label="Answer calls to this number" defaultChecked={config.inboundEnabled ?? true} />
+          <Check name="ask_company" label="Ask callers which company they're with (leads are businesses)" defaultChecked={config.askCompany ?? true} />
         </div>
         {onTelnyx ? (
           config.telnyxCallbackUrl ? (

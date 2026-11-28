@@ -603,3 +603,20 @@ empty; `PLIVO_AUTH_ID_REQUIRED` / the first-save token check apply only to Plivo
 still calls from its own number, which must be a number on the Telnyx account attached to the Voice API
 application. The India route (`PLIVO_INDIA_TENANTS`) is unchanged: +91 numbers of listed tenants go
 through the Indian Plivo account.
+
+**T6 — homeowner chatbots and a deaf call (live 2026-11-28, HomeOwners on Telnyx).** Two form calls showed:
+(1) "which company are you with?" and "our marketing expert" said to homeowners; (2) "The context I have
+doesn't say whether same-day service is available" said aloud; (3) mid-call the caller went unheard, then
+two "I didn't catch that" and a hang-up. Changes:
+- Per chatbot (migration 0083, AI calling form): `expert_title` (default "marketing expert") names who
+  answers what she can't, in the fallback lines, her own hand-off and the model's instructions;
+  `ask_company` (default yes) -- no: the details check asks only for a name. Defaults keep every existing
+  chatbot as it was.
+- A reply or sentence that talks about "the context" / "knowledge base" is never spoken: early speech
+  stops and the turn is a miss (her hand-off line instead). The model is told never to mention it.
+- If the speech listener stops while the call is up (it ended or raised), the call ends with an error log
+  (`realtime_listener_lost`) instead of going on deaf. Every streamed call logs `realtime_call_finished`
+  with caller frames, listener events and when the listener last reported -- the next deaf call says
+  whether the caller's audio stopped arriving or the listener stopped reporting.
+Configuration, not code: HomeOwners' business name (it said "iSN Global Solutions") and its own
+qualification questions (it fell back to the default set, written for roofing companies).

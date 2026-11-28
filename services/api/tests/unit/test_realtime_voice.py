@@ -785,3 +785,37 @@ async def test_a_cut_off_turn_with_nothing_after_it_is_still_answered() -> None:
     ("I want to know about Google Ads.", False)])
 def test_what_counts_as_cut_off(text: str, cut_off: bool) -> None:
     assert realtime.is_cut_off(text) is cut_off
+
+
+class _BrokenFlux(_Flux):
+    async def events(self) -> AsyncIterator[realtime.Heard]:
+        while (heard := await self.queue.get()) is not None:
+            if heard.event == "boom":
+                raise ConnectionError("flux went away")
+            yield heard
+
+
+@pytest.mark.parametrize("how", ["ended", "raised"])
+async def test_if_she_can_no_longer_hear_them_the_call_ends_instead_of_going_on_deaf(
+        how: str) -> None:
+    """Live 2026-11-28 (Telnyx, HomeOwners): mid-call she stopped hearing the caller, then
+    said "I didn't catch that" twice and hung up. A listener that's gone never goes unnoticed."""
+    async def brain(speech: str, speak: realtime.Speaking) -> tuple[str, bool]:
+        return "Sure.", False
+
+    plivo, flux, voice = _Plivo(), _BrokenFlux(), _Voice()
+
+    async def record(text: str, latency_ms: int) -> None:
+        return None
+
+    call = realtime.RealtimeCall(plivo, flux, voice, brain, opening="Hi.", record=record,
+                                 opening_wait=0, silence_seconds=30)
+    task = asyncio.create_task(call.run())
+    plivo.push(event="start", start={"streamId": "s-1"})
+    await _until(lambda: len(plivo.events("checkpoint")) == 1)
+    if how == "ended":
+        flux.queue.put_nowait(None)
+    else:
+        flux.hear("boom")
+    await asyncio.wait_for(task, 1)
+    assert plivo.closed

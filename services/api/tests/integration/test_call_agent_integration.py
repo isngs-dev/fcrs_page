@@ -2940,3 +2940,40 @@ async def test_a_new_chatbot_on_telnyx_saves_its_call_settings_without_plivo_key
     no_token = await client.put("/admin/outreach/call-config", cookies=_cookie(a),
                                 json=body | {"plivo_auth_id": "MAYYYYYYYYYYYYYYYYYY"})
     assert no_token.status_code == 422  # first Plivo save still needs the token
+
+
+async def test_a_homeowner_chatbot_names_its_own_expert_and_never_asks_for_a_company(
+        env: dict[str, Any]) -> None:
+    """Live 2026-11-28 (HomeOwners): a homeowner was asked "which company are you with?" and
+    told "our marketing expert" would answer. Each chatbot now says who answers and whether
+    a company is asked for; another chatbot's calls are unchanged."""
+    client, db, a, b = env["client"], env["db"], env["a"], env["b"]
+    current = (await client.get("/admin/outreach/call-config", cookies=_cookie(a))).json()
+    assert current["expert_title"] == "marketing expert" and current["ask_company"] is True
+    from api.call_agent.routes import CallConfigBody
+
+    body = {k: current[k] for k in CallConfigBody.model_fields
+            if current.get(k) is not None}
+    body |= {"plivo_auth_id": current["plivo_auth_id"] or "MAYYYYYYYYYYYYYYYYYY",
+             # its own number: the fixture's may be registered to another test's workspace
+             "from_number": f"+1305{int(uuid4().hex[:6], 16) % 10_000_000:07d}",
+             "expert_title": "roofing specialist", "ask_company": False}
+    saved = await client.put("/admin/outreach/call-config", json=body, cookies=_cookie(a))
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["expert_title"] == "roofing specialist"
+    assert saved.json()["ask_company"] is False
+    other = (await client.get("/admin/outreach/call-config", cookies=_cookie(b))).json()
+    assert other["expert_title"] == "marketing expert" and other["ask_company"] is True
+
+    call_id, _ = await _form_call(env, a, {"service": "Roof Repair"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    asked = service.spoken_text(await _say(env, call_id, "yes"))
+    assert asked == "Great. " + script.details_line("Jane Doe", None, ask_company=False)
+    assert "company" not in asked
+    again = service.spoken_text(await _say(env, call_id, "no"))
+    assert again == script.details_fix_line(False)
+    blank = await client.put("/admin/outreach/call-config", cookies=_cookie(a),
+                             json=body | {"expert_title": " "})
+    assert blank.status_code == 422  # someone always takes the question
+    assert await db.fetchval("SELECT count(*) FROM call_sessions WHERE tenant_id = $1 AND "
+                             "call_id = $2", b, call_id) == 0

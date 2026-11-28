@@ -269,7 +269,8 @@ async def place_call(db: Database, claims: AuthClaims, task: ClaimedTask, run_id
         written["question"] = script.OTHER_SERVICE_QUESTION
     if details:
         written["details"] = script.details_line(contact.name if contact else None,
-                                                 details.get("company"))
+                                                 details.get("company"),
+                                                 ask_company=config.ask_company)
     written["first_name"] = _first_name(contact)
     written["who"] = script.who(contact.name, details.get("company")) if contact else None
     # Plan 1.2: the questions she may ask on this call -- read now, never mid-call.
@@ -927,7 +928,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             state.stage, state.after_details = "details_check", asked  # or a plain "no"
             if kind == "no":
                 state.who = None
-                return await say(script.DETAILS_FIX_LINE)
+                return await say(script.details_fix_line(config.ask_company))
             last = next((text for role, text in reversed(state.history)
                          if role == "assistant"), None)
             if last:
@@ -1078,6 +1079,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                                             assistant=f"Rebecca, the AI assistant at "
                                                       f"{config.company_name}",
                                             handoff=True, caller_name=state.first_name,
+                                            expert=config.expert_title,
                                             model=None if calls else config.voice_model,
                                             about_caller=about, can_book=not held,
                                             **({"llm_config": calls} if calls else {}))
@@ -1092,7 +1094,7 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             else final_check() if state.stage == "confirming" else None)
     if reply is None or isinstance(reply, MissReply):
         state.misses += 1  # her own words for this question, else a rotating fallback
-        reply = str(reply) if reply else script.miss_line(state.misses)
+        reply = str(reply) if reply else script.miss_line(state.misses, config.expert_title)
         if has_booking and session.contact_id:  # the team sees it before their call
             await memory.remember(db, claims, session.contact_id, channel="call", kind="asked",
                                   text=speech)

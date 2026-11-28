@@ -39,13 +39,17 @@ class CallConfig:
     recording_retention_days: int = 90  # A9 H8
     # Emailed "please call this lead" after a call they didn't pick up (2026-11-16).
     missed_call_alert_emails: list[str] = field(default_factory=list)
+    # Who a question she can't answer goes to, and whether callers are asked for their
+    # company -- no for chatbots whose callers are people, not businesses (2026-11-28).
+    expert_title: str = "marketing expert"
+    ask_company: bool = True
 
 
 _CONFIG_COLUMNS = (
     "SELECT enabled, plivo_auth_id, from_number, transfer_number, company_name, voice, "
     "voice_model, voicemail_policy, voicemail_message, max_call_seconds, max_concurrent_calls, "
-    "recording_enabled, inbound_enabled, recording_retention_days, missed_call_alert_emails "
-    "FROM tenant_call_agent_configs WHERE tenant_id = $1"
+    "recording_enabled, inbound_enabled, recording_retention_days, missed_call_alert_emails, "
+    "expert_title, ask_company FROM tenant_call_agent_configs WHERE tenant_id = $1"
 )
 
 
@@ -95,12 +99,12 @@ async def upsert_call_config(db: Database, claims: AuthClaims, *, values: dict[s
         "plivo_auth_token_ciphertext, from_number, transfer_number, company_name, voice, "
         "voice_model, voicemail_policy, voicemail_message, max_call_seconds, "
         "max_concurrent_calls, recording_enabled, updated_by, inbound_enabled, "
-        "recording_retention_days, missed_call_alert_emails) "
+        "recording_retention_days, missed_call_alert_emails, expert_title, ask_company) "
         # Keep the stored token when none is sent (the NOT NULL check runs on the
         # proposed row, before ON CONFLICT -- so coalesce it here, not only below).
         "SELECT $1, $2, $3, coalesce($4, (SELECT plivo_auth_token_ciphertext FROM "
         "tenant_call_agent_configs WHERE tenant_id = $1)), $5, $6, $7, $8, $9, $10, $11, $12, "
-        "$13, $14, $15, $16, $17, $18 "
+        "$13, $14, $15, $16, $17, $18, $20, $21 "
         "WHERE $4::text IS NOT NULL OR NOT $19::boolean OR EXISTS (SELECT 1 FROM "
         "tenant_call_agent_configs WHERE tenant_id = $1) "
         "ON CONFLICT (tenant_id) DO UPDATE SET enabled = EXCLUDED.enabled, "
@@ -116,7 +120,9 @@ async def upsert_call_config(db: Database, claims: AuthClaims, *, values: dict[s
         "recording_enabled = EXCLUDED.recording_enabled, updated_by = EXCLUDED.updated_by, "
         "inbound_enabled = EXCLUDED.inbound_enabled, "
         "recording_retention_days = EXCLUDED.recording_retention_days, "
-        "missed_call_alert_emails = EXCLUDED.missed_call_alert_emails, updated_at = now()",
+        "missed_call_alert_emails = EXCLUDED.missed_call_alert_emails, "
+        "expert_title = EXCLUDED.expert_title, ask_company = EXCLUDED.ask_company, "
+        "updated_at = now()",
         claims.tenant_id, values["enabled"], values["plivo_auth_id"], ciphertext,
         values["from_number"], values["transfer_number"], values["company_name"],
         values["voice"], values["voice_model"], values["voicemail_policy"],
@@ -124,6 +130,7 @@ async def upsert_call_config(db: Database, claims: AuthClaims, *, values: dict[s
         values["max_concurrent_calls"], values["recording_enabled"], claims.subject,
         values.get("inbound_enabled", True), values.get("recording_retention_days", 90),
         list(values.get("missed_call_alert_emails") or []), token_required,
+        values.get("expert_title") or "marketing expert", values.get("ask_company", True),
     )
     if str(tag).endswith(" 0"):
         raise ValidationError("The Plivo auth token is required.", code="CALL_CONFIG_INVALID")

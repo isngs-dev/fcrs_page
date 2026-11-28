@@ -17,7 +17,7 @@ from common.errors import NotFoundError, ValidationError
 from common.logging import get_logger
 from common.phone import to_e164
 from fastapi import APIRouter, Depends, Request, Response, WebSocket
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from api.agents.dispatch import system_claims
 from api.agents.repository import contact_visible
@@ -61,6 +61,17 @@ class CallConfigBody(BaseModel):
     recording_retention_days: int = Field(default=90, ge=1, le=3650)  # A9 H8
     # Emailed "please call this lead" after each call they didn't pick up (2026-11-16).
     missed_call_alert_emails: list[EmailStr] = Field(default_factory=list, max_length=5)
+    # "our {expert_title} will be able to answer that" (2026-11-28)
+    expert_title: str = Field(default="marketing expert", max_length=40)
+    ask_company: bool = True  # no: callers are people (homeowners), not businesses
+
+    @field_validator("expert_title")
+    @classmethod
+    def _someone_answers(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("say who answers the questions Rebecca can't")
+        return value
 
 
 def _config_out(config: repo.CallConfig | None, tenant_id: str | None) -> dict[str, Any]:

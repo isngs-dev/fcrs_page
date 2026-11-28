@@ -852,3 +852,19 @@ def test_a_time_said_alone_is_read_and_the_retry_line_gives_an_example() -> None
     ("a different time", None), ("Yes, that's right.", None), ("one moment", None)])
 def test_a_different_one_at_the_final_check_is_a_new_email(text: str, change: str | None) -> None:
     assert script.email_change(text) == change
+
+
+def test_a_chatbot_names_its_own_expert_and_can_skip_the_company_question() -> None:
+    """Live 2026-11-28 (HomeOwners): a homeowner was asked which company they're with and
+    told "our marketing expert" would answer -- the B2B wording of another chatbot."""
+    assert script.miss_line(1) == script.MISS_LINES[0]  # unchanged where nothing is set
+    for n in (1, 2, 3):
+        line = script.miss_line(n, "roofing specialist")
+        assert "roofing specialist" in line and "marketing" not in line
+    assert script.details_line("Jane Doe", None, ask_company=False) == (
+        "Just to make sure I have your details right, you're Jane Doe?")
+    assert script.details_line(None, None, ask_company=False) == "Could I get your name?"
+    assert script.details_line("Jane Doe", "Lee Roofing", ask_company=False) == (
+        script.details_line("Jane Doe", "Lee Roofing"))  # a company they gave is still confirmed
+    assert script.details_fix_line(True) == script.DETAILS_FIX_LINE
+    assert "company" not in script.details_fix_line(False)

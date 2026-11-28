@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from email_validator import EmailNotValidError, validate_email
 
-from api.voice_agent.agent import _GOODBYE_RE, _PERSON_RE
+from api.voice_agent.agent import _GOODBYE_RE, _PERSON_RE, DEFAULT_EXPERT
 
 Kind = Literal["recording_objection", "opt_out", "wrong_number", "robot", "who", "why", "hold",
                "callback",
@@ -340,9 +340,10 @@ MISS_LINES = (
 MISS_LINE = MISS_LINES[0]
 
 
-def miss_line(misses: int) -> str:
-    """The fallback hand-off for the ``misses``-th question she couldn't answer (1-based)."""
-    return MISS_LINES[(max(misses, 1) - 1) % len(MISS_LINES)]
+def miss_line(misses: int, expert: str = DEFAULT_EXPERT) -> str:
+    """The fallback hand-off for the ``misses``-th question she couldn't answer (1-based),
+    naming the chatbot's own expert (2026-11-28: a homeowner heard "marketing expert")."""
+    return MISS_LINES[(max(misses, 1) - 1) % len(MISS_LINES)].replace(DEFAULT_EXPERT, expert)
 LINK_LINE = ("I'll have our team send you a link to pick a time that suits you. Thanks, goodbye.")
 NO_SLOTS_LINE = ("I don't see an open time right now, so I'll have our team reach out to find one. "
                  "Thanks, goodbye.")
@@ -658,6 +659,10 @@ def needs_asking(details: dict[str, str]) -> bool:
 DETAILS_FIX_LINE = "Sorry about that. What's your name, and the company you're with?"
 
 
+def details_fix_line(ask_company: bool) -> str:
+    return DETAILS_FIX_LINE if ask_company else "Sorry about that. What's your name?"
+
+
 def service_words(details: dict[str, str]) -> str | None:
     """The service(s) they picked, as said aloud ("seo, google_ads" -> "SEO and google ads");
     ``None`` for none or "Other" -- that's never named as their need."""
@@ -682,18 +687,20 @@ def form_about(details: dict[str, str]) -> str:
     return f"You picked {about} on our form." if about else ""
 
 
-def details_line(name: str | None, company: str | None) -> str:
+def details_line(name: str | None, company: str | None, *, ask_company: bool = True) -> str:
     """Right after "yes, now's good": the name and company from the form confirmed, or asked
-    for when the form didn't have them."""
+    for when the form didn't have them. ``ask_company=False``: a chatbot whose callers are
+    people, not businesses (homeowners, 2026-11-28) -- a company is never asked for."""
     known = who(name, None)
     if known and company:
         return f"Just to make sure I have your details right, you're {known} from {company}?"
     if known:
-        return (f"Just to make sure I have your details right, you're {known}? "
-                "And which company are you with?")
+        return (f"Just to make sure I have your details right, you're {known}?"
+                + (" And which company are you with?" if ask_company else ""))
     if company:
         return f"Could I get your name? I have you down as being with {company}."
-    return "Could I get your name, and the company you're with?"
+    return ("Could I get your name, and the company you're with?" if ask_company
+            else "Could I get your name?")
 
 
 # The lead-in in any case; the name itself capitalised (speech-to-text capitalises names).

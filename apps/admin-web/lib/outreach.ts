@@ -166,6 +166,8 @@ export interface CallConfig {
   inboundEnabled?: boolean;
   recordingRetentionDays?: number;
   missedCallAlertEmails?: string[];
+  expertTitle?: string;
+  askCompany?: boolean;
   phoneProvider?: "plivo" | "telnyx";
   telnyxCallbackUrl?: string;
   inboundAnswerUrl?: string;
