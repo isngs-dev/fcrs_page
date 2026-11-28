@@ -620,3 +620,11 @@ two "I didn't catch that" and a hang-up. Changes:
   whether the caller's audio stopped arriving or the listener stopped reporting.
 Configuration, not code: HomeOwners' business name (it said "iSN Global Solutions") and its own
 qualification questions (it fell back to the default set, written for roofing companies).
+
+**T6a — the booked time as gibberish on Indian numbers (live 2026-11-28, Roof-Engine).** The transcript
+text was right ("Monday, November 30 at 2 PM Eastern time"); the audio wasn't. Both routes use the same
+voice (ElevenLabs `eleven_flash_v2_5`). Flash v2.5 picks the language from the text when none is given,
+and ElevenLabs' normalization guide lists times like "9:23 AM" among what Flash misreads. Indian testers'
+names sit in those sentences. Every line now goes to the voice with `language_code: "en"` (not sent to
+`multilingual_v2`, which doesn't take it), with dates and times already in words (`realtime.speakable`:
+"November thirtieth at one thirty p.m."). The transcript keeps the written form.

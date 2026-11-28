@@ -18,6 +18,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -218,16 +219,66 @@ class FluxListener:
         await self._ws.close()
 
 
+_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+         "fourteen fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = {2: "twenty", 3: "thirty", 4: "forty", 5: "fifty"}
+_ORDINAL = {"one": "first", "two": "second", "three": "third", "five": "fifth",
+            "eight": "eighth", "nine": "ninth", "twelve": "twelfth"}
+_MONTHS = ("January|February|March|April|May|June|July|August|September|October|November"
+           "|December")
+_CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([AaPp])\.?\s?[Mm]\b\.?")
+_MONTH_DAY = re.compile(rf"\b({_MONTHS}) (\d{{1,2}})\b(?!:)")
+
+
+def _number(n: int) -> str:
+    """0-59 in words."""
+    if n < 20:
+        return _ONES[n]
+    tens, ones = divmod(n, 10)
+    return _TENS[tens] + (f"-{_ONES[ones]}" if ones else "")
+
+
+def _ordinal(n: int) -> str:
+    words = _number(n)
+    head, _, last = words.rpartition("-")
+    last = _ORDINAL.get(last, last[:-1] + "ieth" if last.endswith("y") else last + "th")
+    return f"{head}-{last}" if head else last
+
+
+def _clock(match: re.Match[str]) -> str:
+    hour, minutes = int(match[1]), int(match[2] or 0)
+    if not 1 <= hour <= 12 or minutes > 59:
+        return match[0]
+    said = _number(hour)
+    if minutes:
+        said += f" oh {_number(minutes)}" if minutes < 10 else f" {_number(minutes)}"
+    return f"{said} {match[3].lower()}.m."
+
+
+def speakable(text: str) -> str:
+    """Dates and times in words for the voice ("November 30 at 1:30 PM" -> "November thirtieth
+    at one thirty p.m."): Flash v2.5 misreads them (live 2026-11-28; ElevenLabs' normalization
+    guide). The transcript keeps the written form."""
+    text = _MONTH_DAY.sub(lambda m: (f"{m[1]} {_ordinal(int(m[2]))}"
+                                     if 1 <= int(m[2]) <= 31 else m[0]), text)
+    return _CLOCK.sub(_clock, text)
+
+
 def elevenlabs_voice(client: httpx.AsyncClient, api_key: str, voice_id: str,
                      model: str) -> Voice:
-    """ElevenLabs streaming speech, already in the phone's format (mu-law 8 kHz)."""
+    """ElevenLabs streaming speech, already in the phone's format (mu-law 8 kHz). Always
+    English: left to guess, Flash v2.5 switched language mid-sentence around an Indian name
+    and the booked time came out as gibberish (live 2026-11-28)."""
 
     async def speak(text: str) -> AsyncIterator[bytes]:
         async with client.stream(
                 "POST", ELEVENLABS_URL.format(voice=voice_id),
                 params={"output_format": "ulaw_8000"},
                 headers={"xi-api-key": api_key},
-                json={"text": text, "model_id": model}) as response:
+                # Multilingual v2 takes no language_code (ElevenLabs' API reference).
+                json={"text": speakable(text), "model_id": model,
+                      **({} if "multilingual_v2" in model else {"language_code": "en"})},
+                ) as response:
             response.raise_for_status()
             async for chunk in response.aiter_bytes():
                 if chunk:

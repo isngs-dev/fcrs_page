@@ -819,3 +819,55 @@ async def test_if_she_can_no_longer_hear_them_the_call_ends_instead_of_going_on_
         flux.hear("boom")
     await asyncio.wait_for(task, 1)
     assert plivo.closed
+
+
+# -- Live 2026-11-28 (Roof-Engine, Indian numbers): the booked date and time came out as
+# gibberish. Flash v2.5 guesses the language from the text (an Indian name in the sentence) and
+# misreads "9:23 AM"-style times (ElevenLabs' normalization guide); her lines go out in English,
+# dates and times already in words.
+
+
+@pytest.mark.parametrize(("written", "spoken"), [
+    ("Monday, November 30 at 2 PM Eastern time.",
+     "Monday, November thirtieth at two p.m. Eastern time."),
+    ("Wednesday, November 25 at 1:30 PM Eastern.",
+     "Wednesday, November twenty-fifth at one thirty p.m. Eastern."),
+    ("at 9:05 AM", "at nine oh five a.m."),
+    ("at 12:00 PM", "at twelve p.m."),
+    ("on December 1 at 11 am", "on December first at eleven a.m."),
+    ("We repair roofs for $200 in 3 days.", "We repair roofs for $200 in 3 days."),
+])
+def test_dates_and_times_go_to_the_voice_in_words(written: str, spoken: str) -> None:
+    assert realtime.speakable(written) == spoken
+
+
+async def test_her_voice_is_asked_for_english_and_hears_the_words() -> None:
+    import httpx
+
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=b"\xff" * 160)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        voice = realtime.elevenlabs_voice(client, "k", "v", "eleven_flash_v2_5")
+        audio = [chunk async for chunk in voice("Thanks, Harshal. That's at 2 PM.")]
+    assert audio == [b"\xff" * 160]
+    assert seen == [{"text": "Thanks, Harshal. That's at two p.m.",
+                     "model_id": "eleven_flash_v2_5", "language_code": "en"}]
+
+
+async def test_multilingual_v2_is_never_sent_a_language_code() -> None:
+    import httpx
+
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=b"\xff")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        voice = realtime.elevenlabs_voice(client, "k", "v", "eleven_multilingual_v2")
+        _ = [chunk async for chunk in voice("Hi.")]
+    assert "language_code" not in seen[0]
