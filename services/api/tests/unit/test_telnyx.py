@@ -419,6 +419,23 @@ def test_only_listed_tenants_with_every_key_and_the_stream_get_telnyx(
     get_api_settings.cache_clear()
 
 
+def test_a_star_puts_every_chatbot_on_telnyx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Owner, 2026-11-28: every chatbot calls through Telnyx -- ``*`` in both lists covers
+    chatbots created later too (the keys are still required)."""
+    _, public = _keys()
+    full = {"TELNYX_TENANTS": "*", "TELNYX_API_KEY": _fake_key(),
+            "TELNYX_PUBLIC_KEY": public, "TELNYX_CONNECTION_ID": "conn-1",
+            "REALTIME_VOICE_TENANTS": "*",
+            "DEEPGRAM_API_KEY": _fake_key(), "ELEVENLABS_API_KEY": _fake_key(),
+            "ELEVENLABS_VOICE_ID": "voice-1"}
+    _settings(monkeypatch, **full)
+    assert telnyx.enabled_for("any-chatbot") and telnyx.enabled_for("another-one")
+    assert not telnyx.enabled_for(None)
+    _settings(monkeypatch, **{k: v for k, v in full.items() if k != "TELNYX_API_KEY"})
+    assert not telnyx.enabled_for("any-chatbot")
+    get_api_settings.cache_clear()
+
+
 def test_the_stream_and_event_urls_carry_the_calls_ticket(
         monkeypatch: pytest.MonkeyPatch) -> None:
     _settings(monkeypatch)

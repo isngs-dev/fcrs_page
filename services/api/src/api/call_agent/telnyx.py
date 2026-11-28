@@ -53,7 +53,8 @@ def enabled_for(tenant_id: str | None) -> bool:
     streaming setup (speech keys) must be on for the tenant too."""
     s = get_api_settings()
     tenants = {t.strip() for t in (s.telnyx_tenants or "").split(",") if t.strip()}
-    return bool(tenant_id and tenant_id in tenants and s.telnyx_api_key and s.telnyx_public_key
+    listed = "*" in tenants or tenant_id in tenants  # "*": every chatbot (owner, 2026-11-28)
+    return bool(tenant_id and listed and s.telnyx_api_key and s.telnyx_public_key
                 and s.telnyx_connection_id and realtime.enabled_for(tenant_id))
 
 

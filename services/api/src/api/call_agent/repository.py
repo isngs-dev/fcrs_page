@@ -84,8 +84,9 @@ async def get_auth_token(db: Database, tenant_id: str) -> str | None:
 
 
 async def upsert_call_config(db: Database, claims: AuthClaims, *, values: dict[str, Any],
-                             auth_token: str | None) -> None:
-    """Full upsert; ``auth_token=None`` keeps the stored token (required on first save)."""
+                             auth_token: str | None, token_required: bool = True) -> None:
+    """Full upsert; ``auth_token=None`` keeps the stored token (required on a Plivo chatbot's
+    first save; a chatbot on Telnyx has none -- ``token_required=False``, 2026-11-28)."""
     _reject_global(claims)
     ciphertext = (_box().encrypt(auth_token, aad=str(claims.tenant_id).encode())
                   if auth_token else None)
@@ -100,8 +101,8 @@ async def upsert_call_config(db: Database, claims: AuthClaims, *, values: dict[s
         "SELECT $1, $2, $3, coalesce($4, (SELECT plivo_auth_token_ciphertext FROM "
         "tenant_call_agent_configs WHERE tenant_id = $1)), $5, $6, $7, $8, $9, $10, $11, $12, "
         "$13, $14, $15, $16, $17, $18 "
-        "WHERE $4::text IS NOT NULL OR EXISTS (SELECT 1 FROM tenant_call_agent_configs "
-        "WHERE tenant_id = $1) "
+        "WHERE $4::text IS NOT NULL OR NOT $19::boolean OR EXISTS (SELECT 1 FROM "
+        "tenant_call_agent_configs WHERE tenant_id = $1) "
         "ON CONFLICT (tenant_id) DO UPDATE SET enabled = EXCLUDED.enabled, "
         "plivo_auth_id = EXCLUDED.plivo_auth_id, "
         "plivo_auth_token_ciphertext = coalesce($4, tenant_call_agent_configs"
@@ -122,7 +123,7 @@ async def upsert_call_config(db: Database, claims: AuthClaims, *, values: dict[s
         values["voicemail_message"], values["max_call_seconds"],
         values["max_concurrent_calls"], values["recording_enabled"], claims.subject,
         values.get("inbound_enabled", True), values.get("recording_retention_days", 90),
-        list(values.get("missed_call_alert_emails") or []),
+        list(values.get("missed_call_alert_emails") or []), token_required,
     )
     if str(tag).endswith(" 0"):
         raise ValidationError("The Plivo auth token is required.", code="CALL_CONFIG_INVALID")

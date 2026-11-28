@@ -2126,8 +2126,8 @@ async def test_the_telnyx_stream_says_the_opening_and_hangs_up_when_she_is_done(
 
     class _Call:
         def __init__(self, socket: Any, listener: Any, voice: Any, brain: Any, *, opening: str,
-                     record: Any, prefetch: Any) -> None:
-            seen.update(socket=socket, opening=opening)
+                     record: Any, prefetch: Any, opening_wait: float) -> None:
+            seen.update(socket=socket, opening=opening, opening_wait=opening_wait)
             assert callable(prefetch)  # 2026-11-19: early words start the knowledge lookup
 
         async def run(self) -> None:
@@ -2152,6 +2152,7 @@ async def test_the_telnyx_stream_says_the_opening_and_hangs_up_when_she_is_done(
     assert ws.accepted and seen["ran"]
     assert isinstance(seen["socket"], telnyx.TelnyxSocket)
     assert seen["opening"].startswith("Hi Jane, Rebecca here") and _HOOK in seen["opening"]
+    assert seen["opening_wait"] == realtime.OPENING_WAIT  # we called them: wait for their hello
     assert fake.calls[-1] == ("hangup", {"call_uuid": "v2:call-1"})
     row = await _row(env, call_id)
     # Live 2026-11-20: Telnyx connects the stream when it starts ringing -- that isn't the
@@ -2910,3 +2911,32 @@ async def test_with_incoming_calls_off_the_number_still_offers_the_opt_out(
     assert fake.calls[-1] == ("answer", {"call_uuid": "v2:cb-1",
                                          "client_state": "callback:answered"})
     assert await db.fetchval("SELECT count(*) FROM call_sessions WHERE tenant_id = $1", a) == 0
+
+
+async def test_a_new_chatbot_on_telnyx_saves_its_call_settings_without_plivo_keys(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Owner, 2026-11-28: every chatbot calls through Telnyx; the form has no Plivo fields,
+    so saving must not need a Plivo Auth ID or token. A Plivo chatbot still needs both."""
+    client, a, b, db = env["client"], env["a"], env["b"], env["db"]
+    _on_telnyx(env, monkeypatch, "*")  # every chatbot on Telnyx...
+    await db.execute("DELETE FROM tenant_call_agent_configs WHERE tenant_id = $1", a)
+    number = f"+1305{int(uuid4().hex[:6], 16) % 10_000_000:07d}"
+    body = {"plivo_auth_id": "", "from_number": number, "company_name": "Acme Roofing"}
+    saved = await client.put("/admin/outreach/call-config", json=body, cookies=_cookie(a))
+    assert saved.status_code == 200, saved.text
+    got = saved.json()
+    assert got["configured"] and got["phone_provider"] == "telnyx" and got["from_number"] == number
+    assert await db.fetchval("SELECT plivo_auth_token_ciphertext FROM tenant_call_agent_configs "
+                             "WHERE tenant_id = $1", a) is None
+    assert (await client.get("/admin/outreach/call-config",
+                             cookies=_cookie(b))).json()["from_number"] != number  # B's own
+
+    monkeypatch.setenv("TELNYX_TENANTS", b)  # ...now only B: A is back on Plivo
+    get_api_settings.cache_clear()
+    again = await client.put("/admin/outreach/call-config", json=body, cookies=_cookie(a))
+    assert again.status_code == 422
+    assert again.json()["error_code"] == "PLIVO_AUTH_ID_REQUIRED"
+    await db.execute("DELETE FROM tenant_call_agent_configs WHERE tenant_id = $1", a)
+    no_token = await client.put("/admin/outreach/call-config", cookies=_cookie(a),
+                                json=body | {"plivo_auth_id": "MAYYYYYYYYYYYYYYYYYY"})
+    assert no_token.status_code == 422  # first Plivo save still needs the token

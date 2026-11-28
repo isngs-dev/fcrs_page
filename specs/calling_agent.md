@@ -594,3 +594,12 @@ memory note ("Cancelled their call on <time>.") so later calls and emails know. 
 call on <time> is cancelled. If you'd like a new time later, just call or reply to our email. Is there
 anything else I can help with?". Not covered: an inbound call to the Indian Plivo number (it is not
 registered to a tenant, and its webhooks would be signed with the India account's token).
+
+**D-T2 amended — every chatbot on Telnyx (owner, 2026-11-28).** `*` in `TELNYX_TENANTS` and
+`REALTIME_VOICE_TENANTS` puts every chatbot (tenant), including ones created later, on Telnyx and the
+stream; a named list still works as before, and the platform keys are still required. A chatbot on
+Telnyx saves its call settings without a Plivo Auth ID or token (migration 0082: the token column may be
+empty; `PLIVO_AUTH_ID_REQUIRED` / the first-save token check apply only to Plivo chatbots). Each chatbot
+still calls from its own number, which must be a number on the Telnyx account attached to the Voice API
+application. The India route (`PLIVO_INDIA_TENANTS`) is unchanged: +91 numbers of listed tenants go
+through the Indian Plivo account.

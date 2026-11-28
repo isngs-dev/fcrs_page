@@ -45,7 +45,7 @@ _log = get_logger(__name__)
 
 class CallConfigBody(BaseModel):
     enabled: bool = True
-    plivo_auth_id: str = Field(min_length=5, max_length=64)
+    plivo_auth_id: str = Field(default="", max_length=64)  # Plivo chatbots only (2026-11-28)
     plivo_auth_token: str | None = Field(default=None, max_length=200)  # write-only
     from_number: str = Field(min_length=7, max_length=30)
     transfer_number: str | None = Field(default=None, max_length=30)
@@ -96,6 +96,10 @@ def _mount(r: APIRouter, admin: Callable[..., Any], staff: Callable[..., Any]) -
     async def put_config(body: CallConfigBody, request: Request,
                          claims: AuthClaims = Depends(admin)) -> dict[str, Any]:  # noqa: B008
         values = body.model_dump(exclude={"plivo_auth_token"})
+        # A chatbot on Telnyx (platform keys) has no Plivo account (owner, 2026-11-28).
+        on_plivo = not telnyx.enabled_for(claims.tenant_id)
+        if on_plivo and len(body.plivo_auth_id.strip()) < 5:
+            raise ValidationError("The Plivo Auth ID is required.", code="PLIVO_AUTH_ID_REQUIRED")
         values["missed_call_alert_emails"] = sorted(
             {str(e).strip().lower() for e in body.missed_call_alert_emails})
         for key in ("from_number", "transfer_number"):
@@ -111,7 +115,8 @@ def _mount(r: APIRouter, admin: Callable[..., Any], staff: Callable[..., Any]) -
             repo.validate_voicemail(body.voicemail_message, body.company_name)
         db = request.app.state.db
         await repo.register_number(db, claims, values["from_number"])  # A7 N1 (409 if taken)
-        await repo.upsert_call_config(db, claims, values=values, auth_token=body.plivo_auth_token)
+        await repo.upsert_call_config(db, claims, values=values, auth_token=body.plivo_auth_token,
+                                      token_required=on_plivo)
         await record_audit(db, claims, action="outreach.call_config_updated",
                            target_type="tenant_call_agent_configs", target_id=claims.tenant_id,
                            metadata={"token_changed": body.plivo_auth_token is not None,

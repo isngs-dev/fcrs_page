@@ -74,7 +74,8 @@ def _just_hello(text: str) -> bool:
 def enabled_for(tenant_id: str | None) -> bool:
     s = get_api_settings()
     tenants = {t.strip() for t in (s.realtime_voice_tenants or "").split(",") if t.strip()}
-    return bool(tenant_id and tenant_id in tenants and s.deepgram_api_key
+    listed = "*" in tenants or tenant_id in tenants  # "*": every chatbot (owner, 2026-11-28)
+    return bool(tenant_id and listed and s.deepgram_api_key
                 and s.elevenlabs_api_key and s.elevenlabs_voice_id)
 
 
