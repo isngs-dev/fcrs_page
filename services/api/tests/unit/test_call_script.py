@@ -868,3 +868,49 @@ def test_a_chatbot_names_its_own_expert_and_can_skip_the_company_question() -> N
         script.details_line("Jane Doe", "Lee Roofing"))  # a company they gave is still confirmed
     assert script.details_fix_line(True) == script.DETAILS_FIX_LINE
     assert "company" not in script.details_fix_line(False)
+
+
+# -- Roof-Engine call review (2026-11-28) -----------------------------------------------------
+
+
+@pytest.mark.parametrize(("text", "confirms"), [
+    ("No. It's the right email.", True),  # live 11-24: re-asked for the email
+    ("No. That's a great great email.", True),  # live 11-24
+    ("Yeah. That's my email.", True),
+    ("the email is correct", True),
+    ("change my email", False),
+    ("no, use my work email instead", False),
+    ("a different email please", False),
+    ("send it to my other email too", False),
+])
+def test_a_confirmed_email_is_a_yes_even_after_a_leading_no(text: str, confirms: bool) -> None:
+    assert script.confirms_email(text) is confirms
+
+
+@pytest.mark.parametrize(("text", "thanks"), [
+    ("Yep. Thank you.", True),  # live 11-28: "Great! What questions can I answer?"
+    ("No. It's fine. Thank you so much.", True),
+    ("thanks", True),
+    ("Thank you, how much is the setup?", False),
+    ("thanks but what about Meta ads", False),
+])
+def test_a_thank_you_closes(text: str, thanks: bool) -> None:
+    assert script.thanks(text) is thanks
+
+
+@pytest.mark.parametrize(("text", "hello"), [
+    ("Hello?", True), ("Hello.", True), ("Hello? Hello?", True), ("Hi.", True),
+    ("Hello, I want to know about Meta", False), ("hello there how much", False),
+])
+def test_a_bare_hello_mid_call(text: str, hello: bool) -> None:
+    assert script.just_hello(text) is hello
+
+
+def test_a_hello_mid_call_gets_her_last_question_again_not_a_new_introduction() -> None:
+    """Live 11-23/11-24: "Hello?" got "Hi, I'm Rebecca... How can I help you today?" and her
+    question was lost."""
+    asked = "What's been the biggest hurdle so far in getting quality leads?"
+    assert script.still_here_line(asked) == f"Yes, I'm here. {asked}"
+    assert script.still_here_line(f"Yes, I'm here. {asked}") == f"Yes, I'm here. {asked}"
+    assert script.still_here_line("We run Google and Meta ads.") == (
+        "Yes, I'm here. What would you like to know?")

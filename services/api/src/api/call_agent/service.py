@@ -685,12 +685,18 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if (state.stage == "confirming" and kind in ("goodbye", "book", "other")
             and script.agrees(speech)):
         kind = "yes"
+    if state.stage == "confirming" and script.confirms_email(speech):
+        kind = "yes"  # "No. It's the right email." (live 2026-11-24, twice)
     # She already said goodbye in her own words: "mhmm" / "thank you" back ends the call
     # (live 2026-11-14: four goodbyes, then the caller hung up).
     said = next((t for r, t in reversed(state.history[:-1]) if r == "assistant"), "")
     acked_farewell = (kind in ("yes", "no", "other") and script.said_farewell(said)
                       and len(speech.split()) <= 4 and not script.is_question(speech))
     if acked_farewell:
+        kind = "goodbye"
+    # "Yep. Thank you." while talking: they're winding down (live 2026-11-28).
+    if (kind in ("yes", "no", "other") and state.stage == "talking" and not opening_question
+            and len(state.history) > 2 and script.thanks(speech)):
         kind = "goodbye"
 
     # A call is booked (earlier, or on this call): "I'll talk with your team on Monday" /
@@ -741,6 +747,9 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                        {"contact_id": session.contact_id, "channel": "call"})
             return await bye(script.OPT_OUT_LINE, "opted_out")
         return await bye(script.WRONG_NUMBER_LINE, "wrong_number")
+    # "Hello?" mid-call (the line lagged): she's here, and her question again (live 11-23/24).
+    if script.just_hello(speech) and len(state.history) > 2 and said:
+        return await say(script.still_here_line(said))
     # Cancelling their booked call (owner, 2026-11-27): moving it is offered first; it is
     # cancelled only when they still want that. A question here is answered below and the
     # booking stands.
@@ -753,14 +762,20 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
         state.stage = "talking"
         if script.wants_cancel(speech) and not moves:
             return await say(await _cancel_booking(db, claims, session, state))
-        if moves or named_time or kind in ("yes", "book"):
+        if moves or named_time or kind == "book":
             state.rescheduling, state.stage = True, "asking_time"
             if not named_time:
                 return await say(script.OTHER_TIME_LINE)  # a time they named is read below
         elif script.keeps_booking(speech):
             return await say(script.kept_line(b_at, b_tz))
-        elif kind in ("no", "not_interested", "goodbye") or script.declines_booking(speech):
+        # "I can cancel it. Or would you rather move it?" -> "Yeah." / "No." both mean cancel:
+        # they asked to (live 2026-11-28: "Yeah." was asked again, then "Please confirm").
+        elif (kind in ("yes", "no", "not_interested", "goodbye")
+              or script.declines_booking(speech)):
             return await say(await _cancel_booking(db, claims, session, state))
+        elif not script.is_question(speech) and said != script.CANCEL_CLARIFY_LINE:
+            state.stage = "cancel_check"  # a fragment ("and I'll"): asked once more
+            return await say(script.CANCEL_CLARIFY_LINE)
     if state.stage == "inbound_booked":  # "Are you calling about that, or something else?"
         state.stage = "talking"
         if kind == "yes":
@@ -807,10 +822,10 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
             await _handoff(db, claims, session, "callback_requested")
             return await bye(script.TEAM_LINE, "callback")
         return await bye(script.CALLBACK_LINE, "callback")
-    # Two questions she couldn't answer -> a person -- unless a call with the team is booked
-    # anyway: then the questions go to that call (live 2026-11-13: "Okay." ended the call).
-    if kind == "person" or (state.misses >= 2 and not has_booking):
-        await _handoff(db, claims, session, "asked_for_person" if kind == "person" else "misses")
+    # Asked for a person. (Two questions she couldn't answer tell the team instead -- below:
+    # live 2026-11-28 the next question, even a "yes" to the expert's call, ended the call.)
+    if kind == "person":
+        await _handoff(db, claims, session, "asked_for_person")
         if config.transfer_number:
             await repo.update_session(db, claims, call_id, status="transferring",
                                       outcome="escalated", transfer_reason=kind)
@@ -1056,6 +1071,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     # "Yes." to a question she wrote for this conversation is answered, with that question.
     her_own = script.her_question(said) if kind == "yes" else None
     if kind == "yes" and not her_own:  # their questions first (owner, 2026-11-20)
+        if said and not said.rstrip().endswith("?"):  # "Okay." to an answer (live 11-28)
+            return await say(script.ANYTHING_ELSE_AFTER_PAUSE)
         return await say(script.WHAT_QUESTIONS_LINE)
     if kind == "no":
         if len(state.history) <= 2:  # "no" to "is now a good time?"
@@ -1081,7 +1098,11 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
                                             handoff=True, caller_name=state.first_name,
                                             expert=config.expert_title,
                                             model=None if calls else config.voice_model,
-                                            about_caller=about, can_book=not held,
+                                            about_caller=about,
+                                            # picking a time already: a question there is a
+                                            # question (live 11-28: "what's the next step?")
+                                            can_book=not held and state.stage not in (
+                                                "asking_time", "confirming"),
                                             **({"llm_config": calls} if calls else {}))
     except Exception as exc:  # noqa: BLE001 -- the team follows up instead
         _log.warning("call answer failed", extra={"event": "call_answer_failed",
@@ -1095,6 +1116,8 @@ async def handle_turn(db: Database, claims: AuthClaims, session: repo.CallSessio
     if reply is None or isinstance(reply, MissReply):
         state.misses += 1  # her own words for this question, else a rotating fallback
         reply = str(reply) if reply else script.miss_line(state.misses, config.expert_title)
+        if state.misses == 2 and not has_booking:  # owner 2026-11-13: a person follows up
+            await _handoff(db, claims, session, "misses")
         if has_booking and session.contact_id:  # the team sees it before their call
             await memory.remember(db, claims, session.contact_id, channel="call", kind="asked",
                                   text=speech)
@@ -1553,6 +1576,7 @@ async def _cancel_booking(db: Database, claims: AuthClaims, session: repo.CallSe
     booked = state.booked or {}
     at, tz = datetime.fromisoformat(booked["at"]), booked["tz"]
     state.booked, state.rescheduling, state.stage = None, False, "talking"
+    state.close_offered = True  # just cancelled: no "our team can walk you through this" offer
     event_id = booked.get("event_id")
     if event_id and await retire_booking(db, claims, event_id):
         await record_audit(db, claims, action="scheduling.booking_cancelled",

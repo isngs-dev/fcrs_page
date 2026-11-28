@@ -298,3 +298,54 @@ async def test_a_returning_caller_hears_what_they_reached_out_about(
     r, _ = await _call_in(routed)
     assert service.spoken_text(r.text) == script.inbound_greeting(
         first_name="Jane", company="Acme Roofing", recording=True, about="SEO")
+
+
+# -- Roof-Engine call review (2026-11-28) -----------------------------------------------------
+
+
+async def test_yes_to_the_cancel_offer_cancels_and_no_call_is_offered_after(
+        routed: dict[str, Any]) -> None:
+    """Live 11-28: "cancel it" -> offer -> "Yeah." -> asked again, "Please confirm" -> "Yes." ->
+    "What questions can I answer?"; then "No." got "our team can walk you through this"."""
+    await _known_jane(routed)
+    event_id, at = await _booking(routed, routed["a"])
+    _, call_id = await _call_in(routed)
+    await _turn(routed, call_id, "I want to cancel my call")
+    done = service.spoken_text(await _turn(routed, call_id, "Yeah."))
+    assert done == script.cancelled_line(at, "America/New_York")
+    assert await _status(routed, event_id) == "cancelled"
+    bye = await _turn(routed, call_id, "No.")
+    assert service.spoken_text(bye) == script.GOODBYE_LINE  # no "walk you through this" offer
+    assert bye.endswith("<Hangup/></Response>")
+
+
+async def test_an_unclear_reply_to_the_cancel_offer_is_asked_once_more(
+        routed: dict[str, Any]) -> None:
+    await _known_jane(routed)
+    event_id, at = await _booking(routed, routed["a"])
+    _, call_id = await _call_in(routed)
+    await _turn(routed, call_id, "cancel that call")
+    again = service.spoken_text(await _turn(routed, call_id, "and I'll"))
+    assert again == script.CANCEL_CLARIFY_LINE
+    assert await _status(routed, event_id) == "booked"
+    done = service.spoken_text(await _turn(routed, call_id, "cancel it"))
+    assert done == script.cancelled_line(at, "America/New_York")
+
+
+async def test_hello_mid_call_repeats_her_question(routed: dict[str, Any]) -> None:
+    await _known_jane(routed)
+    _, call_id = await _call_in(routed)
+    asked = service.spoken_text(await _turn(routed, call_id, "I wanted to book a call"))
+    again = service.spoken_text(await _turn(routed, call_id, "Hello?"))
+    assert again == script.still_here_line(asked)
+
+
+async def test_a_thank_you_after_an_answer_closes_the_call(routed: dict[str, Any]) -> None:
+    await _known_jane(routed)
+    event_id, at = await _booking(routed, routed["a"])
+    _, call_id = await _call_in(routed)
+    await _turn(routed, call_id, "Yes")
+    await _turn(routed, call_id, "keep it")
+    bye = await _turn(routed, call_id, "Yep. Thank you.")
+    assert service.spoken_text(bye) == script.booked_goodbye_line(at, "America/New_York")
+    assert bye.endswith("<Hangup/></Response>")

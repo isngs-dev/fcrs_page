@@ -1793,8 +1793,8 @@ async def test_with_a_call_booked_unanswered_questions_go_to_the_team_not_a_hand
                              "And a warranty on the landing page?")]
     assert all(any(line in s for line in script.MISS_LINES) for s in said)
     assert said[0] != said[1]  # 2026-11-16: never the same line twice in a row
-    after = await _say(env, call_id, "Okay.")
-    assert service.spoken_text(after) == "Great! What questions can I answer?"
+    after = await _say(env, call_id, "Okay.")  # an okay to her answer, not a yes to a question
+    assert service.spoken_text(after) == script.ANYTHING_ELSE_AFTER_PAUSE
     assert not after.endswith("<Hangup/></Response>")
     assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
                              "AND kind = 'agent_call_needs_human'", a) == 0
@@ -2977,3 +2977,56 @@ async def test_a_homeowner_chatbot_names_its_own_expert_and_never_asks_for_a_com
     assert blank.status_code == 422  # someone always takes the question
     assert await db.fetchval("SELECT count(*) FROM call_sessions WHERE tenant_id = $1 AND "
                              "call_id = $2", b, call_id) == 0
+
+
+
+# -- Roof-Engine call review (2026-11-28) -----------------------------------------------------
+
+
+async def test_no_its_the_right_email_books_it(env: dict[str, Any]) -> None:
+    """Live 11-24 (twice): "No. It's the right email." got the email asked for again."""
+    call_id, _ = await _form_call(env, env["a"], {"service": "SEO", "company": "Lee Roofing"})
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "Sure, how much is a repair?")
+    await _say(env, call_id, "I'd like to book a time")
+    await _say(env, call_id, "tomorrow at 3 pm")
+    booked = service.spoken_text(await _say(env, call_id, "No. It's the right email."))
+    assert booked.startswith("You're booked for")
+
+
+async def test_two_questions_she_cannot_answer_never_end_the_call(env: dict[str, Any]) -> None:
+    """Live 11-28: after two unanswered questions the caller's next question got "Someone from
+    our team will get back to you shortly... goodbye". The team is told once; the call goes on."""
+    db, a = env["db"], env["a"]
+    call_id, _ = await _dial(env, a)
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    for question in ("Is there a warranty on the ads?", "And a warranty on the landing page?",
+                     "And what details will your expert need from me?"):
+        said = await _say(env, call_id, question)
+        assert not said.endswith("<Hangup/></Response>"), question
+        assert script.TEAM_LINE not in service.spoken_text(said)
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
+                             "AND kind = 'agent_call_needs_human'", a) == 1
+    assert await db.fetchval("SELECT count(*) FROM notification_events WHERE tenant_id = $1 "
+                             "AND kind = 'agent_call_needs_human'", env["b"]) == 0
+
+
+async def test_a_question_while_picking_a_time_is_answered_then_the_time_asked_again(
+        env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live 11-28: "What is the next step after this?" while she waited for a time got "Sorry,
+    I didn't catch that. Could you tell me a day and a time" three times."""
+    seen: list[bool] = []
+
+    async def answer(*args: Any, can_book: bool = False, **kwargs: Any) -> str:
+        seen.append(can_book)
+        return "BOOK_A_TIME" if can_book else "Next, our team reviews your setup with you."
+
+    monkeypatch.setattr(service, "answer_from_knowledge", answer)
+    call_id, _ = await _dial(env, env["a"])
+    await _webhook(env, call_id, "answer", {"CallUUID": "uuid-1"})
+    await _say(env, call_id, "yes")
+    await _say(env, call_id, "I'd like to book a call")
+    said = service.spoken_text(await _say(env, call_id, "What is the next step after this?"))
+    assert said == f"Next, our team reviews your setup with you. {script.WHICH_TIME}"
+    assert seen[-1] is False

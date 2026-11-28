@@ -367,6 +367,42 @@ CLOSE_OFFER_LINE = ("Before you go, our team can walk you through this in more d
 DISCOVERY_THANKS_LINE = ("Thanks, that's really helpful. Is there anything you'd like to know "
                          "about how we can help with that?")
 WHAT_QUESTIONS_LINE = "Great! What questions can I answer?"
+# Roof-Engine call review (2026-11-28): an unclear reply to the cancel offer is asked once more.
+CANCEL_CLARIFY_LINE = "Sorry, should I cancel it, or move it to another time?"
+STILL_HERE = "Yes, I'm here."
+
+# "No. It's the right email." confirms it (live 2026-11-24, twice: the "No" re-asked for it).
+_EMAIL_OK = re.compile(
+    r"\b(?:right|correct|same|my|great|good|fine|perfect)\s+(?:e-?mail|address)\b"
+    r"|\b(?:e-?mail|address)\s+is\s+(?:right|correct|fine|good|perfect)\b", re.I)
+_EMAIL_NOT_OK = re.compile(
+    r"\b(?:change|different|another|other|wrong|instead|work|new|also|too|as well)\b", re.I)
+_THANKS = re.compile(r"\b(?:thank(?:s| you)|thx|appreciate it)\b", re.I)
+_HELLO = re.compile(r"^(?:\s*(?:hello|hi|hey|hallo)[\s?.!,]*)+$", re.I)
+
+
+def confirms_email(text: str) -> bool:
+    """At the final check: they say the address read back is theirs, whatever comes first."""
+    return bool(_EMAIL_OK.search(text)) and not _EMAIL_NOT_OK.search(text)
+
+
+def thanks(text: str) -> bool:
+    """A short thank-you with nothing more to ask: they're winding down (live 2026-11-28:
+    "Yep. Thank you." got "Great! What questions can I answer?")."""
+    return (bool(_THANKS.search(text)) and len(text.split()) <= 7
+            and not is_question(text) and not re.search(r"\bbut\b", text, re.I))
+
+
+def just_hello(text: str) -> bool:
+    return bool(_HELLO.match(text))
+
+
+def still_here_line(last: str) -> str:
+    """A bare "Hello?" mid-call (the line lagged): she's here, and her question again -- never
+    a fresh introduction that loses it (live 2026-11-23/24)."""
+    last = last.removeprefix(STILL_HERE).strip()
+    question = last if last.endswith("?") else "What would you like to know?"
+    return f"{STILL_HERE} {question}"
 
 
 def discovery_thanks_line(first_name: str | None) -> str:

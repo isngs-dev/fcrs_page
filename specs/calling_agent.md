@@ -628,3 +628,26 @@ and ElevenLabs' normalization guide lists times like "9:23 AM" among what Flash 
 names sit in those sentences. Every line now goes to the voice with `language_code: "en"` (not sent to
 `multilingual_v2`, which doesn't take it), with dates and times already in words (`realtime.speakable`:
 "November thirtieth at one thirty p.m."). The transcript keeps the written form.
+
+**T7 — Roof-Engine call review (2026-11-28, 36 calls, 527 turns).** Fixed from the November calls:
+- "No. It's the right email." at the final check books it (it re-asked for the email, twice).
+- Cancel offer ("I can cancel it. Or would you rather move it?"): "yes" / "no" both cancel (they asked
+  to); a fragment is asked once more (`CANCEL_CLARIFY_LINE`) instead of going to the model, which had
+  improvised "please confirm" and lost the yes. After a cancel, no "our team can walk you through
+  this" offer.
+- "Okay." to an answer gets "Is there anything else you'd like to know?", not "Great! What questions
+  can I answer?"; a short thank-you while talking closes the call (one offer to book if none, then
+  goodbye).
+- A bare "Hello?" mid-call gets "Yes, I'm here." and her last question again, never a fresh
+  introduction.
+- **D amended (owner rule 2026-11-13, "two misses -> a person"):** the second unanswered question tells
+  the team (`misses` hand-off, once) and the call goes on. Before, the caller's *next* turn -- even "yes"
+  to the expert's call -- ended the call with the team line (live 11-28, twice). An explicit request for a
+  person still transfers / ends as before.
+- While picking a time or at the final check, the model can't start the booking flow again: a question
+  there ("what's the next step?") is answered, then the time is asked again (it got "Sorry, I didn't
+  catch that. Could you tell me a day and a time" three times).
+Not changed (decisions or content, not code): times are heard in the business's zone unless the caller
+names one (2026-10-30 decision) -- an Indian tester's "10:30 AM", later "IST", was read back as 9 PM India
+time; a homeowner who reached the B2B line ("I'm looking for roofing services") got the roofing-company
+questions -- a knowledge-base answer ("we work with roofing companies, not homeowners") would cover it.
