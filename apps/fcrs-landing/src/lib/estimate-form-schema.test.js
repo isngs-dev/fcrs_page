@@ -6,6 +6,7 @@ import {
   STATE_OPTIONS,
   validateEstimateForm,
   isValid,
+  toIntakePayload,
 } from "./estimate-form-schema.js";
 
 const validValues = {
@@ -138,5 +139,39 @@ describe("isValid", () => {
 
   it("returns false when any error is present", () => {
     expect(isValid({ email: "bad" })).toBe(false);
+  });
+});
+
+describe("toIntakePayload - what the platform's form intake receives", () => {
+  it("sends the contact fields, labelled answers and a yes when the box is ticked", () => {
+    const payload = toIntakePayload(
+      { ...validValues, date: "2026-12-01T10:00", notes: "Leak over the garage" },
+      { callConsent: true, timezone: "America/Chicago", countryCode: "+1" }
+    );
+    expect(payload).toEqual({
+      form: "ISN Roofing estimate",
+      name: "Jane Smith",
+      phone: "(989) 843-4628",
+      country_code: "+1",
+      email: "jane@example.com",
+      "Service Needed": "Residential Roofing",
+      State: "Alabama",
+      "Zip Code": "35203",
+      "Preferred Date / Time": "2026-12-01T10:00",
+      Message: "Leak over the garage",
+      call_consent: "yes",
+      timezone: "America/Chicago",
+    });
+  });
+
+  it("says no to calls when the box is left unticked, and omits an unknown timezone", () => {
+    const payload = toIntakePayload(validValues, {
+      callConsent: false,
+      timezone: "",
+      countryCode: "+91",
+    });
+    expect(payload.country_code).toBe("+91");
+    expect(payload.call_consent).toBe("no");
+    expect("timezone" in payload).toBe(false);
   });
 });

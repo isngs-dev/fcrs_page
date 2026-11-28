@@ -1,5 +1,5 @@
 ---
-import { SERVICE_OPTIONS, STATE_OPTIONS } from "../lib/estimate-form-schema.js";
+import { CALL_CONSENT_WORDING, SERVICE_OPTIONS, STATE_OPTIONS } from "../lib/estimate-form-schema.js";
 ---
 <div class="form-card">
   <div class="form-header">
@@ -31,6 +31,11 @@ import { SERVICE_OPTIONS, STATE_OPTIONS } from "../lib/estimate-form-schema.js";
       <div class="field-row">
         <div class="field">
           <label for="f-phone">Phone <span class="required-marker" aria-hidden="true">*</span></label>
+          <div class="phone-input">
+          <select id="f-country" name="country_code" aria-label="Country code">
+            <option value="+1" selected>US +1</option>
+            <option value="+91">IN +91</option>
+          </select>
           <input
             id="f-phone"
             name="phone"
@@ -39,6 +44,7 @@ import { SERVICE_OPTIONS, STATE_OPTIONS } from "../lib/estimate-form-schema.js";
             placeholder="(989) 843-4628"
             aria-describedby="f-phone-error"
           />
+          </div>
           <p id="f-phone-error" class="field-error" role="alert" hidden></p>
         </div>
         <div class="field">
@@ -102,6 +108,11 @@ import { SERVICE_OPTIONS, STATE_OPTIONS } from "../lib/estimate-form-schema.js";
           placeholder="Tell us about your roof, storm damage, timeline…"
         ></textarea>
       </div>
+
+      <label class="consent" for="f-call-consent">
+        <input id="f-call-consent" name="call_consent" type="checkbox" />
+        <span>{CALL_CONSENT_WORDING}</span>
+      </label>
 
       <button type="submit">
         <i class="fa-solid fa-house-circle-check"></i> Get My Free Estimate
@@ -231,6 +242,42 @@ import { SERVICE_OPTIONS, STATE_OPTIONS } from "../lib/estimate-form-schema.js";
     border-radius: 11px;
     padding: 10px 14px;
     margin-bottom: 14px;
+  }
+
+  .phone-input {
+    display: flex;
+    gap: 6px;
+  }
+
+  .phone-input select {
+    width: auto;
+    flex-shrink: 0;
+    padding: 12px 6px;
+  }
+
+  .phone-input input {
+    min-width: 0;
+  }
+
+  .consent {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.45;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .consent input {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    margin-top: 1px;
+    flex-shrink: 0;
+    accent-color: var(--orange);
+    cursor: pointer;
   }
 
   button[type="submit"] {

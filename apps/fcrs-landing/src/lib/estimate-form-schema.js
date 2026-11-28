@@ -106,3 +106,37 @@ export function validateEstimateForm(values) {
 export function isValid(errors) {
   return Object.keys(errors).length === 0;
 }
+
+// The call-consent box's exact text. The chatbot platform records this as the
+// person's written consent for AI calls, so it must match, word for word, the
+// "call-consent wording" saved in the admin console (Outreach -> Lead intake).
+// Change both together.
+export const CALL_CONSENT_WORDING =
+  "Yes, ISN Roofing may call me right away at the number above about my estimate, " +
+  "including with an AI assistant. Calls may be recorded. Consent is not a " +
+  "condition of purchase; I can say stop at any time.";
+
+/**
+ * The body POSTed to the platform's form intake (/public/intake/forms/{token}).
+ * Contact fields use the names intake reads; the rest go in as labelled answers
+ * (a label containing "service" / "message" is what the AI caller reads back).
+ *
+ * @param {Record<string, string|undefined>} values
+ * @param {{ callConsent: boolean, timezone?: string, countryCode: string }} opts
+ */
+export function toIntakePayload(values, { callConsent, timezone, countryCode }) {
+  return {
+    form: "ISN Roofing estimate",
+    name: values.name ?? "",
+    phone: values.phone ?? "",
+    country_code: countryCode,
+    email: values.email ?? "",
+    "Service Needed": values.service ?? "",
+    State: values.state ?? "",
+    "Zip Code": values.zip ?? "",
+    "Preferred Date / Time": values.date ?? "",
+    Message: values.notes ?? "",
+    call_consent: callConsent ? "yes" : "no",
+    ...(timezone ? { timezone } : {}),
+  };
+}

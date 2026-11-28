@@ -38,13 +38,13 @@ npm run preview  # serve the production build locally
 npm test         # Vitest
 ```
 
-Environment: copy `frontend/.env.example` to `frontend/.env`. The only
-variable is `PUBLIC_API_URL` — the absolute origin of the deployed backend
-(e.g. `https://api.fcrsga.com`). Leave it unset for local dev; the Vite dev
-proxy in `astro.config.mjs` forwards relative `/api/*` calls to
-`http://localhost:3000`. In production, leave it unset only if frontend and
-backend share one domain with an `/api/*` rewrite rule — otherwise it must
-be set or the estimate form cannot reach the backend.
+Environment: copy `.env.example` to `.env`. The only variable is
+`PUBLIC_INTAKE_URL` — the chatbot platform's form-intake URL for this client
+(admin console → Outreach → Lead intake → Form URL). `npm run build` refuses to
+run without it. The form posts there; ticking the call-consent box lets the AI
+assistant call right away. The box's text (`CALL_CONSENT_WORDING` in
+`src/lib/estimate-form-schema.js`) must match the call-consent wording saved on
+that admin page word for word.
 
 ## Backend (`backend/`)
 

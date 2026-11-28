@@ -14,13 +14,26 @@
 //   - On network/500 failure -> show a generic top-of-form banner; do NOT
 //     invent per-field errors for a failure that isn't field-shaped.
 //   - Submit button is disabled while the request is in flight.
-import { FIELD_DEFS, validateEstimateForm, isValid } from "../lib/estimate-form-schema.js";
+import {
+  FIELD_DEFS,
+  validateEstimateForm,
+  isValid,
+  toIntakePayload,
+} from "../lib/estimate-form-schema.js";
 
-// PUBLIC_API_URL is baked in at build time (see astro.config.mjs / .env).
-// Falls back to the relative path, which the dev-server proxy forwards to
-// the local backend — set PUBLIC_API_URL for any production build where
-// frontend and backend are not served from the same origin.
-const ENDPOINT = `${import.meta.env.PUBLIC_API_URL ?? ""}/api/estimate-request`;
+// The chatbot platform's form-intake URL for this client, baked in at build
+// time (astro.config.mjs refuses to build without it). Copy it from the admin
+// console: Outreach -> Lead intake -> "Form URL". The submission becomes a lead
+// there; with the call-consent box ticked, the AI assistant rings right away.
+const ENDPOINT = import.meta.env.PUBLIC_INTAKE_URL;
+
+function visitorTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+}
 
 // Where the browser is sent after a successful submit. astro.config.mjs uses
 // build.format:"file", so the built artifact is literally /thank-you.html.
@@ -140,27 +153,24 @@ export function initEstimateForm() {
       const res = await fetch(ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify(
+          toIntakePayload(values, {
+            callConsent: Boolean(form.querySelector('[name="call_consent"]')?.checked),
+            timezone: visitorTimezone(),
+            countryCode: form.querySelector('[name="country_code"]')?.value || "+1",
+          })
+        ),
       });
 
       if (res.status === 200) {
         const data = await res.json().catch(() => ({}));
-        if (data && data.ok) {
+        if (data && data.status) {
           goToThankYou();
         } else {
           showGenericError(
             "Something went wrong. Please call us at the number above."
           );
         }
-      } else if (res.status === 400) {
-        const data = await res.json().catch(() => ({}));
-        const errors = (data && data.errors) || {};
-        Object.entries(errors).forEach(([name, message]) =>
-          setFieldError(name, message)
-        );
-        const firstName = Object.keys(errors)[0];
-        const firstEl = firstName ? fieldEls[firstName] : null;
-        if (firstEl) firstEl.focus();
       } else {
         showGenericError(
           "Something went wrong. Please call us at the number above."

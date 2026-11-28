@@ -1,4 +1,15 @@
 import { defineConfig } from "astro/config";
+import { loadEnv } from "vite";
+
+// The estimate form posts to the chatbot platform's form intake. A build
+// without that URL would ship a form that silently goes nowhere, so refuse.
+const { PUBLIC_INTAKE_URL } = loadEnv("production", process.cwd(), "");
+if (process.argv.includes("build") && !PUBLIC_INTAKE_URL) {
+  throw new Error(
+    "PUBLIC_INTAKE_URL is not set. Copy the Form URL from the admin console " +
+      "(Outreach -> Lead intake) into the build environment."
+  );
+}
 
 // Static-first, prerendered output — no SSR/adapter needed. See CLAUDE.md
 // "Stack" section: frontend/ is Astro static, hand-written CSS only.
